@@ -1,3 +1,5 @@
+import pytest
+
 from app.models import Transaction, TransactionChange, User
 
 from .conftest import auth
@@ -11,6 +13,64 @@ def _bulk(client, token, budget_id, transaction_ids, action, **values):
         headers=auth(token),
         json={"transaction_ids": transaction_ids, "action": action, **values},
     )
+
+
+@pytest.mark.parametrize("action,values", [
+    ("set_cleared", {"cleared": False}),
+    ("set_flag", {"flag": " Orange "}),
+    ("add_tags", {"tags": ["existing"]}),
+    ("remove_tags", {"tags": ["absent"]}),
+])
+def test_bulk_noop_preserves_metadata_and_does_not_invent_edit_history(client, owner_token, session_factory, action, values):
+    budget = create_budget(client, owner_token, session_factory)
+    account, category = create_budget_structure(client, owner_token, budget["id"])
+    transaction = record(client, owner_token, budget["id"], account_id=account["id"],
+                         category_id=category["id"], amount_minor=-200, payee_name="Metadata test",
+                         memo="keep exactly", flag="orange", tags=["existing"])
+    with session_factory() as db:
+        count = db.query(TransactionChange).filter_by(transaction_id=transaction["id"]).count()
+    for _ in range(2):
+        response = _bulk(client, owner_token, budget["id"], [transaction["id"]], action, **values)
+        assert response.status_code == 200, response.text
+        assert response.json() == [transaction]
+    with session_factory() as db:
+        assert db.query(TransactionChange).filter_by(transaction_id=transaction["id"]).count() == count
+
+
+def test_bulk_tag_capacity_rejection_is_atomic_and_does_not_drop_requested_tags(client, owner_token, session_factory):
+    budget = create_budget(client, owner_token, session_factory)
+    account, category = create_budget_structure(client, owner_token, budget["id"])
+    first = record(client, owner_token, budget["id"], account_id=account["id"],
+                   category_id=category["id"], amount_minor=-100, tags=["existing"])
+    full = record(client, owner_token, budget["id"], account_id=account["id"],
+                  category_id=category["id"], amount_minor=-200, tags=[f"tag-{index}" for index in range(20)])
+    before = client.get(f"/api/v1/budgets/{budget['id']}/transactions", headers=auth(owner_token)).json()
+    with session_factory() as db:
+        count = db.query(TransactionChange).filter_by(budget_id=budget["id"]).count()
+    response = _bulk(client, owner_token, budget["id"], [first["id"], full["id"]], "add_tags", tags=["new"])
+    assert response.status_code == 422, response.text
+    assert "20 tags" in response.json()["detail"]
+    assert client.get(f"/api/v1/budgets/{budget['id']}/transactions", headers=auth(owner_token)).json() == before
+    with session_factory() as db:
+        assert db.query(TransactionChange).filter_by(budget_id=budget["id"]).count() == count
+    # An already-present tag fits even when the list is full, and is a true no-op.
+    duplicate = _bulk(client, owner_token, budget["id"], [full["id"]], "add_tags", tags=["tag-0"])
+    assert duplicate.status_code == 200, duplicate.text
+    assert duplicate.json() == [full]
+
+
+def test_bulk_tags_boundary_and_mixed_noop_only_audits_changed_rows(client, owner_token, session_factory):
+    budget = create_budget(client, owner_token, session_factory)
+    account, category = create_budget_structure(client, owner_token, budget["id"])
+    first = record(client, owner_token, budget["id"], account_id=account["id"], category_id=category["id"], amount_minor=-100, tags=["new"])
+    second = record(client, owner_token, budget["id"], account_id=account["id"], category_id=category["id"], amount_minor=-200, tags=[f"tag-{i}" for i in range(19)])
+    response = _bulk(client, owner_token, budget["id"], [first["id"], second["id"]], "add_tags", tags=[" NEW ", "new"])
+    assert response.status_code == 200, response.text
+    assert response.json()[0] == first
+    assert response.json()[1]["tags"] == [*second["tags"], "new"]
+    with session_factory() as db:
+        changes = db.query(TransactionChange).filter_by(budget_id=budget["id"], action="bulk_updated").all()
+        assert [change.transaction_id for change in changes] == [second["id"]]
 
 
 def test_bulk_metadata_normalizes_and_audits_every_selected_transaction(client, owner_token, session_factory):

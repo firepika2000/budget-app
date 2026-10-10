@@ -2748,6 +2748,25 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
             }
         }
         guard update.transactionIDs.allSatisfy({ id in demo.transactions.contains(where: { $0.id == id && !$0.reconciled && $0.transferID == nil && $0.scheduledTransactionID == nil && !$0.scheduled && !["Starting Balance", "Reconciliation adjustment"].contains($0.payee) }) }) else { throw workspaceRepositoryError("System-linked or reconciled transactions cannot be changed in bulk") }
+        var normalizedTags: [String] = []
+        var proposedTags: [String: [String]] = [:]
+        if ["add_tags", "remove_tags"].contains(update.action) {
+            guard let tags = update.tags, tags.count <= 20 else { throw workspaceRepositoryError("Provide at most 20 tags.") }
+            for raw in tags {
+                let tag = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                guard tag.count <= 40 else { throw workspaceRepositoryError("Tags must be at most 40 characters.") }
+                if !tag.isEmpty && !normalizedTags.contains(tag) { normalizedTags.append(tag) }
+            }
+            guard !normalizedTags.isEmpty else { throw workspaceRepositoryError("Provide at least one non-empty tag.") }
+            if update.action == "add_tags" {
+                for id in update.transactionIDs {
+                    var tags = visible[id]!.tags
+                    for tag in normalizedTags where !tags.contains(tag) { tags.append(tag) }
+                    guard tags.count <= 20 else { throw workspaceRepositoryError("A transaction may have at most 20 tags. Remove a tag before adding more.") }
+                    proposedTags[id] = tags
+                }
+            }
+        }
         if update.action == "set_cleared" {
             guard let cleared = update.cleared else { throw workspaceRepositoryError("A clearing state is required.") }
             var accounts = demo.accounts
@@ -2765,8 +2784,8 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
             switch update.action {
             case "set_cleared": demo.transactions[index].cleared = update.cleared ?? false
             case "set_flag": demo.transactions[index].flag = update.flag
-            case "add_tags": demo.transactions[index].tags = Array(Set(demo.transactions[index].tags + (update.tags ?? []))).sorted()
-            case "remove_tags": demo.transactions[index].tags.removeAll(where: Set(update.tags ?? []).contains)
+            case "add_tags": demo.transactions[index].tags = proposedTags[id]!
+            case "remove_tags": demo.transactions[index].tags.removeAll(where: Set(normalizedTags).contains)
             default: throw workspaceRepositoryError("Unsupported bulk action")
             }
         }

@@ -10,6 +10,32 @@ import UniformTypeIdentifiers
 @testable import Budget_App
 
 final class DemoStoreTests: XCTestCase {
+    @MainActor
+    func testBulkTagsRejectOverflowAtomicallyAndPreserveOrderedNormalizedTags() async throws {
+        let source = DemoWorkspaceDataSource(fresh: true)
+        XCTAssertTrue(source.demo.createAccount(name: "Cash", type: "checking", isOnBudget: true))
+        XCTAssertTrue(source.demo.createCategory(name: "Needs", group: "Plan"))
+        let account = source.demo.accounts[0].id
+        let category = source.demo.categories[0].id
+        for tags in [["existing"], (0..<20).map { "tag-\($0)" }] {
+            try await source.recordTransaction(.init(accountID: account, categoryID: category, amountMinor: -100, occurredOn: "2026-09-01", payeeName: "Tags", memo: "Keep", isCleared: false, splits: [], flag: "orange", tags: tags, attachmentMetadata: []))
+        }
+        let before = source.demo.transactions
+        let ids = before.map(\.id)
+        do {
+            try await source.bulkUpdateTransactions(.init(transactionIDs: ids, action: "add_tags", tags: ["new"]))
+            XCTFail("An overflowing batch must fail rather than drop a requested tag")
+        } catch { }
+        XCTAssertEqual(source.demo.transactions, before)
+        let full = try XCTUnwrap(before.first { $0.tags.count == 20 })
+        try await source.bulkUpdateTransactions(.init(transactionIDs: [full.id], action: "add_tags", tags: [" TAG-0 ", "tag-0"]))
+        XCTAssertEqual(source.demo.transactions, before)
+        let ordinary = try XCTUnwrap(before.first { $0.tags == ["existing"] })
+        try await source.bulkUpdateTransactions(.init(transactionIDs: [ordinary.id], action: "add_tags", tags: [" Review ", "review"]))
+        XCTAssertEqual(source.demo.transactions.first { $0.id == ordinary.id }?.tags, ["existing", "review"])
+        try await source.bulkUpdateTransactions(.init(transactionIDs: [ordinary.id], action: "remove_tags", tags: [" REVIEW "]))
+        XCTAssertEqual(source.demo.transactions, before)
+    }
     func testFundingRequestDetailUsesAuthorizedNamesWithoutRawIdentityFallback() throws {
         let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("BudgetApp/BudgetWorkspaceView.swift")
         let source = try String(contentsOf: file)

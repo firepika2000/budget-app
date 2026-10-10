@@ -2293,6 +2293,13 @@ def bulk_update_transactions(
 
     by_id = {transaction.id: transaction for transaction in transactions}
     ordered = [by_id[transaction_id] for transaction_id in body.transaction_ids]
+    proposed_tags = {}
+    if body.action == "add_tags":
+        for transaction in ordered:
+            tags = list(dict.fromkeys([*transaction.tags, *body.tags]))
+            if len(tags) > 20:
+                raise HTTPException(status_code=422, detail="A transaction may have at most 20 tags. Remove a tag before adding more.")
+            proposed_tags[transaction.id] = tags
     for transaction in ordered:
         before = transaction_snapshot(transaction)
         if body.action == "set_cleared":
@@ -2300,11 +2307,13 @@ def bulk_update_transactions(
         elif body.action == "set_flag":
             transaction.flag = body.flag
         elif body.action == "add_tags":
-            transaction.tags = list(dict.fromkeys([*transaction.tags, *body.tags]))[:20]
+            transaction.tags = proposed_tags[transaction.id]
         else:
             removed = set(body.tags)
             transaction.tags = [tag for tag in transaction.tags if tag not in removed]
-        record_transaction_change(db, transaction, user, "bulk_updated", before=before, after=transaction_snapshot(transaction))
+        after = transaction_snapshot(transaction)
+        if before != after:
+            record_transaction_change(db, transaction, user, "bulk_updated", before=before, after=after)
     db.commit()
     for transaction in ordered:
         db.refresh(transaction)

@@ -1,5 +1,33 @@
 # Production readiness mission ledger
 
+## Truthful bulk metadata history and tag capacity (2026-10-09)
+
+Actual HTTP regressions reproduced two canonical bulk-operation defects: unchanged clearing,
+flag, add-tag and remove-tag requests appended misleading `bulk_updated` history, and combined
+tag lists over 20 silently discarded requested tags. Five regression cases failed against the
+previous implementation before correction.
+
+Bulk updates now compare exact transaction snapshots and append history only for real changes.
+All existing authorization, resource, reconciled and system-linked checks still run before no-op
+detection. Existing history is not rewritten. Tag additions preflight every selected transaction
+after authorization and reject the entire batch with 422 if any resulting list exceeds 20;
+existing tags retain order, and adding an already-present tag to a full list remains a valid no-op.
+Local Device/Demo uses equivalent bounded, normalized, ordered tag validation before mutation.
+No financial amounts or accounting rules change; this does not enable hosted offline edits.
+
+Executed verification: 23 backend bulk/history/provenance/browser tests passed, including six
+new regression cases (four parameterized no-op actions, atomic overflow, mixed no-op/boundary).
+Four existing Swift bulk DTO, single quick-clear request and local audit tests passed. Regular
+Xcode 27.0 (27A266a) build-for-testing passed on preserved iPhone 17 Pro Max destination
+`3ABD861E-D38D-4AFD-A356-959266051564`. The new native Local/Demo tag lifecycle case compiled,
+but was not executed; compilation is not runtime acceptance. Diff checks passed.
+
+App rebuild and server deployment/restart required to receive both corrections; no migration,
+customer-data deletion, Simulator reset, release, tag or TestFlight upload. Optional next human
+spot-check: repeat an unchanged bulk metadata action and confirm no new Edited history; use
+disposable test transactions for a 20-tag overflow attempt and confirm an error with neither row
+changed. Previously accepted ordinary quick-clearing does not require a full repeated acceptance.
+
 ## Pending Sync current-scope privacy (2026-10-09)
 
 Pending Sync previously exposed raw retained outbox entries regardless of the current workspace
