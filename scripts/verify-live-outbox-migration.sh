@@ -293,6 +293,25 @@ try await Task { @MainActor in
  }
  precondition(reconciliationSends == 3 && LiveTransactionOutbox(fileURL: reconciliationFile).count == 0)
  print("PASS: reviewed reconciliation exact amounts/consent/token/identity persist before send, duplicate account submissions rejected, lost acknowledgement retained, stale review paused across relaunch, explicit retry never rebases, acknowledgement clears original intent")
+ let deletionFile = root.appendingPathComponent("deletion.json")
+ let deletionQueue = LiveTransactionOutbox(fileURL: deletionFile)
+ let deletion = DeleteTransactionOperation(transactionID: "original", expectedRevision: "v1:" + String(repeating: "a", count: 64), mutationOperationID: UUID().uuidString.lowercased())
+ try deletionQueue.enqueueDeletion(deletion); try deletionQueue.enqueueDeletion(deletion)
+ precondition(deletionQueue.count == 1)
+ var otherDeletion = deletion; otherDeletion.mutationOperationID = UUID().uuidString.lowercased()
+ do { try deletionQueue.enqueueDeletion(otherDeletion); fatalError("Duplicate pending deletion accepted") } catch {}
+ do { try await deletionQueue.replayCommands(shouldPause: { _ in false }) { entry in
+     precondition(entry.deletionCommand == deletion); throw URLError(.networkConnectionLost)
+ }; fatalError("Expected lost deletion response") } catch {}
+ let reopenedDeletion = LiveTransactionOutbox(fileURL: deletionFile)
+ precondition(reopenedDeletion.entries[0].deletionCommand == deletion)
+ do { try await reopenedDeletion.replayCommands(shouldPause: { _ in true }) { _ in throw BudgetApplicationError.invalidOperation("Changed target") }; fatalError("Expected stale deletion") } catch {}
+ let pausedDeletion = LiveTransactionOutbox(fileURL: deletionFile)
+ do { try await pausedDeletion.replayCommands { _ in fatalError("Paused deletion replayed") } } catch {}
+ try pausedDeletion.retryReviewed(id: deletion.mutationOperationID!)
+ try await pausedDeletion.replayCommands { entry in precondition(entry.deletionCommand == deletion) }
+ precondition(LiveTransactionOutbox(fileURL: deletionFile).count == 0)
+ print("PASS: reviewed deletion identity/target/revision survive response loss/relaunch, duplicate refused, rejection paused, original retry and acknowledgement cleanup")
  let duplicateFile = root.appendingPathComponent("duplicate.json")
  let duplicateQueue = LiveTransactionOutbox(fileURL: duplicateFile)
  let duplicateCommand = DuplicateTransactionOperation(transactionID: "source", occurredOn: "2026-10-09",

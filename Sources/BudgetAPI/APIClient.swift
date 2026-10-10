@@ -475,12 +475,11 @@ public struct APIClient {
         )
     }
 
-    public func deleteTransaction(budgetID: String, transactionID: String, token: String) async throws {
-        let _: EmptyResponse = try await send(
-            path: "api/v1/budgets/\(budgetID)/transactions/\(transactionID)",
-            method: "DELETE",
-            token: token
-        )
+    public func deleteTransaction(budgetID: String, transactionID: String, expectedRevision: String? = nil, operationID: String? = nil, token: String) async throws {
+        let url = baseURL.appending(path: "api/v1/budgets/\(budgetID)/transactions/\(transactionID)")
+            .appending(queryItems: expectedRevision.map { [URLQueryItem(name: "expected_revision", value: $0)] } ?? [])
+        let _: EmptyResponse = try await send(url: url, method: "DELETE", token: token, bodyData: nil,
+            headers: operationID.map { ["X-Transaction-Operation-ID": $0] } ?? [:])
     }
 
     public func payees(budgetID: String, includeArchived: Bool = false, token: String) async throws -> [APIPayee] {

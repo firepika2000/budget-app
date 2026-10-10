@@ -3751,6 +3751,14 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
                     mutationOperationID: operation.mutationOperationID), token: token)
             return
         }
+        if let operation = entry.deletionCommand {
+            try await credentials.prepare()
+            try transactionOutbox.requireServer(budgetID: budget.id, serverURL: credentials.serverURL, token: credentials.token)
+            try await client.deleteTransaction(budgetID: budget.id, transactionID: operation.transactionID,
+                expectedRevision: operation.expectedRevision, operationID: operation.mutationOperationID, token: token)
+            attachmentReadCache.remove(transactionID: operation.transactionID)
+            return
+        }
         if let operation = entry.duplicateCommand {
             try await credentials.prepare()
             try transactionOutbox.requireServer(budgetID: budget.id, serverURL: credentials.serverURL, token: credentials.token)
@@ -3871,7 +3879,16 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
             }
         }
     }
-    func deleteTransaction(id: String) async throws { try await credentials.prepare(); try await client.deleteTransaction(budgetID: budget.id, transactionID: id, token: token) }
+    func deleteTransaction(id: String) async throws {
+        throw BudgetApplicationError.invalidOperation("Reopen this transaction to review it before deleting.")
+    }
+    func deleteTransaction(_ operation: DeleteTransactionOperation) async throws {
+        var identified = operation
+        if identified.mutationOperationID == nil { identified.mutationOperationID = UUID().uuidString.lowercased() }
+        try transactionOutbox.enqueueDeletion(identified)
+        do { try await replaySavedPlanning() }
+        catch { guard transactionOutbox.entries.contains(where: { $0.id == identified.mutationOperationID }) else { throw error } }
+    }
     func duplicateTransaction(id: String, occurredOn: String) async throws {
         throw BudgetApplicationError.invalidOperation("Reopen this transaction to review it before duplicating.")
     }
@@ -5053,6 +5070,9 @@ final class BudgetWorkspaceStore: ObservableObject {
             if let command = entry.voidCommand {
                 return budget.can("delete_transaction") && budget.can("view_transactions") && transactions.contains(where: { $0.id == command.transactionID })
             }
+            if let command = entry.deletionCommand {
+                return budget.can("delete_transaction") && budget.can("view_transactions") && transactions.contains(where: { $0.id == command.transactionID })
+            }
             if let command = entry.duplicateCommand {
                 return budget.can("create_transaction") && budget.can("view_transactions") && transactions.contains(where: { $0.id == command.transactionID })
             }
@@ -5176,8 +5196,9 @@ final class BudgetWorkspaceStore: ObservableObject {
         return try await authorizedObservation { try await commands().payeeHistory(payeeID: payeeID, limit: limit, offset: offset) }
     }
 
-    func deleteTransaction(id: String) async throws {
-        try await services().transactions.delete(id: id)
+    func deleteTransaction(id: String, expectedRevision: String? = nil) async throws {
+        defer { publishPendingPlanningStatus() }
+        try await services().transactions.delete(DeleteTransactionOperation(transactionID: id, expectedRevision: expectedRevision))
         await refresh()
     }
 
@@ -6612,6 +6633,10 @@ private struct PendingLiveTransactionsView: View {
                                 Text(upload.filename).font(.subheadline)
                                 Text(ByteCountFormatter.string(fromByteCount: Int64(upload.byteCount), countStyle: .file)).font(.caption)
                                 Text("Saved on this iPhone · awaiting server confirmation").font(.caption).foregroundStyle(.secondary)
+                            } else if let command = entry.deletionCommand {
+                                Text("Delete Transaction").font(.headline)
+                                Text(store.transactions.first(where: { $0.id == command.transactionID })?.payeeName ?? "Transaction").font(.subheadline)
+                                Text("Awaiting server approval · posted values remain unchanged").font(.caption).foregroundStyle(.secondary)
                             } else if let command = entry.duplicateCommand {
                                 Text("Duplicate Transaction").font(.headline)
                                 Text("Copy dated " + command.occurredOn).font(.subheadline)
@@ -10579,6 +10604,7 @@ private struct LiveTransactionDetailView: View {
     @State private var confirmDelete = false
     @State private var confirmDuplicate = false
     @State private var duplicateRevision: String?
+    @State private var deletionRevision: String?
     @State private var duplicateDate = ""
     @State private var showVoid = false
     @State private var showRecurring = false
@@ -10621,7 +10647,7 @@ private struct LiveTransactionDetailView: View {
                         if store.budget.can("create_transaction"), transaction.scheduledTransactionID == nil, !["Starting Balance", "Reconciliation adjustment"].contains(transaction.payeeName) { Button("Duplicate", systemImage: "plus.square.on.square") { duplicateRevision = transaction.revision; duplicateDate = BudgetWorkspaceStore.dateString(Date()); confirmDuplicate = true }.disabled(isDeleting).accessibilityIdentifier("duplicate-transaction-action") }
                         if store.budget.can("manage_planning"), transaction.splits.isEmpty, !["Starting Balance", "Reconciliation adjustment"].contains(transaction.payeeName) { Button("Make Recurring", systemImage: "repeat") { showRecurring = true }.accessibilityIdentifier("make-recurring-action") }
                         if store.budget.can("delete_transaction"), !["Starting Balance", "Reconciliation adjustment"].contains(transaction.payeeName) { Button("Void with Reversal", systemImage: "arrow.uturn.backward.circle") { showVoid = true }.accessibilityIdentifier("void-transaction-action") }
-                        if store.budget.can("delete_transaction") { Button("Delete", systemImage: "trash", role: .destructive) { confirmDelete = true } }
+                        if store.budget.can("delete_transaction") { Button("Delete", systemImage: "trash", role: .destructive) { deletionRevision = transaction.revision; confirmDelete = true }.disabled(isDeleting) }
                     } label: { Image(systemName: "ellipsis.circle") }
                         .accessibilityLabel("Transaction actions")
                 }
@@ -10632,7 +10658,7 @@ private struct LiveTransactionDetailView: View {
             .sheet(isPresented: $showVoid) { if let transaction { TransactionVoidView(transaction: transaction) } }
             .sheet(isPresented: $showRecurring) { if let transaction { MakeRecurringView(transaction: transaction).environmentObject(store) } }
             .confirmationDialog("Duplicate this transaction?", isPresented: $confirmDuplicate, titleVisibility: .visible) { Button("Duplicate Transaction") { Task { await duplicateTransaction() } }; Button("Cancel", role: .cancel) {} } message: { Text("A new uncleared copy dated today will post through the normal accounting engine. Attachments are not copied.") }
-            .confirmationDialog(transaction?.transferID == nil ? "Delete this transaction?" : "Delete this transfer?", isPresented: $confirmDelete, titleVisibility: .visible) { Button(transaction?.transferID == nil ? "Delete Transaction" : "Delete Transfer", role: .destructive) { Task { await deleteTransaction() } }; Button("Cancel", role: .cancel) {} } message: { Text(transaction?.transferID == nil ? "This cannot be undone and will immediately update the plan and reports." : "Both linked account entries will be removed atomically. Your plan and categories will not change.") }
+            .confirmationDialog(transaction?.transferID == nil ? "Delete this transaction?" : "Delete this transfer?", isPresented: $confirmDelete, titleVisibility: .visible) { Button(transaction?.transferID == nil ? "Delete Transaction" : "Delete Transfer", role: .destructive) { Task { await deleteTransaction() } }; Button("Cancel", role: .cancel) {} } message: { Text(transaction?.transferID == nil ? "Accepted deletion cannot be undone. When offline, the request is saved and posted values remain unchanged until the server accepts it." : "Both linked account entries will be removed atomically. Your plan and categories will not change.") }
     }
     private func reload() async { await store.refresh() }
     private func linkedAccountName(for transaction: APITransaction) -> String? {
@@ -10650,9 +10676,9 @@ private struct LiveTransactionDetailView: View {
             expectedRevisions: source.revision.flatMap { sourceRevision in destination.revision.map { [source.id: sourceRevision, destination.id: $0] } })
     }
     private func deleteTransaction() async {
-        guard let transaction else { return }
+        guard !isDeleting, let transaction else { return }
         isDeleting = true; defer { isDeleting = false }
-        do { if let transferID = transaction.transferID { try await store.deleteTransfer(id: transferID) } else { try await store.deleteTransaction(id: transaction.id) }; dismiss() }
+        do { if let transferID = transaction.transferID { try await store.deleteTransfer(id: transferID) } else { try await store.deleteTransaction(id: transaction.id, expectedRevision: deletionRevision) }; dismiss() }
         catch { store.errorMessage = error.localizedDescription }
     }
     private func duplicateTransaction() async {

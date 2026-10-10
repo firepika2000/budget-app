@@ -1,5 +1,34 @@
 # Production readiness mission ledger
 
+## Durable reviewed ordinary transaction deletion (2026-10-09)
+
+Ordinary transaction detail captures the source revision when opening Delete confirmation.
+Live saves a deletion command and UUID before transport. Ordered replay resolves current
+credentials, verifies destination binding, and calls the identified deletion contract below.
+Response loss retains the exact target/revision/identity across relaunch; rejection pauses
+without rebasing. Duplicate pending deletion is refused. Posted values remain authoritative
+until acceptance; no local balance adjustment, transaction deletion or audit is synthesized.
+
+Pending Sync labels deletion awaiting server approval, gated by current delete/view authority
+and source visibility. Accepted deletion clears cached attachment observations. Demo and Local
+Device use the same application-service operation with their existing canonical deletion.
+Unreviewed Live deletion is refused. Transfer deletion remains online-only and separate.
+
+Production queue tests pass retention, relaunch, duplicate refusal, stale pause, original-intent
+retry and acknowledgement cleanup. The focused API test exercises body-free DELETE, exact
+review/identity, current credentials and backward-compatible legacy omission. Native build-for-testing
+passes with regular `/Applications/Xcode.app` Xcode 27.0 (27A266a), using the existing
+iPhone 17 Pro Max / iOS 27 simulator `3ABD861E-D38D-4AFD-A356-959266051564`.
+This compiles the application and native regression tests; it is not runtime or human acceptance.
+App rebuild and server update required; no
+migration. TestFlight remains held.
+
+Human retest using a disposable unreconciled ordinary transaction: disconnect, confirm Delete,
+and verify Pending Sync contains one deletion while the posted transaction and totals remain.
+Relaunch offline, reconnect and verify it disappears once after server acceptance. Cancel saves
+nothing. Change a separate disposable source on another device before reconnecting and verify
+the retained stale deletion pauses instead of deleting the changed transaction.
+
 ## Identified transaction deletion server contract (2026-10-09)
 
 Ordinary deletion accepts an optional UUID `X-Transaction-Operation-ID` header and observed
@@ -21,7 +50,8 @@ missing/malformed/stale observations, revoked account/category/capability scope,
 uncategorized rows, lost audit evidence and lifecycle protections. History, provenance and
 golden-vector regressions pass. A real isolated PostgreSQL race proves one deletion, audit entry
 and receipt for simultaneous callers. No Swift or migration change; server deployment/restart
-is required. Native durable deletion remains the next integration gap. TestFlight remains held.
+is required. Durable ordinary deletion integration is recorded above; transfer deletion remains
+an independent open gap. TestFlight remains held.
 
 ## Durable reviewed transaction duplication (2026-10-09)
 
