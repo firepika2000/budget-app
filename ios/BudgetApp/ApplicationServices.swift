@@ -300,6 +300,22 @@ final class LiveTransactionOutbox {
 
     var count: Int { entries.count }
 
+    func submit(_ operation: RecordTransactionOperation,
+                send: (RecordTransactionOperation) async throws -> Void) async throws {
+        // Publish the immutable identity before the first network suspension point.
+        try enqueue(operation)
+        try await replay(send: send)
+    }
+
+    func replay(send: (RecordTransactionOperation) async throws -> Void) async throws {
+        guard try beginReplay() else { return }
+        defer { finishReplay() }
+        for entry in entries {
+            try await send(entry.operation)
+            try acknowledgeReplay(id: entry.id)
+        }
+    }
+
     func enqueue(_ operation: RecordTransactionOperation) throws {
         try requireReadableQueue()
         guard let id = operation.clientOperationID, UUID(uuidString: id) != nil else {

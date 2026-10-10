@@ -276,6 +276,25 @@ contributing-ID collections remain accumulated, and PostgreSQL production scale 
 No native, schema, financial mutation or customer-data change; server update/restart only.
 TestFlight remains on hold.
 
+### Durable-before-send transaction creation — 2026-10-09
+
+The canonical Live creation repository now saves the immutable request and operation identity before
+the first authenticated network attempt. Submission shares the existing ordered queue replay path;
+acknowledgement is persisted before removing the in-memory item. A failed disk write prevents sending.
+Uncertain sends and definite server rejections retain the exact intent; rejected items surface for
+Pending Sync review without synthesizing posted ledger activity. Explicit persisted blocked states
+and durable edit submission remain outstanding; this is not full offline mutation completion.
+
+The production outbox host-execution checks passed: persisted intent visible inside the first sender,
+exact large Int64 amount/metadata, timeout/reopen survival, ordered retry plus next submission,
+acknowledgement removal, retained rejection, and no send after persistence failure. Source wiring
+assertions bind these checks to the canonical repository submission and current-credential sender.
+A matching native XCTest was added. Regular Xcode 27 build-for-testing passed against the preserved
+iPhone 17 Pro Max/iOS 27 simulator, compiling production and test targets; native runtime tests were
+not executed and human acceptance is outstanding. The previously stalled runner was not retried.
+No backend change, migration, server restart, simulator reset or human-data modification is required.
+App rebuild required. TestFlight remains on hold.
+
 ### Immutable creation request receipts — 2026-10-09
 
 Actual HTTP regression first proved different-amount reuse of a creation UUID returned success.

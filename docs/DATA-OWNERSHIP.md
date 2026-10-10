@@ -31,12 +31,12 @@ This is server support only: native edit UUID persistence/outbox integration, ot
 and real PostgreSQL overlap/lost-acknowledgement proof remain incomplete. Creation retains its separate
 legacy-compatible identity namespace; do not claim one universal receipt protocol across all commands.
 The native operation and API DTO can now carry this separate mutation identity through translation;
-the editor does not yet assign/persist it or queue updates. An implementation audit also confirmed
-that existing creation sends before enqueueing and only persists after a connectivity exception.
-Termination during the initial send therefore remains an uncertain-outcome durability gap. The typed
-outbox integration must fix creation and edit submission together: persist first, then send/replay,
-then atomically acknowledge, with explicit retained review state on definite rejection. This is not
-evidence of durable-before-send behavior in the current app.
+the editor does not yet assign/persist it or queue updates. The creation submission path now persists
+the exact immutable operation before its first network suspension, then uses the existing ordered
+replay and atomic acknowledgement path. An uncertain send survives reopening; persistence failure
+prevents sending. Definite rejection retains the intent and surfaces Pending Sync review, but a
+persisted blocked/review state preventing subsequent automatic retries remains incomplete. Durable
+edit submission and full offline mutation coverage are not yet implemented.
 
 Creation-specific immutable receipts now bind `(budget, actor, operation UUID)` to the original
 validated request digest and accepted transaction ID, committed with creation effects. Matching retries

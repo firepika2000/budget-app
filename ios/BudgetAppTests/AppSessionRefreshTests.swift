@@ -1683,6 +1683,31 @@ final class AppSessionRefreshTests: XCTestCase {
     }
 
     @MainActor
+    func testOutboxSubmissionIsDurableBeforeFirstSendAndRetainsUncertainIntent() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("outbox-submit-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appendingPathComponent("queue.json")
+        let queue = LiveTransactionOutbox(fileURL: file)
+        let operation = RecordTransactionOperation(accountID: "a", categoryID: "c", amountMinor: -9007199254740993,
+            occurredOn: "2026-10-09", payeeName: "Durable", memo: "Preserve", isCleared: false,
+            splits: [], flag: "orange", tags: ["qa"], attachmentMetadata: [], clientOperationID: UUID().uuidString)
+        var attempts = 0
+        do {
+            try await queue.submit(operation) { sent in
+                attempts += 1
+                XCTAssertEqual(LiveTransactionOutbox(fileURL: file).entries.first?.operation, sent)
+                throw URLError(.timedOut)
+            }
+            XCTFail("Expected uncertain send")
+        } catch { XCTAssertEqual((error as? URLError)?.code, .timedOut) }
+        XCTAssertEqual(attempts, 1)
+        let reopened = LiveTransactionOutbox(fileURL: file)
+        XCTAssertEqual(reopened.entries.first?.operation, operation)
+        try await reopened.replay { sent in XCTAssertEqual(sent, operation) }
+        XCTAssertEqual(LiveTransactionOutbox(fileURL: file).count, 0)
+    }
+
+    @MainActor
     func testLiveWorkspaceReadCacheSurvivesRelaunchWithoutInventingAuthority() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("live-cache-\(UUID().uuidString)", isDirectory: true)

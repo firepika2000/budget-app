@@ -22,6 +22,9 @@ prepare = send_body.index("try await credentials.prepare()")
 binding = send_body.index("try transactionOutbox.requireServer(")
 mutation = send_body.index("client.createTransaction(")
 abort "Canonical mutation must recheck binding after refresh" unless prepare && binding && mutation && prepare < binding && binding < mutation
+record_first = workspace.index("    func recordTransaction(_ operation:", send_last)
+record_last = workspace.index("    func updateTransaction(id:", record_first || 0)
+abort "Canonical submission must use durable-first queue" unless record_first && record_last && workspace[record_first...record_last].include?("transactionOutbox.submit(identified)")
 abort "Pending rows bypass workspace access" unless workspace.include?('guard !workspaceAccessDenied else { return [] }') && workspace.include?('PendingTransactionVisibility.allows($0.operation, canView: budget.can("view_transactions")')
 abort "Pending restricted state appears fully synced" unless workspace.include?('store.pendingLiveTransactions.isEmpty && !store.pendingLiveDetailsRestricted') && workspace.include?('pending-sync-restricted')
 abort "Pending discard bypasses visible entry check" unless workspace.include?('guard pendingLiveTransactions.contains(where: { $0.id == id }) else')
@@ -83,5 +86,43 @@ try await MainActor.run {
  precondition(retry.entries == secondOriginal.entries && !retry.requiresLegacyReview)
  print("PASS: current whole-resource scope and preserved bytes, explicit adoption, no legacy replay/append/discard, exact identity/money/metadata, endpoint isolation, relaunch, canonical acknowledgement, interrupted-publication recovery")
 }
+try await Task { @MainActor in
+ let root = FileManager.default.temporaryDirectory.appendingPathComponent("outbox-submit-\(UUID().uuidString)")
+ defer { try? FileManager.default.removeItem(at: root) }
+ let file = root.appendingPathComponent("queue.json")
+ let operation = RecordTransactionOperation(accountID: "a", categoryID: "c", amountMinor: -9007199254740993,
+  occurredOn: "2026-10-09", payeeName: "Durable", memo: "Exact draft", isCleared: false,
+  splits: [], flag: "orange", tags: ["qa"], attachmentMetadata: [], clientOperationID: UUID().uuidString)
+ let queue = LiveTransactionOutbox(fileURL: file)
+ var sends = 0
+ do {
+  try await queue.submit(operation) { sent in
+   sends += 1
+   precondition(LiveTransactionOutbox(fileURL: file).entries.first?.operation == sent)
+   do { try queue.remove(id: sent.clientOperationID!); fatalError("In-flight discard allowed") } catch {}
+   throw URLError(.timedOut)
+  }
+  fatalError("Expected uncertain send")
+ } catch {}
+ precondition(sends == 1 && queue.count == 1 && !queue.isReplaying)
+ let reopened = LiveTransactionOutbox(fileURL: file)
+ var second = operation; second.clientOperationID = UUID().uuidString
+ var order: [String] = []
+ try await reopened.submit(second) { sent in order.append(sent.clientOperationID!) }
+ precondition(order == [operation.clientOperationID!, second.clientOperationID!])
+ precondition(LiveTransactionOutbox(fileURL: file).count == 0)
+ do {
+  try await reopened.submit(operation) { _ in throw BudgetApplicationError.invalidOperation("Server rejection") }
+  fatalError("Expected review state")
+ } catch {}
+ precondition(LiveTransactionOutbox(fileURL: file).entries.first?.operation == operation)
+ let blockedParent = root.appendingPathComponent("blocked")
+ try Data("not a directory".utf8).write(to: blockedParent)
+ let unwritable = LiveTransactionOutbox(fileURL: blockedParent.appendingPathComponent("queue.json"))
+ var attempted = false
+ do { try await unwritable.submit(operation) { _ in attempted = true }; fatalError("Write unexpectedly succeeded") } catch {}
+ precondition(!attempted && unwritable.count == 0)
+ print("PASS: durable before first send, exact uncertain intent survives relaunch, ordered submission, acknowledgement, retained rejection, no send after persistence failure")
+}.value
 SWIFT
 RUBY

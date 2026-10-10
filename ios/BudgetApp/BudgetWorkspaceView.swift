@@ -3644,18 +3644,12 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
             outboxFailureMessage = "Older pending changes need destination review in Profile & Settings → Pending Sync."
             return
         }
-        guard try transactionOutbox.beginReplay() else { return }
-        defer { transactionOutbox.finishReplay() }
-        for entry in transactionOutbox.entries {
-            do {
-                try await sendTransaction(entry.operation)
-                try transactionOutbox.acknowledgeReplay(id: entry.id)
-                outboxFailureMessage = nil
-            } catch {
-                if isTransientConnectivityFailure(error) { throw error }
-                outboxFailureMessage = "A saved transaction needs attention: \(error.localizedDescription)"
-                return
-            }
+        do {
+            try await transactionOutbox.replay { try await sendTransaction($0) }
+            if transactionOutbox.count == 0 { outboxFailureMessage = nil }
+        } catch {
+            if isTransientConnectivityFailure(error) { throw error }
+            outboxFailureMessage = "A saved transaction needs attention: \(error.localizedDescription)"
         }
     }
 
@@ -3696,9 +3690,15 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
         var identified = operation
         if identified.clientOperationID == nil { identified.clientOperationID = UUID().uuidString.lowercased() }
         do {
-            try await sendTransaction(identified)
-        } catch where isTransientConnectivityFailure(error) {
-            try transactionOutbox.enqueue(identified)
+            try await transactionOutbox.submit(identified) { try await sendTransaction($0) }
+            if transactionOutbox.count == 0 { outboxFailureMessage = nil }
+        } catch {
+            // Persistence/legacy-review failure is not a saved transaction.
+            guard !transactionOutbox.requiresLegacyReview, transactionOutbox.loadErrorMessage == nil,
+                  transactionOutbox.entries.contains(where: { $0.operation == identified }) else { throw error }
+            if !isTransientConnectivityFailure(error) {
+                outboxFailureMessage = "A saved transaction needs attention: \(error.localizedDescription)"
+            }
         }
     }
     func updateTransaction(id: String, operation: RecordTransactionOperation) async throws { try await credentials.prepare(); _ = try await client.updateTransaction(budgetID: budget.id, transactionID: id, transaction: operation.apiValue, token: token) }
