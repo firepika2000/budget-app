@@ -177,6 +177,23 @@ def upsert_category_target(
     return target
 
 
+@router.get("/category-targets", response_model=list[CategoryTargetResponse])
+def list_category_targets(
+    budget_id: str,
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[CategoryTarget]:
+    budget = require_budget_capability(db, user, budget_id, "view_categories")
+    visible = visible_resource_ids(db, user, budget, "category")
+    query = select(CategoryTarget).join(Category, Category.id == CategoryTarget.category_id).where(
+        CategoryTarget.budget_id == budget_id, Category.budget_id == budget_id)
+    if visible is not None:
+        query = query.where(CategoryTarget.category_id.in_(visible))
+    return list(db.scalars(query.order_by(CategoryTarget.category_id, CategoryTarget.id).offset(offset).limit(limit)))
+
+
 @router.get("/categories/{category_id}/target", response_model=Optional[CategoryTargetResponse])
 def get_category_target(
     budget_id: str,

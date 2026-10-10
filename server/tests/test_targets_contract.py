@@ -20,6 +20,30 @@ def target_url(budget_id, category_id):
     return f"/api/v1/budgets/{budget_id}/categories/{category_id}/target"
 
 
+def test_target_listing_is_bounded_stable_and_resource_scoped(client, owner_token, session_factory):
+    from .test_delegated_access import configure_child
+    budget = create_budget(client, owner_token, session_factory)
+    account, first = create_budget_structure(client, owner_token, budget["id"])
+    second = add_category(client, owner_token, budget["id"], "Private", "Private target")
+    url = f"/api/v1/budgets/{budget['id']}/category-targets"
+    assert client.get(url, headers=auth(owner_token)).json() == []
+    for category in [first, second]:
+        assert client.put(target_url(budget["id"], category["id"]), headers=auth(owner_token),
+                          json={"target_type": "monthly_funding", "target_amount_minor": 1234}).status_code == 200
+    pages = [client.get(url, headers=auth(owner_token), params={"limit": 1, "offset": offset}) for offset in range(3)]
+    assert all(page.status_code == 200 for page in pages)
+    assert [row["category_id"] for page in pages for row in page.json()] == sorted([first["id"], second["id"]])
+    assert pages[2].json() == []
+    assert client.get(url, headers=auth(owner_token), params={"limit": 201}).status_code == 422
+    assert client.get(url, headers=auth(owner_token), params={"offset": -1}).status_code == 422
+    child_id, child_token = add_child(session_factory, client)
+    configure_child(client, owner_token, budget["id"], child_id, account["id"], first["id"])
+    restricted = client.get(url, headers=auth(child_token))
+    assert restricted.status_code == 200, restricted.text
+    assert [row["category_id"] for row in restricted.json()] == [first["id"]]
+    assert second["id"] not in restricted.text
+
+
 def postings_sum(session_factory, budget_id):
     with session_factory() as db:
         return sum(p.amount_minor for p in db.query(AllocationPosting).filter_by(budget_id=budget_id))
