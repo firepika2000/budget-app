@@ -698,9 +698,16 @@ class ForecastResponse(BaseModel):
 
 
 class AssignmentUpsert(BaseModel):
+    mutation_operation_id: Optional[UUID] = None
     month: date
     assigned_minor: int = Field(ge=MIN_INT64 + 1, le=MAX_INT64)
     expected_allocation_version: Optional[int] = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def require_identified_observation(self) -> "AssignmentUpsert":
+        if self.mutation_operation_id is not None and self.expected_allocation_version is None:
+            raise ValueError("identified assignments require expected_allocation_version")
+        return self
 
     @field_validator("month")
     @classmethod
@@ -721,6 +728,7 @@ class AssignmentResponse(BaseModel):
 
 
 class AllocationTransferCreate(BaseModel):
+    mutation_operation_id: Optional[UUID] = None
     source_category_id: str
     destination_category_id: str
     amount_minor: int = Field(gt=0, le=MAX_INT64)
@@ -730,6 +738,8 @@ class AllocationTransferCreate(BaseModel):
 
     @model_validator(mode="after")
     def require_distinct_categories(self) -> "AllocationTransferCreate":
+        if self.mutation_operation_id is not None and self.expected_allocation_version is None:
+            raise ValueError("identified money moves require expected_allocation_version")
         if self.source_category_id == self.destination_category_id:
             raise ValueError("allocation categories must be different")
         return self

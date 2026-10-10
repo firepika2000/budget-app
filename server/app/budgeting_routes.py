@@ -1490,7 +1490,16 @@ def upsert_assignment(
     # Planning periods may be in the future, unlike actual transaction dates. The
     # all-date RTA guard below reserves only existing cash, never forecast income.
     budget = lock_budget(db, budget_id)
-    require_version(budget, body.expected_allocation_version)
+    operation_id = str(body.mutation_operation_id) if body.mutation_operation_id is not None else None
+    digest = "v1:" + hashlib.sha256(json.dumps({
+        "kind": "assignment", "category_id": category_id,
+        "body": body.model_dump(mode="json", exclude={"mutation_operation_id"}),
+    }, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    receipt = db.get(WorkspaceCommandReceipt, (budget_id, user.id, operation_id)) if operation_id is not None else None
+    if receipt is not None and (receipt.command_kind != "assignment" or receipt.resource_id != category_id or receipt.request_digest != digest):
+        raise HTTPException(status_code=409, detail="Operation identity was already used for a different command.")
+    if receipt is None:
+        require_version(budget, body.expected_allocation_version)
     through = month_end(body.month)
     current_assigned = int(db.scalar(
         select(func.coalesce(func.sum(AllocationPosting.amount_minor), 0))
@@ -1502,6 +1511,9 @@ def upsert_assignment(
             AllocationOperation.occurred_on <= through,
         )
     ) or 0)
+    if receipt is not None:
+        return {"budget_id": budget_id, "category_id": category_id, "month": body.month,
+                "assigned_minor": current_assigned, "allocation_version": budget.allocation_version}
     delta = body.assigned_minor - current_assigned
     if not -(2**63) + 1 <= delta <= 2**63 - 1:
         raise HTTPException(status_code=422, detail="Allocation change is outside the supported range")
@@ -1520,7 +1532,16 @@ def upsert_assignment(
                 PostingInput(bucket="category", category_id=category_id, amount_minor=delta),
             ],
         )
-    db.commit()
+    if operation_id is not None:
+        db.add(WorkspaceCommandReceipt(budget_id=budget_id, actor_user_id=user.id,
+            operation_id=operation_id, command_kind="assignment", resource_id=category_id, request_digest=digest))
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        if operation_id is None or db.get(WorkspaceCommandReceipt, (budget_id, user.id, operation_id)) is None:
+            raise
+        return upsert_assignment(budget_id, category_id, body, user, db)
     return {
         "budget_id": budget_id,
         "category_id": category_id,
@@ -1648,7 +1669,6 @@ def transfer_allocation(
     if body.occurred_on > today():
         raise HTTPException(status_code=422, detail="Future transfers belong in the planning layer")
     budget = lock_budget(db, budget_id)
-    require_version(budget, body.expected_allocation_version)
     transfer_categories = [db.get(Category, category_id) for category_id in (
         body.source_category_id, body.destination_category_id
     )]
@@ -1668,6 +1688,23 @@ def transfer_allocation(
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Reallocation is disabled for this delegated budget")
         if any(category.delegated_user_id != user.id for category in transfer_categories):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Delegated money may only move within your budget")
+    operation_id = str(body.mutation_operation_id) if body.mutation_operation_id is not None else None
+    digest = "v1:" + hashlib.sha256(json.dumps({
+        "kind": "allocation_transfer", "body": body.model_dump(mode="json", exclude={"mutation_operation_id"}),
+    }, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    if operation_id is not None:
+        receipt = db.get(WorkspaceCommandReceipt, (budget_id, user.id, operation_id))
+        if receipt is not None:
+            if receipt.command_kind != "allocation_transfer" or receipt.request_digest != digest:
+                raise HTTPException(status_code=409, detail="Operation identity was already used for a different command.")
+            accepted = db.scalar(select(AllocationOperation).options(selectinload(AllocationOperation.postings)).where(
+                AllocationOperation.id == receipt.resource_id, AllocationOperation.budget_id == budget_id,
+            ))
+            if accepted is None:
+                raise HTTPException(status_code=404, detail="Allocation operation not found")
+            return _allocation_operation_rows(db, budget, [accepted])[0]
+    require_version(budget, body.expected_allocation_version)
+    if delegated_policy is not None:
         rules = {
             rule.category_id: rule for rule in db.scalars(select(DelegatedCategoryRule).where(
                 DelegatedCategoryRule.policy_id == delegated_policy.id,
@@ -1708,7 +1745,17 @@ def transfer_allocation(
             ),
         ],
     )
-    db.commit()
+    if operation_id is not None:
+        db.flush() # Materialize the accepted allocation operation's generated identity.
+        db.add(WorkspaceCommandReceipt(budget_id=budget_id, actor_user_id=user.id,
+            operation_id=operation_id, command_kind="allocation_transfer", resource_id=operation.id, request_digest=digest))
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        if operation_id is None or db.get(WorkspaceCommandReceipt, (budget_id, user.id, operation_id)) is None:
+            raise
+        return transfer_allocation(budget_id, body, user, db)
     db.refresh(operation)
     return {
         "id": operation.id,

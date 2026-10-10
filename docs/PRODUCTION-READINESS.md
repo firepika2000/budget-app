@@ -1,5 +1,27 @@
 # Production readiness mission ledger
 
+## Identified Assign and category Move Money receipts (2026-10-09)
+
+Both canonical allocation routes now optionally accept a mutation UUID, requiring the observed
+allocation version. They use the existing actor/budget-scoped 0049 receipt table; digest-bound
+receipt and allocation postings commit atomically. Matching assignment retries return current
+monthly assigned totals, preserving later plan changes; matching moves return the accepted
+allocation operation without appending another pair of postings. Accepted assignment no-ops also
+record receipts. Changed payload/identity reuse and fresh stale commands reject. Authorization,
+category scope and delegated ownership/reallocation checks precede acknowledgement; actual new
+commands retain real-RTA/source funds, version and delegated rule enforcement. Budget row locking
+refreshes authoritative allocation state. Cross-command receipt collisions roll back and re-enter
+the guarded path. Legacy unidentified clients remain compatible.
+
+Ten new HTTP cases passed: both route retries, changed payload, later plan preservation, no-op
+receipt, missing observation, revoked category/capability and revoked delegated reallocation.
+Allocation ledger/archive/history privacy, delegated access and financial golden suites also passed.
+The first focused run caught an unmaterialized move operation ID; it was corrected by flushing the
+canonical operation before constructing its receipt, within the same transaction. Diff checks pass.
+These SQLite HTTP tests are not proof of concurrent PostgreSQL/lost-response behavior; that gate
+remains open. No Swift changes or native rerun. Server update/restart required, no new migration
+beyond 0049. Native offline Assign/Move integration remains next; TestFlight remains held.
+
 ## Preserve newer queues across workspace ownership changes (2026-10-09)
 
 Persistence audit reproduced the risk of multiple outbox instances: a stale owner's array could

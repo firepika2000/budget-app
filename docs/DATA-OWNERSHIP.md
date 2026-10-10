@@ -27,6 +27,16 @@ the server returns. Completing only one additional command does not close this m
 
 #### Canonical server mutation/replay boundary
 
+Assign and category Move Money now optionally accept `mutation_operation_id` with a required
+`expected_allocation_version`. The existing 0049 receipt table binds the exact validated request
+and category/command identity in the same commit as allocation effects. Budget locking precedes
+receipt/version evaluation. An accepted assignment retry returns the current monthly assignment,
+not the old requested total; an accepted move retry returns its original immutable operation with
+the current allocation version. Neither appends postings or consumes RTA again. Current capability,
+category scope and delegated ownership/reallocation authority apply before acknowledgement. New
+commands still check plan versions, real funds and delegated category rules. Native assignment/move
+identity/outbox integration and real PostgreSQL concurrency proof remain unfinished.
+
 Identified ordinary transaction updates now optionally accept `mutation_operation_id` (UUID) and
 require `expected_revision`. Migration 0049 adds actor/budget-scoped command receipts binding command
 kind, target transaction and exact validated original payload digest. Receipt and normal ledger/audit
