@@ -70,10 +70,26 @@ struct RecordTransactionOperation: Codable, Equatable, Sendable {
     var mutationOperationID: String? = nil
 }
 
-struct MakeRecurringOperation: Equatable, Sendable {
+struct MakeRecurringOperation: Codable, Equatable, Sendable {
     let recurrenceUnit: String
     let intervalCount: Int
     let nextDate: String
+    var expectedRevision: String? = nil
+    var mutationOperationID: String? = nil
+
+    var isValidPending: Bool {
+        guard let revision = expectedRevision, revision.hasPrefix("v1:"), revision.count == 67,
+              revision.dropFirst(3).allSatisfy({ "0123456789abcdef".contains($0) }),
+              let identity = mutationOperationID, UUID(uuidString: identity) != nil,
+              ["days", "weeks", "months", "years"].contains(recurrenceUnit), (1...365).contains(intervalCount) else { return false }
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "yyyy-MM-dd"; formatter.isLenient = false
+        guard let date = formatter.date(from: nextDate) else { return false }
+        return formatter.string(from: date) == nextDate
+    }
 }
 
 struct CreatePayeeOperation: Equatable, Sendable { let displayName: String; let defaultCategoryID: String? }
@@ -278,6 +294,7 @@ final class LiveTransactionOutbox {
         var voidCommand: VoidTransactionOperation? = nil
         var attachmentUpload: AttachmentUpload? = nil
         var scheduleCreation: ScheduleOperation? = nil
+        var makeRecurring: MakeRecurringOperation? = nil
     }
 
     private let fileURL: URL
@@ -473,6 +490,7 @@ final class LiveTransactionOutbox {
                   existing.voidCommand == entry.voidCommand,
                   existing.attachmentUpload == entry.attachmentUpload,
                   existing.scheduleCreation == entry.scheduleCreation,
+                  existing.makeRecurring == entry.makeRecurring && existing.transactionID == entry.transactionID,
                   existing.operation == nil && existing.bulkUpdate == nil else {
                 throw BudgetApplicationError.invalidOperation("A pending command identity cannot be reused for different details.")
             }
@@ -501,6 +519,13 @@ final class LiveTransactionOutbox {
             throw BudgetApplicationError.invalidOperation("Enter a valid schedule amount, date and recurrence before saving.")
         }
         try enqueuePlanning(Entry(id: id, queuedAt: Date(), operation: nil, scheduleCreation: operation))
+    }
+
+    func enqueueMakeRecurring(transactionID: String, operation: MakeRecurringOperation) throws {
+        guard !transactionID.isEmpty, operation.isValidPending, let identity = operation.mutationOperationID else {
+            throw BudgetApplicationError.invalidOperation("Reopen this transaction to review its template, date and recurrence before saving.")
+        }
+        try enqueuePlanning(Entry(id: identity, queuedAt: Date(), operation: nil, transactionID: transactionID, makeRecurring: operation))
     }
 
     func enqueueVoid(_ operation: VoidTransactionOperation) throws {
@@ -649,8 +674,12 @@ final class LiveTransactionOutbox {
         guard Set(values.map(\.id)).count == values.count,
               values.allSatisfy({ entry in
                   guard UUID(uuidString: entry.id) != nil else { return false }
-                  let payloadCount = [entry.operation != nil, entry.bulkUpdate != nil, entry.assignment != nil, entry.moneyMove != nil, entry.accountTransfer != nil, entry.reconciliation != nil, entry.voidCommand != nil, entry.attachmentUpload != nil, entry.scheduleCreation != nil].filter { $0 }.count
+                  let payloadCount = [entry.operation != nil, entry.bulkUpdate != nil, entry.assignment != nil, entry.moneyMove != nil, entry.accountTransfer != nil, entry.reconciliation != nil, entry.voidCommand != nil, entry.attachmentUpload != nil, entry.scheduleCreation != nil, entry.makeRecurring != nil].filter { $0 }.count
                   guard payloadCount == 1 else { return false }
+                  if let recurring = entry.makeRecurring {
+                      return entry.transactionID?.isEmpty == false && entry.transferID == nil
+                          && recurring.mutationOperationID == entry.id && recurring.isValidPending
+                  }
                   if let schedule = entry.scheduleCreation {
                       return entry.transactionID == nil && entry.transferID == nil && schedule.isValidPendingCreation
                   }

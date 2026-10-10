@@ -1,5 +1,40 @@
 # Production readiness mission ledger
 
+## Native durable Make Recurring (2026-10-09)
+
+The production transaction editor captures its displayed source revision when saving
+Make Recurring. Live persists the source ID, reviewed revision, explicit next date,
+cadence and stable UUID before any transport. Canonical ordered replay resolves current
+credentials and verifies the server/actor/budget destination before sending the existing
+Make Recurring endpoint. Lost responses retain the same intent for receipt acknowledgement;
+stale source/date and authorization rejections pause for explicit Pending Sync review,
+never substitute a fresh revision or generate a local schedule/posted transaction.
+
+Pending Sync and Scheduled expose the saved recurring template separately from accepted
+Upcoming/Due items. Known workspace/resource denial hides its details. Saved-but-unaccepted
+intent leaves the editor once rather than inviting another creation identity. Save guards
+overlapping tasks, and the sheet explicitly inherits the same workspace store. Demo retains
+its existing application-service behavior through the same production editor and screens.
+
+Executed evidence: the production Foundation outbox regression passes exact source/revision/
+date/identity persistence, interruption/relaunch, duplicate identity refusal, rejection pause,
+original-intent explicit retry and acknowledgement cleanup, alongside existing durable
+operations. Two focused Swift API tests pass: identified requests preserve all reviewed
+fields and rotated bearer credentials, while legacy requests omit the new optional fields.
+Native persistence regression coverage was added; execution is not claimed by compilation.
+Regular Xcode 27.0 (27A266a), `/Applications/Xcode.app/Contents/Developer`, passed
+`build-for-testing` for the app and native test targets against preserved iPhone 17 Pro Max
+simulator `3ABD861E-D38D-4AFD-A356-959266051564`, iOS 27. `git diff --check` passed.
+
+Human retest after rebuilding and updating the server: open an eligible posted transaction,
+disconnect, choose Make Recurring and save one future occurrence. Confirm its pending row
+appears separately in Scheduled, relaunch offline, then reconnect. Exactly one accepted
+schedule should replace the pending row, without a new posted transaction or balance change.
+For an explicit conflict check, edit the source on another connected device before replay:
+Pending Sync should require review, not silently use that changed template. No new migration
+beyond 0049. Full offline scheduled editing/deletion/realization remains unfinished.
+TestFlight remains on hold; no merge/tag/release.
+
 ## Identified Make Recurring server boundary (2026-10-09)
 
 Make Recurring now accepts an optional stable mutation UUID with the observed source

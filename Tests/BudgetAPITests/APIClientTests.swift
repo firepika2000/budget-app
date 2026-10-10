@@ -770,6 +770,8 @@ final class APIClientTests: XCTestCase {
             let json = try XCTUnwrap(JSONSerialization.jsonObject(with: try requestBody(request)) as? [String: Any])
             XCTAssertEqual(json["recurrence_unit"] as? String, "months")
             XCTAssertEqual(json["next_date"] as? String, "2026-10-14")
+            XCTAssertNil(json["expected_revision"])
+            XCTAssertNil(json["mutation_operation_id"])
             return (HTTPURLResponse(url: request.url!, statusCode: 201, httpVersion: nil, headerFields: nil)!, Data(#"{"id":"s1","budget_id":"b1","account_id":"a1","destination_account_id":null,"category_id":"c1","name":"Market","amount_minor":-1200,"next_date":"2026-10-14","recurrence_unit":"months","interval_count":1,"memo":"","is_active":true,"last_realized_on":null}"#.utf8))
         }
         let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: session)
@@ -777,6 +779,33 @@ final class APIClientTests: XCTestCase {
         XCTAssertEqual(reversal.status, "reversal")
         let schedule = try await client.createScheduleFromTransaction(budgetID: "b1", transactionID: "t1", request: .init(recurrenceUnit: "months", nextDate: "2026-10-14"), token: "secret")
         XCTAssertEqual(schedule.id, "s1")
+    }
+
+    func testIdentifiedMakeRecurringPreservesReviewedPayloadWithCurrentCredential() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        let revision = "v1:" + String(repeating: "a", count: 64)
+        let identity = UUID().uuidString.lowercased()
+        var calls = 0
+        MockURLProtocol.handler = { request in
+            calls += 1
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer rotated")
+            XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/transactions/original/schedule")
+            let json = try XCTUnwrap(JSONSerialization.jsonObject(with: try requestBody(request)) as? [String: Any])
+            XCTAssertEqual(json["expected_revision"] as? String, revision)
+            XCTAssertEqual(json["mutation_operation_id"] as? String, identity)
+            XCTAssertEqual(json["next_date"] as? String, "2099-01-01")
+            XCTAssertEqual(json["interval_count"] as? Int, 2)
+            XCTAssertEqual(Set(json.keys), Set(["recurrence_unit", "interval_count", "next_date", "expected_revision", "mutation_operation_id"]))
+            return (HTTPURLResponse(url: request.url!, statusCode: 201, httpVersion: nil, headerFields: nil)!, Data(#"{"id":"s1","budget_id":"b1","account_id":"a1","category_id":"c1","name":"Market","amount_minor":-1200,"next_date":"2099-01-01","recurrence_unit":"months","interval_count":2,"memo":"","is_active":true}"#.utf8))
+        }
+        let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: URLSession(configuration: configuration))
+        let request = APITransactionSchedule(recurrenceUnit: "months", intervalCount: 2, nextDate: "2099-01-01", expectedRevision: revision, mutationOperationID: identity)
+        for _ in 0..<2 {
+            let accepted = try await client.createScheduleFromTransaction(budgetID: "b1", transactionID: "original", request: request, token: "rotated")
+            XCTAssertEqual(accepted.id, "s1")
+        }
+        XCTAssertEqual(calls, 2)
     }
 
     func testIdentifiedVoidCarriesOriginalObservationAndIdentityAfterCredentialRotation() async throws {

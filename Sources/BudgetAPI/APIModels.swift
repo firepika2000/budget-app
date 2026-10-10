@@ -1486,13 +1486,18 @@ public struct APITransactionSchedule: Encodable, Equatable, Sendable {
     public let recurrenceUnit: String
     public let intervalCount: Int
     public let nextDate: String?
-    public init(recurrenceUnit: String, intervalCount: Int = 1, nextDate: String? = nil) {
+    public let expectedRevision: String?
+    public let mutationOperationID: String?
+    public init(recurrenceUnit: String, intervalCount: Int = 1, nextDate: String? = nil, expectedRevision: String? = nil, mutationOperationID: String? = nil) {
         self.recurrenceUnit = recurrenceUnit; self.intervalCount = intervalCount; self.nextDate = nextDate
+        self.expectedRevision = expectedRevision; self.mutationOperationID = mutationOperationID
     }
     enum CodingKeys: String, CodingKey {
         case recurrenceUnit = "recurrence_unit"
         case intervalCount = "interval_count"
         case nextDate = "next_date"
+        case expectedRevision = "expected_revision"
+        case mutationOperationID = "mutation_operation_id"
     }
 }
 

@@ -3679,6 +3679,15 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
     }
 
     private func sendPendingTransaction(_ entry: LiveTransactionOutbox.Entry) async throws {
+        if let recurring = entry.makeRecurring, let transactionID = entry.transactionID {
+            try await credentials.prepare()
+            try transactionOutbox.requireServer(budgetID: budget.id, serverURL: credentials.serverURL, token: credentials.token)
+            _ = try await client.createScheduleFromTransaction(budgetID: budget.id, transactionID: transactionID,
+                request: .init(recurrenceUnit: recurring.recurrenceUnit, intervalCount: recurring.intervalCount,
+                    nextDate: recurring.nextDate, expectedRevision: recurring.expectedRevision,
+                    mutationOperationID: recurring.mutationOperationID), token: token)
+            return
+        }
         if let schedule = entry.scheduleCreation {
             try await credentials.prepare()
             try transactionOutbox.requireServer(budgetID: budget.id, serverURL: credentials.serverURL, token: credentials.token)
@@ -3828,7 +3837,15 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
         try transactionOutbox.enqueueVoid(identified)
         try await replaySavedPlanning()
     }
-    func createScheduleFromTransaction(id: String, operation: MakeRecurringOperation) async throws { try await credentials.prepare(); _ = try await client.createScheduleFromTransaction(budgetID: budget.id, transactionID: id, request: .init(recurrenceUnit: operation.recurrenceUnit, intervalCount: operation.intervalCount, nextDate: operation.nextDate), token: token) }
+    func createScheduleFromTransaction(id: String, operation: MakeRecurringOperation) async throws {
+        var identified = operation
+        if identified.mutationOperationID == nil { identified.mutationOperationID = UUID().uuidString.lowercased() }
+        try transactionOutbox.enqueueMakeRecurring(transactionID: id, operation: identified)
+        do { try await replaySavedPlanning() }
+        catch {
+            guard transactionOutbox.entries.contains(where: { $0.id == identified.mutationOperationID }) else { throw error }
+        }
+    }
     func transactionAttachments(id: String) async throws -> [APITransactionAttachment] { try await credentials.prepare(); return try await client.transactionAttachments(budgetID: budget.id, transactionID: id, token: token) }
     func transactionHistory(id: String, limit: Int, offset: Int) async throws -> [APITransactionChange] { try await credentials.prepare(); return try await client.transactionHistory(budgetID: budget.id, transactionID: id, limit: limit, offset: offset, token: token) }
     func recentTransactionChanges(limit: Int) async throws -> [APITransactionChange] { try await credentials.prepare(); return try await client.recentTransactionChanges(budgetID: budget.id, limit: limit, token: token) }
@@ -4841,6 +4858,10 @@ final class BudgetWorkspaceStore: ObservableObject {
         guard !workspaceAccessDenied else { return [] }
         let accountIDs = Set(accounts.map(\.id)), categoryIDs = Set(categories.map(\.id))
         return ((commandRepository as? LiveWorkspaceCommandRepository)?.pendingTransactions ?? []).filter { entry in
+            if entry.makeRecurring != nil {
+                return budget.can("manage_planning") && budget.can("view_transactions")
+                    && transactions.contains(where: { $0.id == entry.transactionID })
+            }
             if let schedule = entry.scheduleCreation {
                 return budget.can("manage_planning") && budget.can("view_accounts")
                     && accountIDs.contains(schedule.accountID)
@@ -4990,6 +5011,7 @@ final class BudgetWorkspaceStore: ObservableObject {
     }
 
     func createScheduleFromTransaction(id: String, operation: MakeRecurringOperation) async throws {
+        defer { publishPendingPlanningStatus() }
         try await services().transactions.makeRecurring(id: id, operation: operation)
         await refresh()
     }
@@ -6349,6 +6371,13 @@ private struct PendingLiveTransactionsView: View {
                                     .font(.caption).foregroundStyle(.secondary)
                                 Text("Saved for server approval · reconciliation history and balances remain unchanged until accepted")
                                     .font(.caption).foregroundStyle(.secondary)
+                            } else if let recurring = entry.makeRecurring {
+                                Text("Make Recurring").font(.headline)
+                                Text(store.transactions.first(where: { $0.id == entry.transactionID })?.payeeName ?? "Transaction")
+                                    .font(.subheadline)
+                                Text("\(recurring.nextDate) · every \(recurring.intervalCount) \(recurring.recurrenceUnit)").font(.caption)
+                                Text("Saved reviewed template · not included in accepted forecast or actual activity")
+                                    .font(.caption).foregroundStyle(.secondary)
                             } else if let schedule = entry.scheduleCreation {
                                 Text("Create Schedule").font(.headline)
                                 Text(schedule.name).font(.subheadline)
@@ -6370,7 +6399,7 @@ private struct PendingLiveTransactionsView: View {
                             }
                             Text("Saved \(entry.queuedAt.formatted(date: .abbreviated, time: .shortened))")
                                 .font(.caption2).foregroundStyle(.secondary)
-                            if entry.transactionID != nil {
+                            if entry.transactionID != nil && entry.makeRecurring == nil {
                                 Text("Pending edit · posted values remain unchanged until the server accepts it")
                                     .font(.caption).foregroundStyle(.secondary)
                             }
@@ -9990,7 +10019,7 @@ private struct LiveScheduledTransactionsView: View {
     private var due: [APIScheduledTransaction] { store.scheduledTransactions.filter { $0.isActive && BudgetWorkspaceStore.parseDate($0.nextDate) <= Date() }.sorted { $0.nextDate < $1.nextDate } }
     private var upcoming: [APIScheduledTransaction] { store.scheduledTransactions.filter { $0.isActive && BudgetWorkspaceStore.parseDate($0.nextDate) > Date() }.sorted { $0.nextDate < $1.nextDate } }
     private var paused: [APIScheduledTransaction] { store.scheduledTransactions.filter { !$0.isActive }.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending } }
-    private var pendingSchedules: [LiveTransactionOutbox.Entry] { store.pendingLiveTransactions.filter { $0.scheduleCreation != nil } }
+    private var pendingSchedules: [LiveTransactionOutbox.Entry] { store.pendingLiveTransactions.filter { $0.scheduleCreation != nil || $0.makeRecurring != nil } }
     var body: some View {
         List {
             Section { Text("Scheduled money is a forecast only. It changes no balance, category, or Available amount until you explicitly enter it.").font(.footnote).foregroundStyle(.secondary) }
@@ -10009,6 +10038,17 @@ private struct LiveScheduledTransactionsView: View {
                                         .font(.caption).foregroundStyle(.secondary)
                                 }
                             }.accessibilityIdentifier("pending-schedule-\(entry.id)")
+                        } else if let recurring = entry.makeRecurring {
+                            NavigationLink {
+                                PendingLiveTransactionsView(store: store)
+                            } label: {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Label(store.transactions.first(where: { $0.id == entry.transactionID })?.payeeName ?? "Make Recurring", systemImage: "icloud.and.arrow.up")
+                                    Text("Next occurrence \(recurring.nextDate)").font(.caption)
+                                    Text(entry.requiresReview == true ? "Needs review · automatic retry paused" : "Saved on this iPhone · not yet included in forecast")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
+                            }.accessibilityIdentifier("pending-recurring-\(entry.id)")
                         }
                     }
                 }
@@ -10328,7 +10368,7 @@ private struct LiveTransactionDetailView: View {
             .sheet(isPresented: $showEdit) { if let transaction { LiveTransactionEditView(budget: store.budget, transaction: transaction, accounts: store.accounts, categories: store.categories, onSaved: reload) } }
             .sheet(item: $editTransfer) { LiveTransferView(presentation: $0, budget: store.budget, accounts: store.accounts, onSaved: reload) }
             .sheet(isPresented: $showVoid) { if let transaction { TransactionVoidView(transaction: transaction) } }
-            .sheet(isPresented: $showRecurring) { if let transaction { MakeRecurringView(transaction: transaction) } }
+            .sheet(isPresented: $showRecurring) { if let transaction { MakeRecurringView(transaction: transaction).environmentObject(store) } }
             .confirmationDialog("Duplicate this transaction?", isPresented: $confirmDuplicate, titleVisibility: .visible) { Button("Duplicate Transaction") { Task { await duplicateTransaction() } }; Button("Cancel", role: .cancel) {} } message: { Text("A new uncleared copy dated today will post through the normal accounting engine. Attachments are not copied.") }
             .confirmationDialog(transaction?.transferID == nil ? "Delete this transaction?" : "Delete this transfer?", isPresented: $confirmDelete, titleVisibility: .visible) { Button(transaction?.transferID == nil ? "Delete Transaction" : "Delete Transfer", role: .destructive) { Task { await deleteTransaction() } }; Button("Cancel", role: .cancel) {} } message: { Text(transaction?.transferID == nil ? "This cannot be undone and will immediately update the plan and reports." : "Both linked account entries will be removed atomically. Your plan and categories will not change.") }
     }
@@ -10515,7 +10555,7 @@ private struct MakeRecurringView: View {
         _nextDate = State(initialValue: max(future, Calendar.current.date(byAdding: .day, value: 1, to: Date())!))
     }
     var body: some View { NavigationStack { Form { Section("Template") { LabeledContent("Payee", value: transaction.payeeName); LabeledContent("Amount", value: store.format(transaction.amountMinor)); Text("The existing posted transaction remains unchanged.").font(.footnote).foregroundStyle(.secondary) }; Section("Recurrence") { Picker("Frequency", selection: $unit) { Text("Days").tag("days"); Text("Weeks").tag("weeks"); Text("Months").tag("months"); Text("Years").tag("years") }; Stepper("Every \(interval) \(unit)", value: $interval, in: 1...365); if unit == "weeks" { Button("Biweekly") { interval = 2 } }; DatePicker("Next occurrence", selection: $nextDate, in: Calendar.current.startOfDay(for: Date()).addingTimeInterval(86_400)..., displayedComponents: .date).accessibilityIdentifier("recurring-next-date") }; Section { Text("Saving creates forecast only. No account, category, or actual Activity value changes until realization.").font(.footnote).foregroundStyle(.secondary) } }.navigationTitle("Make Recurring").toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }; ToolbarItem(placement: .confirmationAction) { Button("Save Schedule") { Task { await save() } }.disabled(saving).accessibilityIdentifier("save-recurring-action") } }.alert("Unable to create schedule", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) { Button("OK", role: .cancel) {} } message: { Text(error ?? "Unknown error") } } }
-    private func save() async { saving = true; defer { saving = false }; do { try await store.createScheduleFromTransaction(id: transaction.id, operation: .init(recurrenceUnit: unit, intervalCount: interval, nextDate: BudgetWorkspaceStore.dateString(nextDate))); dismiss() } catch { self.error = error.localizedDescription } }
+    private func save() async { guard !saving else { return }; saving = true; defer { saving = false }; do { try await store.createScheduleFromTransaction(id: transaction.id, operation: .init(recurrenceUnit: unit, intervalCount: interval, nextDate: BudgetWorkspaceStore.dateString(nextDate), expectedRevision: transaction.revision)); dismiss() } catch { self.error = error.localizedDescription } }
 }
 
 private struct TransactionAttachmentsView: View {

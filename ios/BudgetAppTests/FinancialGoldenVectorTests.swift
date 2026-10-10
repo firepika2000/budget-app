@@ -4,6 +4,28 @@ import BudgetAPI
 
 final class FinancialGoldenVectorTests: XCTestCase {
     @MainActor
+    func testPendingMakeRecurringRetainsCapturedTemplateAndDateAcrossRelaunch() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("queue.json")
+        let queue = LiveTransactionOutbox(fileURL: file)
+        let identity = UUID().uuidString.lowercased()
+        let operation = MakeRecurringOperation(recurrenceUnit: "months", intervalCount: 2, nextDate: "2099-01-01",
+            expectedRevision: "v1:" + String(repeating: "a", count: 64), mutationOperationID: identity)
+        try queue.enqueueMakeRecurring(transactionID: "original", operation: operation)
+        try queue.enqueueMakeRecurring(transactionID: "original", operation: operation)
+        let reopened = LiveTransactionOutbox(fileURL: file)
+        XCTAssertEqual(reopened.count, 1)
+        XCTAssertEqual(reopened.entries.first?.makeRecurring, operation)
+        XCTAssertEqual(reopened.entries.first?.transactionID, "original")
+        XCTAssertThrowsError(try reopened.enqueueMakeRecurring(transactionID: "different", operation: operation))
+        var changed = operation
+        changed.expectedRevision = "v1:" + String(repeating: "b", count: 64)
+        XCTAssertThrowsError(try reopened.enqueueMakeRecurring(transactionID: "original", operation: changed))
+        XCTAssertEqual(reopened.entries.first?.makeRecurring, operation)
+    }
+
+    @MainActor
     func testPendingScheduleCreationPreservesExactIntentAcrossRelaunch() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory) }

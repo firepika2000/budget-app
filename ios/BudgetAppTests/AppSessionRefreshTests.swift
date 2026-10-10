@@ -730,7 +730,7 @@ final class AppSessionRefreshTests: XCTestCase {
         XCTAssertEqual(accessProfile.version, 0)
         try await store.createScheduleFromTransaction(
             id: "t1",
-            operation: .init(recurrenceUnit: "months", intervalCount: 1, nextDate: "2026-10-15")
+            operation: .init(recurrenceUnit: "months", intervalCount: 1, nextDate: "2026-10-15", expectedRevision: "v1:" + String(repeating: "a", count: 64))
         )
 
         XCTAssertEqual(Array(requests.authorizations.prefix(4)), ["Bearer A1", "Bearer A2", "Bearer A2", "Bearer A2"])

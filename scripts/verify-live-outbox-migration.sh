@@ -9,6 +9,7 @@ puts "import Foundation\nimport CryptoKit"
 puts 'enum BudgetApplicationError: Error { case invalidOperation(String) }'
 puts s[s.index("struct AssignMoneyOperation:")...s.index("struct TransactionSplitOperation:")]
 puts s[s.index("struct TransactionSplitOperation:")...s.index("struct MakeRecurringOperation:")]
+puts s[s.index("struct MakeRecurringOperation:")...s.index("struct CreatePayeeOperation:")]
 puts s[s.index("struct TransferMoneyOperation:")...s.index("struct ScheduleOperation:")]
 puts s[s.index("struct ScheduleOperation:")...s.index("struct AccountBalanceObservation:")]
 api = File.read("Sources/BudgetAPI/APIModels.swift")
@@ -42,6 +43,7 @@ abort "Edit must persist before replay" unless edit_body.index("enqueueEdit(") &
 abort "Edit sender must use current endpoint binding" unless send_body.include?("client.updateTransaction(") && send_body.include?("operation.apiValue")
 abort "Bulk sender missing from canonical command path" unless send_body.include?("client.bulkUpdateTransactions(") && workspace.include?("try transactionOutbox.enqueueBulk(identified)")
 abort "Schedules must persist before canonical identified replay" unless workspace.include?("try transactionOutbox.enqueueSchedule(id:") && send_body.include?("entry.scheduleCreation") && send_body.include?("schedule: schedule.apiValue, operationID: entry.id, token: token")
+abort "Make Recurring loses captured intent or bypasses durable replay" unless workspace.include?("transactionOutbox.enqueueMakeRecurring(transactionID: id, operation: identified)") && send_body.include?("entry.makeRecurring") && send_body.include?("expectedRevision: recurring.expectedRevision") && workspace.include?("expectedRevision: transaction.revision")
 abort "Pending schedules must remain separate from accepted forecast" unless workspace.include?('Section("Awaiting Server Confirmation")') && workspace.include?('not yet included in forecast')
 abort "Planning commands bypass durable canonical sender" unless send_body.include?("client.updateAssignment(") && send_body.include?("client.transferAllocation(") && workspace.include?("try transactionOutbox.enqueueAssignment(identified)") && workspace.include?("try transactionOutbox.enqueueMoneyMove(identified)")
 abort "Transfers bypass durable canonical sender" unless send_body.include?("client.createTransfer(") && send_body.include?("client.updateTransfer(") && workspace.include?("try transactionOutbox.enqueueTransfer(identified)") && workspace.include?("try transactionOutbox.enqueueTransfer(identified, id: id)")
@@ -380,6 +382,29 @@ try await Task { @MainActor in
  let invalidSchedule = ScheduleOperation(accountID: "checking", name: "Invalid", amountMinor: -1, nextDate: "2099-02-30", recurrenceUnit: "months")
  do { try pausedSchedule.enqueueSchedule(id: UUID().uuidString, operation: invalidSchedule); fatalError("Invalid date persisted") } catch {}
  print("PASS: exact schedule resources/cadence/limit/paused state/identity survive loss and relaunch, rejected intent pauses, explicit retry preserves original payload, acknowledgement removes it, invalid date is not saved")
+ let recurringFile = root.appendingPathComponent("recurring.json")
+ let recurringQueue = LiveTransactionOutbox(fileURL: recurringFile)
+ let recurringID = UUID().uuidString.lowercased()
+ let recurring = MakeRecurringOperation(recurrenceUnit: "months", intervalCount: 2, nextDate: "2099-01-01", expectedRevision: "v1:" + String(repeating: "a", count: 64), mutationOperationID: recurringID)
+ try recurringQueue.enqueueMakeRecurring(transactionID: "original", operation: recurring)
+ try recurringQueue.enqueueMakeRecurring(transactionID: "original", operation: recurring)
+ do { try recurringQueue.enqueueMakeRecurring(transactionID: "different", operation: recurring); fatalError("Recurring identity reused for different source") } catch {}
+ do { try await recurringQueue.replayCommands { entry in
+     precondition(entry.transactionID == "original" && entry.makeRecurring == recurring)
+     throw URLError(.networkConnectionLost)
+ }; fatalError("Expected transport interruption") } catch {}
+ let reopenedRecurring = LiveTransactionOutbox(fileURL: recurringFile)
+ precondition(reopenedRecurring.count == 1 && reopenedRecurring.entries[0].makeRecurring == recurring)
+ do { try await reopenedRecurring.replayCommands(shouldPause: { _ in true }) { _ in throw BudgetApplicationError.invalidOperation("Stale observed source") }; fatalError("Expected rejection") } catch {}
+ let pausedRecurring = LiveTransactionOutbox(fileURL: recurringFile)
+ precondition(pausedRecurring.entries[0].requiresReview == true)
+ do { try await pausedRecurring.replayCommands { _ in fatalError("Stale source automatically retried") } } catch {}
+ try pausedRecurring.retryReviewed(id: recurringID)
+ try await pausedRecurring.replayCommands { entry in precondition(entry.id == recurringID && entry.makeRecurring == recurring) }
+ precondition(LiveTransactionOutbox(fileURL: recurringFile).count == 0)
+ var invalidRecurring = recurring; invalidRecurring.expectedRevision = nil
+ do { try pausedRecurring.enqueueMakeRecurring(transactionID: "original", operation: invalidRecurring); fatalError("Unobserved template persisted") } catch {}
+ print("PASS: Make Recurring preserves source/revision/date/identity across interruption and relaunch; rejected template pauses, explicit retry never rebases, acknowledgement removes intent")
 }.value
 SWIFT
 RUBY
