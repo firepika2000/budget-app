@@ -154,7 +154,11 @@ public enum LocalDeviceBackupService {
         let manifest = LocalDeviceBackupManifest(format: unsigned.format, version: unsigned.version,
             createdAt: unsigned.createdAt, localSchemaVersion: unsigned.localSchemaVersion,
             budgetID: unsigned.budgetID, files: unsigned.files, authentication: authentication)
-        try manifestData(manifest).write(to: staging.appendingPathComponent(manifestName), options: .atomic)
+        let encodedManifest = try manifestData(manifest)
+        guard encodedManifest.count <= BackupManifestIO.maximumBytes else {
+            throw LocalStorageError.invalidSnapshot("The backup manifest exceeds the supported metadata size")
+        }
+        try encodedManifest.write(to: staging.appendingPathComponent(manifestName), options: .atomic)
         try applyPrivateProtection(staging.appendingPathComponent(manifestName))
         try FileManager.default.moveItem(at: staging, to: destination)
         try createPrivateDirectory(destination)
@@ -173,7 +177,7 @@ public enum LocalDeviceBackupService {
             throw LocalStorageError.destinationExists
         }
         let manifestURL = package.appendingPathComponent(manifestName)
-        let rawManifest = try Data(contentsOf: manifestURL)
+        let rawManifest = try BackupManifestIO.read(manifestURL)
         let manifest = try JSONDecoder().decode(LocalDeviceBackupManifest.self, from: rawManifest)
         guard manifest.format == LocalDeviceBackupManifest.format,
               manifest.version == LocalDeviceBackupManifest.version,

@@ -206,6 +206,10 @@ public actor DropboxBackupDestination {
         guard let manifestEntry = entries.first(where: { $0.path == remotePath + "/manifest.json" }) else {
             throw DropboxBackupDestinationError.invalidPackage("The Dropbox generation has no manifest.")
         }
+        guard let manifestSize = manifestEntry.size, manifestSize > 0,
+              manifestSize <= Int64(BackupManifestIO.maximumBytes) else {
+            throw DropboxBackupDestinationError.invalidPackage("The Dropbox manifest size is missing or exceeds the supported metadata size.")
+        }
         let staging = destination.deletingLastPathComponent()
             .appendingPathComponent(".dropbox-download-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
@@ -290,7 +294,7 @@ public actor DropboxBackupDestination {
     private static func validatedPackageFiles(_ package: URL) throws -> [URL] {
         let manifestURL = package.appendingPathComponent("manifest.json")
         let manifest: LocalDeviceBackupManifest
-        do { manifest = try JSONDecoder().decode(LocalDeviceBackupManifest.self, from: Data(contentsOf: manifestURL)) }
+        do { manifest = try JSONDecoder().decode(LocalDeviceBackupManifest.self, from: BackupManifestIO.read(manifestURL)) }
         catch { throw DropboxBackupDestinationError.invalidPackage("The encrypted backup manifest is invalid.") }
         guard manifest.format == LocalDeviceBackupManifest.format,
               manifest.version == LocalDeviceBackupManifest.version,

@@ -1,5 +1,27 @@
 # Production readiness mission ledger
 
+## Bounded backup manifest validation (2026-10-09)
+
+Local restore and Dropbox publication now share a manifest reader that rejects symbolic links,
+directories, empty files and metadata larger than 64 MiB before JSON validation. Reads are
+bounded to the observed file size plus one byte and reject size changes. Backup creation
+enforces the same manifest limit before publication. Dropbox download rejects missing,
+empty or oversized advertised manifest sizes before fetching. The limit applies to manifest
+metadata, not the database or attachment payload size; this is not a claim that the entire
+Dropbox transport is memory bounded or that concurrent filesystem substitution is prevented.
+
+Fifteen focused storage tests pass, including an actual encrypted-package restore with an
+otherwise valid authenticated manifest replaced by a symbolic link. Restore rejects it without
+publishing the destination. Existing encryption, integrity checks and restore-to-new-path
+protections remain intact. Regular Xcode 27.0 (27A266a), at
+`/Applications/Xcode.app/Contents/Developer`, successfully builds the app and native test
+targets for the preserved iPhone 17 Pro Max / iOS 27 simulator. Build-for-testing is compilation
+evidence, not native runtime or human acceptance.
+
+App rebuild required; no backup format migration, server restart or customer data deletion.
+TestFlight remains held. Real-provider Dropbox connect, backup and restore acceptance remains
+pending and should use a disposable destination rather than overwrite a customer's budget.
+
 ## Offline Dropbox connection removal (2026-10-09)
 
 Backup & Recovery now distinguishes Revoke and Disconnect from Remove Connection from This

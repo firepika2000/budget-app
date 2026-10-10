@@ -3,6 +3,27 @@ import XCTest
 @testable import BudgetStorage
 
 final class LocalDeviceBackupTests: XCTestCase {
+    func testRestoreRejectsSymlinkToOtherwiseValidAuthenticatedManifest() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (authority, attachments, attachmentKey, _) = try await fixture(in: root.appendingPathComponent("source"))
+        let recovery = try LocalDeviceBackupRecoveryKey(data: Data(repeating: 7, count: 32))
+        let package = root.appendingPathComponent("generation.clearpocketbackup")
+        _ = try await LocalDeviceBackupService.create(authority: authority, budgetID: "budget",
+            attachmentsDirectory: attachments, attachmentKey: attachmentKey, destinationURL: package, recoveryKey: recovery)
+        let manifest = package.appendingPathComponent("manifest.json")
+        let moved = root.appendingPathComponent("authentic-manifest.json")
+        try FileManager.default.moveItem(at: manifest, to: moved)
+        try FileManager.default.createSymbolicLink(at: manifest, withDestinationURL: moved)
+        let destination = root.appendingPathComponent("restored")
+        do {
+            _ = try await LocalDeviceBackupService.restore(packageURL: package, destinationRootURL: destination, recoveryKey: recovery)
+            XCTFail("Restore accepted a symbolic-link manifest")
+        } catch { XCTAssertTrue(error is LocalStorageError) }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: moved.path))
+    }
+
     private func temporaryDirectory() throws -> URL {
         let value = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: value, withIntermediateDirectories: true)
