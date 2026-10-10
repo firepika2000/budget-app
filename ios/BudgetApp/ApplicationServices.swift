@@ -117,6 +117,19 @@ struct ReconcileAccountOperation: Codable, Equatable, Sendable {
     let expectedClearedBalanceMinor: Int64
 }
 
+struct DeleteTransferOperation: Codable, Equatable, Sendable {
+    let transferID: String
+    let expectedRevisions: [String: String]
+    var mutationOperationID: String? = nil
+    var isValidPending: Bool {
+        !transferID.isEmpty && mutationOperationID.flatMap(UUID.init(uuidString:)) != nil
+            && expectedRevisions.count == 2 && expectedRevisions.allSatisfy { id, revision in
+                !id.isEmpty && revision.hasPrefix("v1:") && revision.count == 67
+                    && revision.dropFirst(3).allSatisfy { "0123456789abcdef".contains($0) }
+            }
+    }
+}
+
 struct DeleteTransactionOperation: Codable, Equatable, Sendable {
     let transactionID: String
     let expectedRevision: String?
@@ -375,6 +388,7 @@ final class LiveTransactionOutbox {
         var voidCommand: VoidTransactionOperation? = nil
         var duplicateCommand: DuplicateTransactionOperation? = nil
         var deletionCommand: DeleteTransactionOperation? = nil
+        var transferDeletionCommand: DeleteTransferOperation? = nil
         var attachmentUpload: AttachmentUpload? = nil
         var scheduleCreation: ScheduleOperation? = nil
         var makeRecurring: MakeRecurringOperation? = nil
@@ -578,6 +592,7 @@ final class LiveTransactionOutbox {
                   existing.voidCommand == entry.voidCommand,
                   existing.duplicateCommand == entry.duplicateCommand,
                   existing.deletionCommand == entry.deletionCommand,
+                  existing.transferDeletionCommand == entry.transferDeletionCommand,
                   existing.attachmentUpload == entry.attachmentUpload,
                   existing.scheduleCreation == entry.scheduleCreation,
                   existing.makeRecurring == entry.makeRecurring && existing.transactionID == entry.transactionID,
@@ -661,6 +676,16 @@ final class LiveTransactionOutbox {
             throw BudgetApplicationError.invalidOperation("This schedule already has a saved change. Review it in Pending Sync before deleting.")
         }
         try enqueuePlanning(Entry(id: identity, queuedAt: Date(), operation: nil, scheduleID: operation.scheduleID, scheduleDeletion: operation))
+    }
+
+    func enqueueTransferDeletion(_ operation: DeleteTransferOperation) throws {
+        guard operation.isValidPending, let identity = operation.mutationOperationID else {
+            throw BudgetApplicationError.invalidOperation("Review both transfer entries before deleting.")
+        }
+        guard !entries.contains(where: { $0.id != identity && $0.transferDeletionCommand?.transferID == operation.transferID }) else {
+            throw BudgetApplicationError.invalidOperation("This transfer already has a pending deletion.")
+        }
+        try enqueuePlanning(Entry(id: identity, queuedAt: Date(), operation: nil, transferDeletionCommand: operation))
     }
 
     func enqueueDeletion(_ operation: DeleteTransactionOperation) throws {
@@ -829,7 +854,7 @@ final class LiveTransactionOutbox {
         guard Set(values.map(\.id)).count == values.count,
               values.allSatisfy({ entry in
                   guard UUID(uuidString: entry.id) != nil else { return false }
-                  let payloadCount = [entry.operation != nil, entry.bulkUpdate != nil, entry.assignment != nil, entry.moneyMove != nil, entry.accountTransfer != nil, entry.reconciliation != nil, entry.voidCommand != nil, entry.duplicateCommand != nil, entry.deletionCommand != nil, entry.attachmentUpload != nil, entry.scheduleCreation != nil, entry.makeRecurring != nil, entry.scheduleEdit != nil, entry.scheduleDeletion != nil, entry.scheduleRealization != nil, entry.attachmentRemoval != nil].filter { $0 }.count
+                  let payloadCount = [entry.operation != nil, entry.bulkUpdate != nil, entry.assignment != nil, entry.moneyMove != nil, entry.accountTransfer != nil, entry.reconciliation != nil, entry.voidCommand != nil, entry.duplicateCommand != nil, entry.deletionCommand != nil, entry.transferDeletionCommand != nil, entry.attachmentUpload != nil, entry.scheduleCreation != nil, entry.makeRecurring != nil, entry.scheduleEdit != nil, entry.scheduleDeletion != nil, entry.scheduleRealization != nil, entry.attachmentRemoval != nil].filter { $0 }.count
                   guard payloadCount == 1 else { return false }
                   if let removal = entry.attachmentRemoval {
                       return entry.scheduleID == nil && entry.transactionID == nil && entry.transferID == nil
@@ -873,6 +898,10 @@ final class LiveTransactionOutbox {
                           && command.mutationOperationID == entry.id && command.isValidPending
                   }
                   if let command = entry.deletionCommand {
+                      return entry.transactionID == nil && entry.transferID == nil
+                          && command.mutationOperationID == entry.id && command.isValidPending
+                  }
+                  if let command = entry.transferDeletionCommand {
                       return entry.transactionID == nil && entry.transferID == nil
                           && command.mutationOperationID == entry.id && command.isValidPending
                   }
@@ -1276,9 +1305,13 @@ protocol TransactionCommandRepository: AnyObject {
     func transferMoney(_ operation: TransferMoneyOperation) async throws
     func updateTransfer(id: String, operation: TransferMoneyOperation) async throws
     func deleteTransfer(id: String) async throws
+    func deleteTransfer(_ operation: DeleteTransferOperation) async throws
 }
 
 extension TransactionCommandRepository {
+    func deleteTransfer(_ operation: DeleteTransferOperation) async throws {
+        try await deleteTransfer(id: operation.transferID)
+    }
     func deleteTransaction(_ operation: DeleteTransactionOperation) async throws {
         try await deleteTransaction(id: operation.transactionID)
     }
@@ -1556,6 +1589,10 @@ struct TransactionService {
 
     func deleteTransfer(id: String) async throws {
         do { try await repository.deleteTransfer(id: id) }
+        catch { throw BudgetApplicationError.map(error) }
+    }
+    func deleteTransfer(_ operation: DeleteTransferOperation) async throws {
+        do { try await repository.deleteTransfer(operation) }
         catch { throw BudgetApplicationError.map(error) }
     }
 

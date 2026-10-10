@@ -31,6 +31,7 @@ send_last = workspace.index("    func householdInvitations()", send_first || 0)
 abort "Canonical send path moved; review binding guard" unless send_first && send_last
 send_body = workspace[send_first...send_last]
 abort "Duplication bypasses reviewed durable replay" unless workspace.include?("transactionOutbox.enqueueDuplicate(identified)") && send_body.include?("entry.duplicateCommand") && send_body.include?("client.duplicateTransaction(") && workspace.include?("expectedRevision: duplicateRevision")
+abort "Transfer deletion bypasses captured durable review" unless workspace.include?("transactionOutbox.enqueueTransferDeletion(identified)") && send_body.include?("entry.transferDeletionCommand") && send_body.include?("APITransferDelete(mutationOperationID: identity, expectedRevisions: operation.expectedRevisions)") && workspace.include?("transferDeletionRevisions = transfer.expectedRevisions ?? [:]") && workspace.include?("expectedRevisions: transferDeletionRevisions")
 prepare = send_body.index("try await credentials.prepare()")
 binding = send_body.index("try transactionOutbox.requireServer(")
 mutation = send_body.index("client.createTransaction(")
@@ -312,6 +313,27 @@ try await Task { @MainActor in
  try await pausedDeletion.replayCommands { entry in precondition(entry.deletionCommand == deletion) }
  precondition(LiveTransactionOutbox(fileURL: deletionFile).count == 0)
  print("PASS: reviewed deletion identity/target/revision survive response loss/relaunch, duplicate refused, rejection paused, original retry and acknowledgement cleanup")
+ let transferDeletionFile = root.appendingPathComponent("transfer-deletion.json")
+ let transferDeletion = DeleteTransferOperation(transferID: "pair", expectedRevisions: ["source": "v1:" + String(repeating: "a", count: 64), "destination": "v1:" + String(repeating: "b", count: 64)], mutationOperationID: UUID().uuidString.lowercased())
+ let transferDeletionQueue = LiveTransactionOutbox(fileURL: transferDeletionFile)
+ try transferDeletionQueue.enqueueTransferDeletion(transferDeletion)
+ try transferDeletionQueue.enqueueTransferDeletion(transferDeletion); precondition(transferDeletionQueue.count == 1)
+ var otherTransferDeletion = transferDeletion; otherTransferDeletion.mutationOperationID = UUID().uuidString.lowercased()
+ do { try transferDeletionQueue.enqueueTransferDeletion(otherTransferDeletion); fatalError("Duplicate transfer deletion accepted") } catch {}
+ do { try await transferDeletionQueue.replayCommands(shouldPause: { _ in false }) { entry in
+     precondition(entry.transferDeletionCommand == transferDeletion); throw URLError(.networkConnectionLost)
+ }; fatalError("Expected transfer deletion response loss") } catch {}
+ let reloadedTransferDeletion = LiveTransactionOutbox(fileURL: transferDeletionFile)
+ precondition(reloadedTransferDeletion.entries[0].transferDeletionCommand == transferDeletion)
+ precondition(reloadedTransferDeletion.entries[0].operation == nil)
+ do { try await reloadedTransferDeletion.replayCommands(shouldPause: { _ in true }) { _ in throw BudgetApplicationError.invalidOperation("Changed transfer") } } catch {}
+ let pausedTransferDeletion = LiveTransactionOutbox(fileURL: transferDeletionFile)
+ precondition(pausedTransferDeletion.entries[0].requiresReview == true)
+ do { try await pausedTransferDeletion.replayCommands { _ in fatalError("Paused transfer deletion sent") } } catch {}
+ try pausedTransferDeletion.retryReviewed(id: transferDeletion.mutationOperationID!)
+ try await pausedTransferDeletion.replayCommands { entry in precondition(entry.transferDeletionCommand == transferDeletion) }
+ precondition(LiveTransactionOutbox(fileURL: transferDeletionFile).count == 0)
+ print("PASS: transfer deletion retains both reviews and identity through loss/relaunch, refuses duplicate, pauses rejection and retries original intent")
  let duplicateFile = root.appendingPathComponent("duplicate.json")
  let duplicateQueue = LiveTransactionOutbox(fileURL: duplicateFile)
  let duplicateCommand = DuplicateTransactionOperation(transactionID: "source", occurredOn: "2026-10-09",

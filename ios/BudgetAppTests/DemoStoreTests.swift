@@ -2801,7 +2801,11 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertEqual(store.summary?.readyToAssignMinor, planBefore?.readyToAssignMinor)
         XCTAssertEqual(store.summary?.totalAssignedMinor, planBefore?.totalAssignedMinor)
         XCTAssertEqual(store.summary?.categories, planBefore?.categories)
-        try await store.deleteTransfer(id: transferID)
+        let reviewedLegs = store.transactions.filter { $0.transferID == transferID }
+        let deletionRevisions = Dictionary(uniqueKeysWithValues: reviewedLegs.compactMap { leg in
+            leg.revision.map { (leg.id, $0) }
+        })
+        try await store.deleteTransfer(id: transferID, expectedRevisions: deletionRevisions)
         XCTAssertFalse(store.transactions.contains { $0.transferID == transferID })
         XCTAssertEqual(store.balance(for: checking), checkingBefore); XCTAssertEqual(store.balance(for: savings), savingsBefore)
         XCTAssertEqual(store.balance(for: destination), 0)

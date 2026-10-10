@@ -1,5 +1,33 @@
 # Production readiness mission ledger
 
+## Durable reviewed transfer deletion (2026-10-09)
+
+Transfer detail captures both leg revisions when opening Delete confirmation. Live persists
+the transfer identity, both reviewed revisions and a command UUID before transport. Replay
+resolves current credentials and verifies the server/actor/budget binding before sending
+the identified DELETE body. No local transaction removal or balance adjustment is synthesized.
+Response loss preserves the exact intent across relaunch; server rejection pauses it without
+rebasing. A second pending deletion of the same transfer is refused.
+
+Pending Sync labels both entries awaiting server approval and requires current delete/view
+permissions and visibility of both original legs. Accepted deletion clears both attachment
+observations. Demo/Local use the same typed application service with their canonical deletion.
+Unreviewed Live deletion fails closed. The confirmation explains offline retention and the
+irreversibility of accepted deletion. Production queue checks pass retention, relaunch,
+duplicate refusal, rejection pause and original-intent retry/cleanup.
+The actual Swift API test passes exact body-key, both-revision, stable retry identity and
+rotated-credential assertions. Regular `/Applications/Xcode.app` Xcode 27 build-for-testing
+passes for the existing iPhone 17 Pro Max / iOS 27 simulator
+`3ABD861E-D38D-4AFD-A356-959266051564`, including the updated canonical Demo transfer
+delete lifecycle test. Native tests are compiled here, not reported as runtime-executed.
+
+Human retest with a disposable unreconciled transfer: disconnect, open its actions and confirm
+Delete Transfer. Both posted entries and balances must remain while one Pending Sync command
+appears. Relaunch offline, reconnect, and verify both entries disappear together once accepted.
+Cancel must save nothing. Editing either leg from another device before reconnecting must
+pause the stale request instead of deleting changed data. App rebuild and server update
+required; no migration. TestFlight remains held; human acceptance is pending.
+
 ## Reviewed transfer deletion server contract (2026-10-09)
 
 Transfer deletion accepts an optional body containing a stable `mutation_operation_id` and
@@ -17,8 +45,8 @@ Transfer creation and ledger suite: 26 passed. Deletion, transaction history/pro
 financial golden-vector suite: 36 passed, with overlapping deletion coverage between suites.
 An isolated PostgreSQL race passes: simultaneous retries produce exactly two deletion history
 entries and one receipt, with both callers acknowledged and neither transfer leg remaining.
-Native durable transfer deletion remains to integrate; current app transfer deletion is
-online-only. Server update/restart is required; TestFlight remains held.
+Native durable transfer deletion integration is recorded above. Server update/restart is
+required; TestFlight remains held.
 
 ## Durable reviewed ordinary transaction deletion (2026-10-09)
 
@@ -32,7 +60,7 @@ until acceptance; no local balance adjustment, transaction deletion or audit is 
 Pending Sync labels deletion awaiting server approval, gated by current delete/view authority
 and source visibility. Accepted deletion clears cached attachment observations. Demo and Local
 Device use the same application-service operation with their existing canonical deletion.
-Unreviewed Live deletion is refused. Transfer deletion remains online-only and separate.
+Unreviewed Live deletion is refused. Durable transfer deletion is recorded above.
 
 Production queue tests pass retention, relaunch, duplicate refusal, stale pause, original-intent
 retry and acknowledgement cleanup. The focused API test exercises body-free DELETE, exact

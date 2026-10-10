@@ -1600,6 +1600,17 @@ public struct APITransferCreate: Codable, Equatable, Sendable {
     }
 }
 
+public struct APITransferDelete: Encodable, Sendable {
+    public let mutationOperationID: String
+    public let expectedRevisions: [String: String]
+    public init(mutationOperationID: String, expectedRevisions: [String: String]) {
+        self.mutationOperationID = mutationOperationID; self.expectedRevisions = expectedRevisions
+    }
+    enum CodingKeys: String, CodingKey {
+        case mutationOperationID = "mutation_operation_id", expectedRevisions = "expected_revisions"
+    }
+}
+
 public struct APITransferResponse: Decodable, Equatable, Sendable {
     public let transferID: String
     public let source: APITransaction

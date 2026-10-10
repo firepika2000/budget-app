@@ -3751,6 +3751,15 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
                     mutationOperationID: operation.mutationOperationID), token: token)
             return
         }
+        if let operation = entry.transferDeletionCommand {
+            try await credentials.prepare()
+            try transactionOutbox.requireServer(budgetID: budget.id, serverURL: credentials.serverURL, token: credentials.token)
+            guard let identity = operation.mutationOperationID else { throw BudgetApplicationError.invalidOperation("Missing transfer deletion identity.") }
+            try await client.deleteTransfer(budgetID: budget.id, transferID: operation.transferID,
+                request: APITransferDelete(mutationOperationID: identity, expectedRevisions: operation.expectedRevisions), token: token)
+            for legID in operation.expectedRevisions.keys { attachmentReadCache.remove(transactionID: legID) }
+            return
+        }
         if let operation = entry.deletionCommand {
             try await credentials.prepare()
             try transactionOutbox.requireServer(budgetID: budget.id, serverURL: credentials.serverURL, token: credentials.token)
@@ -4032,7 +4041,16 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
         try transactionOutbox.enqueueTransfer(identified, id: id)
         try await replaySavedPlanning()
     }
-    func deleteTransfer(id: String) async throws { try await credentials.prepare(); try await client.deleteTransfer(budgetID: budget.id, transferID: id, token: token) }
+    func deleteTransfer(id: String) async throws {
+        throw BudgetApplicationError.invalidOperation("Reopen this transfer to review both entries before deleting.")
+    }
+    func deleteTransfer(_ operation: DeleteTransferOperation) async throws {
+        var identified = operation
+        if identified.mutationOperationID == nil { identified.mutationOperationID = UUID().uuidString.lowercased() }
+        try transactionOutbox.enqueueTransferDeletion(identified)
+        do { try await replaySavedPlanning() }
+        catch { guard transactionOutbox.entries.contains(where: { $0.id == identified.mutationOperationID }) else { throw error } }
+    }
     func reconciliationClearedObservation(accountID: String, throughDate: String) async throws -> Int64 {
         try await credentials.prepare()
         let observation = try await client.accountBalance(budgetID: budget.id, accountID: accountID, throughDate: throughDate, token: token)
@@ -5070,6 +5088,10 @@ final class BudgetWorkspaceStore: ObservableObject {
             if let command = entry.voidCommand {
                 return budget.can("delete_transaction") && budget.can("view_transactions") && transactions.contains(where: { $0.id == command.transactionID })
             }
+            if let command = entry.transferDeletionCommand {
+                return budget.can("delete_transaction") && budget.can("view_transactions")
+                    && command.expectedRevisions.keys.allSatisfy { legID in transactions.contains { $0.id == legID && $0.transferID == command.transferID } }
+            }
             if let command = entry.deletionCommand {
                 return budget.can("delete_transaction") && budget.can("view_transactions") && transactions.contains(where: { $0.id == command.transactionID })
             }
@@ -5301,8 +5323,9 @@ final class BudgetWorkspaceStore: ObservableObject {
         await refresh()
     }
 
-    func deleteTransfer(id: String) async throws {
-        try await services().transactions.deleteTransfer(id: id)
+    func deleteTransfer(id: String, expectedRevisions: [String: String]) async throws {
+        defer { publishPendingPlanningStatus() }
+        try await services().transactions.deleteTransfer(DeleteTransferOperation(transferID: id, expectedRevisions: expectedRevisions))
         await refresh()
     }
 
@@ -6633,6 +6656,10 @@ private struct PendingLiveTransactionsView: View {
                                 Text(upload.filename).font(.subheadline)
                                 Text(ByteCountFormatter.string(fromByteCount: Int64(upload.byteCount), countStyle: .file)).font(.caption)
                                 Text("Saved on this iPhone · awaiting server confirmation").font(.caption).foregroundStyle(.secondary)
+                            } else if entry.transferDeletionCommand != nil {
+                                Text("Delete Transfer").font(.headline)
+                                Text("Both account entries · awaiting server approval").font(.subheadline)
+                                Text("Posted balances remain unchanged until accepted").font(.caption).foregroundStyle(.secondary)
                             } else if let command = entry.deletionCommand {
                                 Text("Delete Transaction").font(.headline)
                                 Text(store.transactions.first(where: { $0.id == command.transactionID })?.payeeName ?? "Transaction").font(.subheadline)
@@ -10605,6 +10632,7 @@ private struct LiveTransactionDetailView: View {
     @State private var confirmDuplicate = false
     @State private var duplicateRevision: String?
     @State private var deletionRevision: String?
+    @State private var transferDeletionRevisions: [String: String] = [:]
     @State private var duplicateDate = ""
     @State private var showVoid = false
     @State private var showRecurring = false
@@ -10638,7 +10666,7 @@ private struct LiveTransactionDetailView: View {
                 if let transfer = transferPresentation(for: transaction) {
                     Menu {
                         if store.budget.can("edit_transaction") { Button("Edit Transfer", systemImage: "pencil") { editTransfer = transfer }.accessibilityIdentifier("edit-transfer-action") }
-                        if store.budget.can("delete_transaction") { Button("Delete Transfer", systemImage: "trash", role: .destructive) { confirmDelete = true }.accessibilityIdentifier("delete-transfer-action") }
+                        if store.budget.can("delete_transaction") { Button("Delete Transfer", systemImage: "trash", role: .destructive) { transferDeletionRevisions = transfer.expectedRevisions ?? [:]; confirmDelete = true }.disabled(isDeleting || transfer.expectedRevisions == nil).accessibilityIdentifier("delete-transfer-action") }
                     } label: { Image(systemName: "ellipsis.circle") }
                         .accessibilityLabel("Transfer actions")
                 } else if transaction.transferID == nil {
@@ -10658,7 +10686,7 @@ private struct LiveTransactionDetailView: View {
             .sheet(isPresented: $showVoid) { if let transaction { TransactionVoidView(transaction: transaction) } }
             .sheet(isPresented: $showRecurring) { if let transaction { MakeRecurringView(transaction: transaction).environmentObject(store) } }
             .confirmationDialog("Duplicate this transaction?", isPresented: $confirmDuplicate, titleVisibility: .visible) { Button("Duplicate Transaction") { Task { await duplicateTransaction() } }; Button("Cancel", role: .cancel) {} } message: { Text("A new uncleared copy dated today will post through the normal accounting engine. Attachments are not copied.") }
-            .confirmationDialog(transaction?.transferID == nil ? "Delete this transaction?" : "Delete this transfer?", isPresented: $confirmDelete, titleVisibility: .visible) { Button(transaction?.transferID == nil ? "Delete Transaction" : "Delete Transfer", role: .destructive) { Task { await deleteTransaction() } }; Button("Cancel", role: .cancel) {} } message: { Text(transaction?.transferID == nil ? "Accepted deletion cannot be undone. When offline, the request is saved and posted values remain unchanged until the server accepts it." : "Both linked account entries will be removed atomically. Your plan and categories will not change.") }
+            .confirmationDialog(transaction?.transferID == nil ? "Delete this transaction?" : "Delete this transfer?", isPresented: $confirmDelete, titleVisibility: .visible) { Button(transaction?.transferID == nil ? "Delete Transaction" : "Delete Transfer", role: .destructive) { Task { await deleteTransaction() } }; Button("Cancel", role: .cancel) {} } message: { Text(transaction?.transferID == nil ? "Accepted deletion cannot be undone. When offline, the request is saved and posted values remain unchanged until the server accepts it." : "Both linked entries will be removed together after server approval. Offline requests are saved; posted balances remain unchanged until accepted. Accepted deletion cannot be undone.") }
     }
     private func reload() async { await store.refresh() }
     private func linkedAccountName(for transaction: APITransaction) -> String? {
@@ -10678,7 +10706,7 @@ private struct LiveTransactionDetailView: View {
     private func deleteTransaction() async {
         guard !isDeleting, let transaction else { return }
         isDeleting = true; defer { isDeleting = false }
-        do { if let transferID = transaction.transferID { try await store.deleteTransfer(id: transferID) } else { try await store.deleteTransaction(id: transaction.id, expectedRevision: deletionRevision) }; dismiss() }
+        do { if let transferID = transaction.transferID { try await store.deleteTransfer(id: transferID, expectedRevisions: transferDeletionRevisions) } else { try await store.deleteTransaction(id: transaction.id, expectedRevision: deletionRevision) }; dismiss() }
         catch { store.errorMessage = error.localizedDescription }
     }
     private func duplicateTransaction() async {

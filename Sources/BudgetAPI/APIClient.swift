@@ -532,6 +532,10 @@ public struct APIClient {
         let _: EmptyResponse = try await send(path: "api/v1/budgets/\(budgetID)/transfers/\(transferID)", method: "DELETE", token: token)
     }
 
+    public func deleteTransfer(budgetID: String, transferID: String, request: APITransferDelete, token: String) async throws {
+        let _: EmptyResponse = try await send(path: "api/v1/budgets/\(budgetID)/transfers/\(transferID)", method: "DELETE", token: token, body: request)
+    }
+
     public func reconcileAccount(budgetID: String, accountID: String, request: APIReconcileRequest, token: String) async throws -> APIReconcileResponse {
         try await send(path: "api/v1/budgets/\(budgetID)/accounts/\(accountID)/reconcile", method: "POST", token: token, body: request)
     }
