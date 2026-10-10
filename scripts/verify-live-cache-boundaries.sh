@@ -87,6 +87,25 @@ try await MainActor.run {
  let data = Data("{\"id\":\"receipt\",\"transaction_id\":\"posted\",\"filename\":\"receipt.pdf\",\"content_type\":\"application/pdf\",\"byte_count\":10,\"sha256\":\"\(String(repeating: "a", count: 64))\",\"created_at\":\"2026-10-09T00:00:00Z\"}".utf8)
  let receipt = try JSONDecoder().decode(APITransactionAttachment.self, from: data)
  try lists.save([receipt], transactionID: "posted", generation: lists.generation)
+ do { try lists.save([receipt, receipt], transactionID: "posted", generation: lists.generation); fatalError("Duplicate attachment IDs accepted") } catch {}
+ let receiptJSON = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+ for (field, invalidValue) in [("byte_count", 0 as Any), ("byte_count", 10 * 1024 * 1024 + 1 as Any),
+                              ("sha256", "not-a-digest" as Any), ("content_type", "text/html" as Any),
+                              ("detached_at", "2026-10-09T01:00:00Z" as Any)] {
+     var invalidJSON = receiptJSON; invalidJSON[field] = invalidValue
+     let invalid = try JSONDecoder().decode(APITransactionAttachment.self,
+         from: JSONSerialization.data(withJSONObject: invalidJSON))
+     do { try lists.save([invalid], transactionID: "posted", generation: lists.generation); fatalError("Invalid attachment metadata accepted: \(field)") } catch {}
+ }
+ let observationFile = try FileManager.default.contentsOfDirectory(at: attachmentRoot, includingPropertiesForKeys: nil).first!
+ let originalObservation = try Data(contentsOf: observationFile)
+ var corrupted = try JSONSerialization.jsonObject(with: originalObservation) as! [String: Any]
+ var corruptedAttachment = receiptJSON; corruptedAttachment["sha256"] = "invalid"
+ corrupted["attachments"] = [corruptedAttachment]
+ try JSONSerialization.data(withJSONObject: corrupted).write(to: observationFile, options: .atomic)
+ do { _ = try lists.load(transactionID: "posted"); fatalError("Corrupted disk metadata accepted") } catch {}
+ try originalObservation.write(to: observationFile, options: .atomic)
+ print("PASS: duplicate, oversized, empty, detached, unsupported and corrupted attachment observations are refused")
  let relaunch = LiveAttachmentReadCache(directory: attachmentRoot, storageScope: baseScope, accessRevision: "a")
  let saved = try relaunch.load(transactionID: "posted"); precondition(saved == [receipt])
  lists.acknowledgeRemoval(transactionID: "posted", attachmentID: "receipt")
