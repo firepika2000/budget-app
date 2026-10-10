@@ -126,6 +126,17 @@ try await MainActor.run {
  try tampered.write(to: encryptedFile, options: .atomic)
  do { _ = try lists.loadBytes(attachment: previewAttachment, keyData: previewKey); fatalError("Tampered preview accepted") } catch {}
  try ciphertext.write(to: encryptedFile, options: .atomic)
+ // An authoritative empty list removes a remotely detached file without a local Remove action.
+ try lists.save([], transactionID: "posted", generation: lists.generation)
+ precondition(!FileManager.default.fileExists(atPath: encryptedFile.path))
+ try lists.save([previewAttachment], transactionID: "posted", generation: lists.generation)
+ try lists.saveBytes(preview, attachment: previewAttachment, keyData: previewKey, generation: lists.generation)
+ // Resource denial cleanup cannot depend on successfully decoding list metadata.
+ try Data("corrupt".utf8).write(to: observationFile, options: .atomic)
+ lists.remove(transactionID: "posted")
+ precondition(!FileManager.default.fileExists(atPath: encryptedFile.path))
+ try lists.save([previewAttachment], transactionID: "posted", generation: lists.generation)
+ try lists.saveBytes(preview, attachment: previewAttachment, keyData: previewKey, generation: lists.generation)
  lists.acknowledgeRemoval(transactionID: "posted", attachmentID: "receipt")
  precondition(!FileManager.default.fileExists(atPath: encryptedFile.path))
  do { _ = try lists.loadBytes(attachment: previewAttachment, keyData: previewKey); fatalError("Removed preview opened") } catch {}

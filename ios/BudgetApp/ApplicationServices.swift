@@ -1014,6 +1014,11 @@ final class LiveAttachmentReadCache {
         guard observed == generation, Self.valid(attachments, transactionID: transactionID) else {
             throw BudgetApplicationError.invalidOperation("The attachment observation is stale or invalid.")
         }
+        if let previous = try? load(transactionID: transactionID) {
+            for attachment in previous where !attachments.contains(attachment) {
+                try? FileManager.default.removeItem(at: bytesURL(attachment))
+            }
+        }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
         let observation = Observation(transactionID: transactionID, accessRevision: accessRevision,
@@ -1037,7 +1042,16 @@ final class LiveAttachmentReadCache {
         return value.attachments
     }
 
-    func remove(transactionID: String) { try? FileManager.default.removeItem(at: fileURL(transactionID)) }
+    func remove(transactionID: String) {
+        // Resource denial must purge ciphertext even when its list metadata is corrupt or missing.
+        let prefix = Self.digest(Data(transactionID.utf8)) + "-"
+        if let files = try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) {
+            for file in files where file.pathExtension == "enc" && file.lastPathComponent.hasPrefix(prefix) {
+                try? FileManager.default.removeItem(at: file)
+            }
+        }
+        try? FileManager.default.removeItem(at: fileURL(transactionID))
+    }
     func saveBytes(_ data: Data, attachment: APITransactionAttachment, keyData: Data, generation observed: UUID) throws {
         guard observed == generation, keyData.count == 32,
               try load(transactionID: attachment.transactionID).contains(attachment),
@@ -1068,7 +1082,8 @@ final class LiveAttachmentReadCache {
     }
     private static func digest(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
     private func bytesURL(_ attachment: APITransactionAttachment) -> URL {
-        directory.appendingPathComponent(Self.digest(Data((attachment.transactionID + ":" + attachment.id + ":" + attachment.sha256).utf8)) + ".enc")
+        directory.appendingPathComponent(Self.digest(Data(attachment.transactionID.utf8)) + "-"
+            + Self.digest(Data((attachment.id + ":" + attachment.sha256).utf8)) + ".enc")
     }
     func acknowledgeRemoval(transactionID: String, attachmentID: String) {
         guard let previous = try? load(transactionID: transactionID) else { remove(transactionID: transactionID); return }
