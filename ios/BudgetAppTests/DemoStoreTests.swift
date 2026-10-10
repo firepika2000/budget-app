@@ -330,6 +330,23 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertTrue(scoped.contains("if HistoryObservationPolicy.mustDiscard(after: error) { rows = []; nextCursor = nil; totalCount = 0 }"))
         XCTAssertTrue(scoped.contains("guard !loading else { return }"))
     }
+    func testReportHistoryRefreshPublishesReplacementOnlyAfterCurrentResponse() throws {
+        let source = try String(contentsOf: URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("BudgetApp/BudgetWorkspaceView.swift"))
+        let start = try XCTUnwrap(source.range(of: "private struct LiveReportTransactionsView:"))
+        let end = try XCTUnwrap(source.range(of: "private struct LiveReportCategoryView:", range: start.upperBound..<source.endIndex))
+        let section = String(source[start.lowerBound..<end.lowerBound])
+        let loadStart = try XCTUnwrap(section.range(of: "private func load(reset:"))
+        let load = String(section[loadStart.lowerBound...])
+        let scopeGuard = try XCTUnwrap(load.range(of: "guard !Task.isCancelled"))
+        let replacement = try XCTUnwrap(load.range(of: "if reset { rows = []; batchIndex = 0 }"))
+        XCTAssertGreaterThan(replacement.lowerBound, scopeGuard.lowerBound)
+        XCTAssertFalse(load.contains("if reset { batchIndex = 0; nextCursor = nil; rows = [] }"))
+        XCTAssertTrue(load.contains("let requestCursor = reset ? nil : nextCursor"))
+        XCTAssertTrue(load.contains("retryFromStart = reset"))
+        XCTAssertTrue(section.contains("retryFromStart || rows.isEmpty"))
+        XCTAssertTrue(load.contains("if HistoryObservationPolicy.mustDiscard(after: error) { rows = []; nextCursor = nil; batchIndex = 0 }"))
+    }
+
     func testHistoryDiscardsDefinitiveDenialsButRetainsTemporaryFailures() {
         for status in [401, 403, 404] {
             // Classification follows the HTTP contract, not English wording.

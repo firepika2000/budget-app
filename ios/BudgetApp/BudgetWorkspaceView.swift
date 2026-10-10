@@ -14033,6 +14033,7 @@ private struct LiveReportTransactionsView: View {
     @State private var nextCursor: String?
     @State private var loading = false
     @State private var errorMessage: String?
+    @State private var retryFromStart = false
     @State private var requestID: UUID?
     @State private var observationAuthority: Int?
     @State private var observationContext: WorkspaceReportContext?
@@ -14052,7 +14053,11 @@ private struct LiveReportTransactionsView: View {
             ForEach(rows) { LiveTransactionLink(transaction: $0) }
             if loading { HStack { Spacer(); ProgressView("Loading transactions…"); Spacer() } }
             if let errorMessage {
-                Section { Text(errorMessage).font(.footnote); Button("Retry") { Task { await load(reset: rows.isEmpty) } } }
+                Section {
+                    Text(errorMessage).font(.footnote)
+                    if !rows.isEmpty { Text("Showing previously loaded history. Refresh when connected to check for updates.").font(.caption).foregroundStyle(.secondary) }
+                    Button("Retry") { Task { await load(reset: retryFromStart || rows.isEmpty) } }
+                }
             } else if !loading && rows.isEmpty {
                 ContentUnavailableView("No visible transactions", systemImage: "tray", description: Text("No \(purpose) records are currently available to your account."))
             }
@@ -14077,37 +14082,41 @@ private struct LiveReportTransactionsView: View {
     }
     private func load(reset: Bool) async {
         guard !loading else { return }
-        if reset { batchIndex = 0; nextCursor = nil; rows = [] }
-        guard usesFullReport || batchIndex < batches.count else { return }
+        let requestBatch = reset ? 0 : batchIndex
+        let requestCursor = reset ? nil : nextCursor
+        guard usesFullReport || requestBatch < batches.count else { return }
         let identity = UUID(), authority = store.authorityRevision, selectedIDs = ids, context = store.reportContext
         requestID = identity; loading = true
         defer { if requestID == identity { loading = false } }
         do {
             let page: APIReportContributorPage
             if let reportCategoryID {
-                page = try await store.reportContributors(query: context.query.selectingCategory(reportCategoryID), kind: .categorySpending, cursor: nextCursor)
+                page = try await store.reportContributors(query: context.query.selectingCategory(reportCategoryID), kind: .categorySpending, cursor: requestCursor)
             } else if let reportDimension, let reportDimensionID, let reportStart, let reportEnd {
                 let query = context.query.selectingTrend(dimension: reportDimension, id: reportDimensionID, start: reportStart, end: reportEnd)
-                page = try await store.reportContributors(query: query, kind: .categorySpending, cursor: nextCursor)
+                page = try await store.reportContributors(query: query, kind: .categorySpending, cursor: requestCursor)
             } else if let reportKind, let reportStart, let reportEnd {
                 let query = reportKind == .netWorth
                     ? context.query.netWorthHistory(end: BudgetWorkspaceStore.parseDate(reportEnd))
                     : context.query.incomeSpendingPeriod(start: BudgetWorkspaceStore.parseDate(reportStart), end: BudgetWorkspaceStore.parseDate(reportEnd))
-                page = try await store.reportContributors(query: query, kind: reportKind, cursor: nextCursor)
+                page = try await store.reportContributors(query: query, kind: reportKind, cursor: requestCursor)
             } else {
-                let value = try await store.browseTransactions(.init(transactionIDs: batches[batchIndex], limit: 50, cursor: nextCursor))
+                let value = try await store.browseTransactions(.init(transactionIDs: batches[requestBatch], limit: 50, cursor: requestCursor))
                 page = .init(items: value.items, nextCursor: value.nextCursor)
             }
             guard !Task.isCancelled, requestID == identity, authority == store.authorityRevision, selectedIDs == ids, context == store.reportContext else { return }
+            if reset { rows = []; batchIndex = 0 }
             let existing = Set(rows.map(\.id))
             rows += page.items.filter { !existing.contains($0.id) }
             rows.sort { ($0.occurredOn, $0.createdAt ?? "", $0.id) > ($1.occurredOn, $1.createdAt ?? "", $1.id) }
             nextCursor = page.nextCursor
             if nextCursor == nil && !usesFullReport { batchIndex += 1 }
             errorMessage = nil
+            retryFromStart = false
         } catch {
             guard !Task.isCancelled, requestID == identity, authority == store.authorityRevision, selectedIDs == ids, context == store.reportContext else { return }
             if HistoryObservationPolicy.mustDiscard(after: error) { rows = []; nextCursor = nil; batchIndex = 0 }
+            retryFromStart = reset
             errorMessage = error.localizedDescription
         }
     }
