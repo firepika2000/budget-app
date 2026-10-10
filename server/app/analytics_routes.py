@@ -259,6 +259,17 @@ def _spending_portions(transaction: Transaction, selected_categories: set[str]):
     return [(category, amount) for category, amount in portions if category in selected_categories and amount != 0]
 
 
+def _spending_dimension(transaction, category, groups, dimension):
+    """Shared trend identity, including normalized empty/whitespace payees."""
+    if dimension == "category":
+        return category.id, category.name, groups.get(category.group_id, "Uncategorized")
+    if dimension == "group":
+        name = groups.get(category.group_id, "Uncategorized")
+        return f"group:{name}", name, None
+    name = transaction.payee_name.strip() or "No payee"
+    return f"payee:{name.casefold()}", name, None
+
+
 @router.get("/contributors", response_model=ReportContributorPageResponse)
 def report_contributors(
     budget_id: str, start_date: date, end_date: date,
@@ -271,12 +282,17 @@ def report_contributors(
     flag: list[str] = Query(default=[]), tag: list[str] = Query(default=[]),
     include_tracking: bool = False, limit: int = Query(default=50, ge=1, le=200),
     cursor: Optional[str] = Query(default=None, max_length=512),
+    dimension: Optional[str] = Query(default=None, pattern="^(category|group|payee)$"),
+    dimension_id: Optional[str] = Query(default=None, min_length=1, max_length=512),
     user: User = Depends(get_current_user), db: Session = Depends(get_db),
 ) -> dict:
     require_budget_capability(db, user, budget_id, "view_transactions")
+    if (dimension is None) != (dimension_id is None) or (dimension is not None and kind != "category_spending"):
+        raise HTTPException(status_code=422, detail="A spending dimension and identity must be selected together")
     context = [budget_id, user.id, kind, start_date.isoformat(), end_date.isoformat(),
                sorted(account_id), sorted(category_id), sorted(category_group), sorted(member_id),
-               sorted(payee), transaction_type, cleared, reconciled, sorted(flag), sorted(tag), include_tracking]
+               sorted(payee), transaction_type, cleared, reconciled, sorted(flag), sorted(tag), include_tracking,
+               dimension, dimension_id]
     fingerprint = hashlib.sha256(json.dumps(context, separators=(",", ":")).encode()).hexdigest()
     after = None
     if cursor is not None:
@@ -297,7 +313,9 @@ def report_contributors(
     rows = []
     for item in transactions:
         if kind == "category_spending":
-            contributes = bool(_spending_portions(item, selected))
+            portions = _spending_portions(item, selected)
+            contributes = any(dimension is None or _spending_dimension(item, categories[category], groups, dimension)[0] == dimension_id
+                              for category, _ in portions)
         elif item.transfer_id is not None or item.account_id not in on_budget:
             contributes = False
         else:
@@ -474,24 +492,11 @@ def spending_trends_report(
     series_ids: dict[str, _ReportTransactionIDs] = defaultdict(_ReportTransactionIDs)
     point_ids: dict[tuple[str, date], _ReportTransactionIDs] = defaultdict(_ReportTransactionIDs)
     for transaction in transactions:
-        if transaction.transfer_id is not None or transaction.amount_minor == 0:
-            continue
-        portions = (
-            [(transaction.category_id, transaction.amount_minor)] if transaction.category_id is not None
-            else [(split.category_id, split.amount_minor) for split in transaction.splits]
-        )
-        for category_key, amount in portions:
+        for category_key, amount in _spending_portions(transaction, selected_categories):
             category = categories.get(category_key)
-            if category is None or category_key not in selected_categories or amount == 0:
+            if category is None:
                 continue
-            if dimension == "category":
-                key, name, group = category.id, category.name, groups.get(category.group_id, "Uncategorized")
-            elif dimension == "group":
-                name = groups.get(category.group_id, "Uncategorized")
-                key, group = f"group:{name}", None
-            else:
-                name = transaction.payee_name.strip() or "No payee"
-                key, group = f"payee:{name.casefold()}", None
+            key, name, group = _spending_dimension(transaction, category, groups, dimension)
             spending = -amount
             names[key] = (name, group)
             totals[key] += spending

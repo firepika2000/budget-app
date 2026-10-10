@@ -1,5 +1,26 @@
 # Production readiness mission ledger
 
+## Canonical spending trend contributor identities (2026-10-10)
+
+Full spending contributor paging now accepts an optional paired `dimension` and `dimension_id`
+for category, group or payee trends. Trend aggregation and contributor selection share both the
+nonzero direct/split portion helper and the exact dimension-identity helper. Payee identities use
+the existing trimmed, case-folded trend grouping, including empty/whitespace names mapped to
+No payee. Reusing an ordinary payee-name filter would miss those contributors and is not valid.
+The dimension becomes part of cursor context, and selection occurs only after canonical report
+authorization/filtering. Unknown or hidden dimensions return the same empty authorized result.
+
+The 65-test analytics run passes. Follow-up execution passes 23 financial golden vectors and the
+final restricted-dimension privacy check; the final payee/cursor test also passes. Regressions
+compare full contributors to every category/group/payee series and period, including a refund-only
+negative period, whitespace/case/empty payees, invalid parameter pairs, cross-dimension cursor
+reuse and hidden-resource suggestions. Totals, report ranking and accounting semantics are
+unchanged. `git diff --check` passes. No native code or migration changes in this checkpoint.
+
+The server needs an update before the next native trend-navigation checkpoint. The app's existing
+trend lists still use capped identities; UI closure and human acceptance are not claimed here.
+TestFlight remains held.
+
 ## Full Income vs Spending drill through (2026-10-09)
 
 Income vs Spending now offers separate income and spending transaction lists for the whole report

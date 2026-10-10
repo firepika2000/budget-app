@@ -259,6 +259,47 @@ def test_spending_trends_are_ranked_split_refund_transfer_and_payee_aware(
         ("Market", 7500), ("Cafe", 4000),
     ]
     assert dining_purchase["id"] in payee["series"][1]["transaction_ids"]
+    endpoint = f"/api/v1/budgets/{budget['id']}/reports/contributors"
+    for dimension, report in [("category", body), ("group", group), ("payee", payee)]:
+        for row in report['series']:
+            filters = {"kind": "category_spending", "dimension": dimension, "dimension_id": row['dimension_id']}
+            response = client.get(endpoint, params={**filters, "start_date": "2026-07-15", "end_date": "2026-08-31"}, headers=auth(owner_token))
+            assert response.status_code == 200, response.text
+            assert {item['id'] for item in response.json()['items']} == set(row['transaction_ids'])
+            for point in row['points']:
+                response = client.get(endpoint, params={**filters, "start_date": point['period_start'], "end_date": point['period_end']}, headers=auth(owner_token))
+                assert response.status_code == 200, response.text
+                assert {item['id'] for item in response.json()['items']} == set(point['transaction_ids'])
+
+
+def test_trend_contributors_use_canonical_payee_identity_not_display_filter(client, owner_token, session_factory):
+    from app.models import Transaction
+    budget = create_budget(client, owner_token, session_factory)
+    account, category = create_budget_structure(client, owner_token, budget['id'])
+    ids = []
+    for _ in range(4):
+        ids.append(record(client, owner_token, budget['id'], account_id=account['id'], category_id=category['id'], amount_minor=-100)['id'])
+    with session_factory() as session:
+        for identifier, name in zip(ids, [" Market ", "market", "", "   "]):
+            session.get(Transaction, identifier).payee_name = name
+        session.commit()
+    base = f"/api/v1/budgets/{budget['id']}/reports"
+    period = {"start_date": "2026-09-01", "end_date": "2026-09-30"}
+    trends = client.get(f"{base}/spending-trends", params={**period, "dimension": "payee"}, headers=auth(owner_token)).json()
+    expected = {"payee:market": set(ids[:2]), "payee:no payee": set(ids[2:])}
+    assert {row['dimension_id']: set(row['transaction_ids']) for row in trends['series']} == expected
+    for identifier, matches in expected.items():
+        response = client.get(f"{base}/contributors", params={**period, "kind": "category_spending", "dimension": "payee", "dimension_id": identifier}, headers=auth(owner_token))
+        assert response.status_code == 200, response.text
+        assert {row['id'] for row in response.json()['items']} == matches
+        first = client.get(f"{base}/contributors", params={**period, "kind": "category_spending", "dimension": "payee", "dimension_id": identifier, "limit": 1}, headers=auth(owner_token)).json()
+        assert first['next_cursor'] is not None
+        wrong_context = client.get(f"{base}/contributors", params={**period, "kind": "category_spending", "dimension": "payee",
+            "dimension_id": "payee:another", "limit": 1, "cursor": first['next_cursor']}, headers=auth(owner_token))
+        assert wrong_context.status_code == 422
+    for extra in [{"dimension": "payee"}, {"dimension_id": "payee:market"},
+                  {"dimension": "payee", "dimension_id": "payee:market", "kind": "income"}]:
+        assert client.get(f"{base}/contributors", params={**period, "kind": "category_spending", **extra}, headers=auth(owner_token)).status_code == 422
 
 
 def test_spending_trends_limit_and_hidden_scope_are_enforced_before_aggregation(
@@ -376,6 +417,10 @@ def test_restricted_reports_cannot_leak_hidden_accounts_categories_or_members(
     assert contributors.status_code == 200, contributors.text
     assert [row['id'] for row in contributors.json()['items']] == [own['id']]
     assert 'Private Grocer' not in contributors.text and 'Secret Salary' not in contributors.text
+    for dimension, identifier in [("payee", "payee:private grocer"), ("category", groceries['id']), ("group", "group:Needs")]:
+        hidden = client.get(endpoint, params={**period, "dimension": dimension, "dimension_id": identifier}, headers=auth(child_token))
+        assert hidden.status_code == 200, hidden.text
+        assert hidden.json() == {"items": [], "next_cursor": None}
     assert client.get(endpoint, params={**period, "category_id": groceries['id']}, headers=auth(child_token)).status_code == 404
     revoked = client.put(f"/api/v1/budgets/{budget['id']}/access/{child_id}", headers=auth(owner_token), json={
         "capabilities": ["view_budget", "view_reports"], "restrict_accounts": True,
