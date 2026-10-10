@@ -9,6 +9,36 @@ from .test_budgeting_api import create_budget, create_budget_structure
 from .test_delegated_access import add_child, configure_child
 
 
+@pytest.mark.parametrize("hidden_field", ["source", "destination"])
+def test_allowance_history_cannot_reveal_previously_accessible_categories(
+    client, owner_token, session_factory, hidden_field
+):
+    from app.models import AllowancePlanRevision, CapabilityGrant, ResourceGrant
+    budget, _, token, source, _, _, plan, _ = setup_allowance(
+        client, owner_token, session_factory, "rollover"
+    )
+    with session_factory() as db:
+        db.add(CapabilityGrant(budget_id=budget["id"], user_id=plan["delegated_user_id"], capability="manage_allowances"))
+        db.add(ResourceGrant(budget_id=budget["id"], user_id=plan["delegated_user_id"], resource_type="category", resource_id=source["id"]))
+        db.commit()
+    url = f"/api/v1/budgets/{budget['id']}/allowances/{plan['id']}/history"
+    assert client.get(url, headers=auth(token)).status_code == 200
+    with session_factory() as db:
+        revision = db.query(AllowancePlanRevision).filter_by(plan_id=plan["id"]).first()
+        snapshot = dict(revision.after_snapshot)
+        if hidden_field == "source":
+            snapshot["source_category_id"] = "private-historical-category"
+        else:
+            snapshot["splits"] = [{"destination_category_id": "private-historical-category", "amount_minor": 98765}]
+        revision.after_snapshot = snapshot
+        db.commit()
+    denied = client.get(url, headers=auth(token))
+    assert denied.status_code == 404
+    assert "private-historical-category" not in denied.text
+    assert "98765" not in denied.text
+    assert client.get(url, headers=auth(owner_token)).status_code == 200
+
+
 @pytest.mark.parametrize("hide_destination", [False, True])
 def test_scoped_allowance_manager_cannot_read_or_mutate_hidden_resources(client, owner_token, session_factory, hide_destination):
     from app.models import CapabilityGrant, ResourceGrant

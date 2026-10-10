@@ -45,6 +45,18 @@ def require_plan_scope(db, user, budget, plan, *, include_source=True):
         raise HTTPException(status_code=404, detail="Allowance plan not found")
 
 
+def allowance_snapshot_in_scope(snapshot, allowed):
+    if snapshot is None or allowed is None:
+        return True
+    if not isinstance(snapshot, dict) or snapshot.get("source_category_id") not in allowed:
+        return False
+    splits = snapshot.get("splits")
+    return isinstance(splits, list) and all(
+        isinstance(split, dict) and split.get("destination_category_id") in allowed
+        for split in splits
+    )
+
+
 def advance_issue_date(value: date, unit: str, interval: int) -> date:
     if unit == "week":
         return value + timedelta(weeks=interval)
@@ -430,6 +442,10 @@ def allowance_plan_history(
     ).order_by(
         AllowancePlanRevision.created_at.desc(), AllowancePlanRevision.id.desc()
     ).offset(offset).limit(limit)))
+    allowed = visible_resource_ids(db, user, budget, "category")
+    if any(not allowance_snapshot_in_scope(snapshot, allowed)
+           for item in revisions for snapshot in (item.before_snapshot, item.after_snapshot)):
+        raise HTTPException(status_code=404, detail="Allowance plan not found")
     actor_ids = {item.actor_user_id for item in revisions}
     actors = {item.id: item.display_name for item in db.scalars(
         select(User).where(User.id.in_(actor_ids))
