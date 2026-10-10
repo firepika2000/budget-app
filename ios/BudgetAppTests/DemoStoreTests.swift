@@ -4560,6 +4560,22 @@ final class DemoStoreTests: XCTestCase {
         window.rootViewController = nil
         return signal
     }
+    func testLocalDelimitedStatementParserRejectsOverlongMetadataWithoutTruncation() throws {
+        let mapping = APIStatementImportMapping(sourceFormat: "csv", currencyCode: "USD", dateColumn: "Date", amountColumn: "Amount", payeeColumn: "Payee", memoColumn: "Memo", dateOrder: "ymd")
+        for (payee, memo) in [(String(repeating: "p", count: 151), ""), ("Market", String(repeating: "m", count: 501)),
+                              (String(repeating: "e\u{301}", count: 76), "")] {
+            let data = Data("Date,Amount,Payee,Memo\n2026-09-04,-1.00,\(payee),\(memo)\n".utf8)
+            XCTAssertThrowsError(try LocalDelimitedStatementParser.parse(data: data, mapping: mapping)) { error in
+                XCTAssertFalse(error.localizedDescription.contains(payee))
+                if !memo.isEmpty { XCTAssertFalse(error.localizedDescription.contains(memo)) }
+            }
+        }
+        let payee = String(repeating: "p", count: 150), memo = String(repeating: "m", count: 500)
+        let rows = try LocalDelimitedStatementParser.parse(data: Data("Date,Amount,Payee,Memo\n2026-09-04,-1.00,\(payee),\(memo)\n".utf8), mapping: mapping)
+        XCTAssertEqual(rows.first?.payee, payee); XCTAssertEqual(rows.first?.memo, memo)
+        XCTAssertEqual(rows.first?.amountMinor, -100)
+    }
+
     func testLocalDelimitedStatementParserPreservesExactMoneyAndQuotedFields() throws {
         let data = Data("Date,Description,Amount,Memo\n09/15/2026,\"Corner, Market\",-12.34,\"weekly, food\"\n09/16/2026,Refund,2.50,\n".utf8)
         let rows = try LocalDelimitedStatementParser.parse(data: data, mapping: .init(

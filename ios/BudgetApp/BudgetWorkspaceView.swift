@@ -11870,7 +11870,11 @@ enum LocalDelimitedStatementParser {
             guard amount != 0 else { throw workspaceRepositoryError("Statement row \(sourceRow) has a zero amount.") }
             let payee = row[payeeIndex].trimmingCharacters(in: .whitespacesAndNewlines)
             guard !payee.isEmpty else { throw workspaceRepositoryError("Statement row \(sourceRow) has no payee or description.") }
-            output.append(.init(sourceRow: sourceRow, occurredOn: date, amountMinor: amount, payee: String(payee.prefix(150)), memo: memoIndex.map { String(row[$0].trimmingCharacters(in: .whitespacesAndNewlines).prefix(500)) } ?? ""))
+            let memo = memoIndex.map { row[$0].trimmingCharacters(in: .whitespacesAndNewlines) } ?? ""
+            guard payee.unicodeScalars.count <= 150, memo.unicodeScalars.count <= 500 else {
+                throw workspaceRepositoryError("Statement row \(sourceRow) exceeds the payee or memo length limit.")
+            }
+            output.append(.init(sourceRow: sourceRow, occurredOn: date, amountMinor: amount, payee: payee, memo: memo))
         }
         return output
     }
