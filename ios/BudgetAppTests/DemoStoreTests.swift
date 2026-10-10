@@ -54,6 +54,11 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertTrue(flow.contains("let items = batch.candidates.map"))
         XCTAssertFalse(flow.contains("let items = visibleCandidates(batch).map"))
         XCTAssertTrue(flow.contains("StatementImportSearchModifier(enabled: staged != nil"))
+        XCTAssertTrue(flow.contains("transactionIDs: row.exactTransactionIDs, purpose: \"matching\""))
+        XCTAssertTrue(flow.contains("transactionIDs: row.possibleTransactionIDs, purpose: \"matching\""))
+        XCTAssertTrue(flow.contains(".environmentObject(workspace)"), "match drill-through must share the active production store")
+        XCTAssertTrue(flow.contains("statement-exact-matches-"))
+        XCTAssertTrue(flow.contains("statement-possible-matches-"))
     }
     @MainActor
     func testMetadataOnlyCardEditDoesNotReclassifyFundedPurchaseAfterLaterSpending() async throws {

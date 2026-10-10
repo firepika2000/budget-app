@@ -69,6 +69,16 @@ def test_csv_import_is_money_neutral_and_returns_duplicate_review(client, owner_
     assert body["candidate_count"] == 1
     assert body["candidates"][0]["amount_minor"] == -1234
     assert body["candidates"][0]["exact_transaction_ids"] == [created.json()["id"]]
+    # The real review -> bounded browser path retrieves the existing transaction,
+    # not the statement's proposed new posting, and remains money-neutral.
+    matches = client.get(f"/api/v1/budgets/{budget['id']}/transactions/search",
+                         headers=auth(owner_token), params=[
+                             ("transaction_id", value) for value in body["candidates"][0]["exact_transaction_ids"]
+                         ] + [("limit", "50")])
+    assert matches.status_code == 200, matches.text
+    assert matches.json()["total_count"] == 1
+    assert [item["id"] for item in matches.json()["items"]] == [created.json()["id"]]
+    assert matches.json()["items"][0]["memo"] == "existing"
     assert client.get(summary_path, headers=auth(owner_token)).json() == before
     with session_factory() as db:
         assert db.query(Transaction).count() == 1

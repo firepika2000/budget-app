@@ -12431,6 +12431,25 @@ private struct StatementImportFlowView: View {
                 if !row.exactTransactionIDs.isEmpty || !row.possibleTransactionIDs.isEmpty || row.duplicateSourceRow != nil {
                     Label("Possible duplicate — skipped by default", systemImage: "exclamationmark.triangle").font(.footnote).foregroundStyle(.orange)
                 }
+                if !row.exactTransactionIDs.isEmpty {
+                    NavigationLink {
+                        LiveReportTransactionsView(title: "Exact Matches", transactionIDs: row.exactTransactionIDs, purpose: "matching")
+                            .environmentObject(workspace)
+                    } label: { Label("Review Exact Matches", systemImage: "doc.text.magnifyingglass") }
+                        .disabled(isWorking)
+                        .accessibilityIdentifier("statement-exact-matches-\(row.sourceRow)")
+                }
+                if !row.possibleTransactionIDs.isEmpty {
+                    NavigationLink {
+                        LiveReportTransactionsView(title: "Possible Matches", transactionIDs: row.possibleTransactionIDs, purpose: "matching")
+                            .environmentObject(workspace)
+                    } label: { Label("Review Possible Matches", systemImage: "magnifyingglass") }
+                        .disabled(isWorking)
+                        .accessibilityIdentifier("statement-possible-matches-\(row.sourceRow)")
+                }
+                if let duplicateRow = row.duplicateSourceRow {
+                    Text("Duplicates row \(duplicateRow) in this statement.").font(.footnote).foregroundStyle(.secondary)
+                }
                 if !row.memo.isEmpty { Text(row.memo).font(.footnote).foregroundStyle(.secondary) }
                 if row.reversalTransactionID != nil {
                     Label("Reversed", systemImage: "arrow.uturn.backward.circle").font(.footnote).foregroundStyle(.orange)
@@ -13850,6 +13869,7 @@ private struct LiveReportTransactionsView: View {
     var isTruncated = false
     var groupName: String? = nil
     var totalSpendingMinor: Int64? = nil
+    var purpose = "contributing"
     @State private var rows: [APITransaction] = []
     @State private var batchIndex = 0
     @State private var nextCursor: String?
@@ -13874,13 +13894,13 @@ private struct LiveReportTransactionsView: View {
             if let errorMessage {
                 Section { Text(errorMessage).font(.footnote); Button("Retry") { Task { await load(reset: rows.isEmpty) } } }
             } else if !loading && rows.isEmpty {
-                ContentUnavailableView("No visible transactions", systemImage: "tray", description: Text("No contributing records are currently available to your account."))
+                ContentUnavailableView("No visible transactions", systemImage: "tray", description: Text("No \(purpose) records are currently available to your account."))
             }
             if canLoadMore && errorMessage == nil {
                 Button("Load More") { Task { await load(reset: false) } }.disabled(loading)
                     .accessibilityIdentifier("report-contributors-load-more")
             }
-            if !rows.isEmpty { Text("\(rows.count) contributing transactions loaded").font(.caption).foregroundStyle(.secondary) }
+            if !rows.isEmpty { Text("\(rows.count) \(purpose) transactions loaded").font(.caption).foregroundStyle(.secondary) }
             }
         }.navigationTitle(title)
         .accessibilityIdentifier("report-contributors")

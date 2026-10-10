@@ -1,5 +1,33 @@
 # Production readiness mission ledger
 
+## Statement duplicate inspection (2026-10-09)
+
+Statement review now offers Review Exact Matches and Review Possible Matches for the existing
+authorized identities returned by staging. Both destinations use the shared bounded identity
+browser and the same active workspace store, then the normal transaction detail/editor.
+Same-file duplicates identify their earlier source row. Returning preserves the review's
+posting/category selections. Navigation is disabled while an import command is running.
+
+Inspection does not link, clear, reconcile, post or skip anything automatically. Existing
+duplicates remain skipped by default, and all approval still uses the canonical whole-batch
+explicit submission. These are staged suggestions: a transaction can change after staging,
+so the inspected authoritative record must be reviewed rather than assumed unchanged.
+
+Ten focused backend regressions pass, including actual CSV staging followed by identity-based
+retrieval of the matching existing transaction and unchanged financial summary/batch state.
+Native wiring assertions cover both match destinations and explicit shared-store injection;
+source assertions and compilation are not human/UI interaction acceptance.
+Regular Xcode 27.0 (27A266a), `/Applications/Xcode.app/Contents/Developer`, passes
+build-for-testing for the app/native targets using the preserved iPhone 17 Pro Max / iOS 27
+simulator. `git diff --check` passes. No native runner retry or data reset was performed.
+
+Human retest after rebuilding and updating the server through the identity-filter checkpoint:
+preview a statement containing an already entered transaction, open Review Exact Matches,
+inspect the existing transaction and return. It must remain skipped, with other review choices
+intact and no duplicate posting or clearing change. Possible Matches uses the same path;
+unavailable/revoked matches must not reveal private records. No migration or data reset.
+TestFlight remains held; automatic matching/reconciliation remains a separate workstream.
+
 ## Authoritative report contributor paging (2026-10-09)
 
 Report contributor lists and Spending Breakdown category detail now retrieve the exact report
