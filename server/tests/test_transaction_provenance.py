@@ -1,5 +1,7 @@
 from datetime import datetime, timezone
 
+import pytest
+
 from sqlalchemy import event, insert
 from sqlalchemy.orm import Session
 from app.models import TransactionChange
@@ -9,7 +11,8 @@ from .test_advanced_ledger import record
 from .test_budgeting_api import create_budget, create_budget_structure
 
 
-def test_transaction_provenance_does_not_hydrate_large_edit_history(client, owner_token, session_factory):
+@pytest.mark.parametrize("route", ["transactions", "transactions/search"])
+def test_transaction_provenance_does_not_hydrate_large_edit_history(client, owner_token, session_factory, route):
     budget = create_budget(client, owner_token, session_factory)
     account, category = create_budget_structure(client, owner_token, budget["id"])
     transaction = record(client, owner_token, budget["id"], account_id=account["id"], category_id=category["id"], amount_minor=-200)
@@ -40,12 +43,13 @@ def test_transaction_provenance_does_not_hydrate_large_edit_history(client, owne
     event.listen(Session, "loaded_as_persistent", on_load)
     event.listen(Session, "do_orm_execute", on_execute, retval=True)
     try:
-        response = client.get(f"/api/v1/budgets/{budget['id']}/transactions", headers=auth(owner_token))
+        response = client.get(f"/api/v1/budgets/{budget['id']}/{route}", headers=auth(owner_token))
     finally:
         event.remove(Session, "loaded_as_persistent", on_load)
         event.remove(Session, "do_orm_execute", on_execute)
     assert response.status_code == 200, response.text
-    row = next(item for item in response.json() if item["id"] == transaction["id"])
+    items = response.json()["items"] if route.endswith("/search") else response.json()
+    row = next(item for item in items if item["id"] == transaction["id"])
     assert row["last_modified_by_display_name"] == "Owner"
     assert row["last_modified_at"].startswith("2026-09-15")
     assert hydrated == [], "List attribution must not load historical snapshots or change entities"
@@ -82,3 +86,8 @@ def test_transaction_list_exposes_authorized_creator_and_latest_editor(
     assert row["last_modified_by_display_name"] == "Owner"
     assert row["last_modified_at"] is not None
     assert row["memo"] == "Corrected"
+
+    page = client.get(f"/api/v1/budgets/{budget['id']}/transactions/search", headers=auth(owner_token))
+    assert page.status_code == 200, page.text
+    paged_row = next(item for item in page.json()["items"] if item["id"] == transaction["id"])
+    assert paged_row == row, "Paged workspace hydration must preserve provenance and every canonical field"

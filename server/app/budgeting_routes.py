@@ -2023,7 +2023,7 @@ def search_transactions(
             cursor_payload["payee"] = last.payee_name.casefold()
         payload = json.dumps(cursor_payload, separators=(",", ":"))
         next_cursor = base64.urlsafe_b64encode(payload.encode("utf-8")).decode("ascii")
-    return TransactionPageResponse(items=page, next_cursor=next_cursor, total_count=total_count)
+    return TransactionPageResponse(items=transaction_response_rows(db, page), next_cursor=next_cursor, total_count=total_count)
 
 
 @router.get("/transactions", response_model=list[TransactionResponse])
