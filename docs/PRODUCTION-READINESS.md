@@ -1,5 +1,21 @@
 # Production readiness mission ledger
 
+## Household history privacy and native refresh verification
+
+Server checkpoints `6326762` and `47dff07` close proven resource-scope leaks in delegated authority
+and allowance history. Policy access covers all controlled categories, while historical snapshots
+are checked against current permissions before serialization. Owner audit records remain unchanged;
+denied policy mutations do not append allocation operations or revisions. The focused runs passed
+44 delegated/access/golden-vector checks and 41 allowance/delegated/golden-vector checks respectively.
+Deployment requires a server update, not a database migration or app rebuild.
+
+App checkpoint `76655fd` preserves cached financial observations after transient refresh failures
+and avoids owner-only member-directory requests for non-owner managers. Four focused production
+session XCTests executed and passed under regular Xcode 27.0 on the existing iOS 27 simulator.
+The active toolchain is now `/Applications/Xcode.app/Contents/Developer`, replacing Beta.
+TestFlight publishing remains on hold. Dropbox live-provider acceptance, human history interactions,
+Windows runtime/signing and deployment-specific recovery acceptance remain distinct open gates.
+
 ## Hosted refresh and statement validation (2026-10-10)
 
 Hosted refresh now loads category targets and account balances in bounded pages rather than
