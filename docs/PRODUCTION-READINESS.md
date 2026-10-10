@@ -3053,3 +3053,23 @@ Remaining targeted human check (disposable transaction, two authorized devices):
 on device A, change a metadata field on device B and save, then attempt A's stale save. Expect a
 changed-transaction message with A's draft still open and B's server value preserved. Cancel and
 reopen from a refreshed observation, then save successfully. This is not yet human accepted.
+
+### Activity bulk observation capture — 2026-10-09
+
+Activity uses a reusable bounded selection model retaining only transaction IDs and observed
+revisions, never full transaction metadata. Selection-time observations survive page loads and
+background refresh. All four existing bulk actions use deterministic sorted IDs and the complete
+captured map; a conflict leaves selection intact rather than silently renewing it. Deselect/reselect
+explicitly captures a fresh observation. Done, successful save and access-revocation discard the
+selection. At most 200 entries can be selected; the 201st is rejected without losing prior intent.
+All-legacy/local selection is compatible; mixed revision-bearing/legacy selection requires review.
+
+Three focused selection tests passed (all four actions, deterministic ordering, explicit reselection,
+legacy/mixed handling, the 200 limit and deselection at that limit). The actual bulk HTTP contract
+test passed with the selection-produced revision map and unchanged tag payload. The server's preceding
+stale-batch atomic rejection regression remains applicable; this checkpoint changes no backend code.
+Native runtime human acceptance and durable offline bulk replay remain outstanding. TestFlight stays
+on hold. No customer data, simulator reset, migration or additional server change is needed.
+Regular Xcode 27 build-for-testing passed for the production composition and native test targets
+against the preserved iPhone simulator; this confirms compilation, not executed runtime acceptance.
+`git diff --check` passes. App rebuild required to use the captured bulk observations.

@@ -9108,7 +9108,8 @@ private struct LiveActivityView: View {
     @State private var showSchedule = false
     @State private var transferPresentation: TransferPresentation?
     @State private var selecting = false
-    @State private var selectedIDs: Set<String> = []
+    @State private var transactionSelection = APITransactionSelection()
+    private var selectedIDs: Set<String> { transactionSelection.ids }
     @State private var showTagPrompt = false
     @State private var bulkTag = ""
     @State private var recentReconciliations: [APIReconciliationHistory] = []
@@ -9254,7 +9255,7 @@ private struct LiveActivityView: View {
         }
             .searchable(text: $search, prompt: "Payee, memo, flag, or tag")
             .navigationTitle("Activity")
-            .toolbar { if store.budget.can("edit_transaction") { Button(selecting ? "Done" : "Select") { selecting.toggle(); if !selecting { selectedIDs.removeAll() } }.accessibilityIdentifier("bulk-select-action") }; Button { showFilters = true } label: { Image(systemName: filter.isEmpty ? "line.3.horizontal.decrease" : "line.3.horizontal.decrease.circle.fill") }.accessibilityLabel("Filter transactions").accessibilityIdentifier("transaction-filter-action"); if !selecting && (store.budget.can("create_transaction") || store.budget.can("manage_planning")) { Menu { if store.budget.can("create_transaction") { Button("Transaction", systemImage: "cart") { entryDraft = nil; showAdd = true }; Button("Transfer", systemImage: "arrow.left.arrow.right") { transferPresentation = TransferPresentation() } }; if store.budget.can("manage_planning") { Button("Schedule Transaction", systemImage: "calendar.badge.plus") { showSchedule = true }.accessibilityIdentifier("schedule-transaction-action") } } label: { Image(systemName: "plus") }.accessibilityLabel("Add activity").accessibilityIdentifier("add-activity-action") } }
+            .toolbar { if store.budget.can("edit_transaction") { Button(selecting ? "Done" : "Select") { selecting.toggle(); if !selecting { transactionSelection.removeAll() } }.accessibilityIdentifier("bulk-select-action") }; Button { showFilters = true } label: { Image(systemName: filter.isEmpty ? "line.3.horizontal.decrease" : "line.3.horizontal.decrease.circle.fill") }.accessibilityLabel("Filter transactions").accessibilityIdentifier("transaction-filter-action"); if !selecting && (store.budget.can("create_transaction") || store.budget.can("manage_planning")) { Menu { if store.budget.can("create_transaction") { Button("Transaction", systemImage: "cart") { entryDraft = nil; showAdd = true }; Button("Transfer", systemImage: "arrow.left.arrow.right") { transferPresentation = TransferPresentation() } }; if store.budget.can("manage_planning") { Button("Schedule Transaction", systemImage: "calendar.badge.plus") { showSchedule = true }.accessibilityIdentifier("schedule-transaction-action") } } label: { Image(systemName: "plus") }.accessibilityLabel("Add activity").accessibilityIdentifier("add-activity-action") } }
             .safeAreaInset(edge: .bottom) { if selecting { bulkBar } }
             .alert("Add tag", isPresented: $showTagPrompt) { TextField("Tag", text: $bulkTag); Button("Apply") { Task { await bulkUpdate(action: "add_tags", tags: [bulkTag]) } }.disabled(bulkTag.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty); Button("Cancel", role: .cancel) {} } message: { Text("The tag will be added to all selected transactions.") }
             .sheet(isPresented: $showAdd, onDismiss: { entryDraft = nil }) { entry }
@@ -9268,7 +9269,7 @@ private struct LiveActivityView: View {
             .task(id: store.authorityRevision) { async let changes: Void = loadRecentTransactionChanges(); async let reconciliations: Void = loadRecentReconciliations(); _ = await (changes, reconciliations) }
             .onChange(of: store.authorityRevision) { _, _ in
                 rows = []; nextCursor = nil; totalCount = 0; errorMessage = nil
-                selectedIDs.removeAll(); selecting = false; showTagPrompt = false
+                transactionSelection.removeAll(); selecting = false; showTagPrompt = false
                 recentTransactionChanges = []; recentReconciliations = []; reconciliationAccount = nil
                 transactionChangesError = nil; reconciliationError = nil
                 showFilters = false
@@ -9480,7 +9481,10 @@ private struct LiveActivityView: View {
         .accessibilityIdentifier("bulk-transaction-row-\(transaction.id)")
     }
     private func canBulkEdit(_ transaction: APITransaction) -> Bool { !transaction.isReconciled && transaction.transferID == nil && transaction.scheduledTransactionID == nil && !["Starting Balance", "Reconciliation adjustment"].contains(transaction.payeeName) }
-    private func toggleSelection(_ transaction: APITransaction) { if selectedIDs.contains(transaction.id) { selectedIDs.remove(transaction.id) } else { selectedIDs.insert(transaction.id) } }
+    private func toggleSelection(_ transaction: APITransaction) {
+        do { try transactionSelection.toggle(id: transaction.id, revision: transaction.revision) }
+        catch { errorMessage = error.localizedDescription }
+    }
     @ViewBuilder private var bulkBar: some View {
         HStack {
             Text("\(selectedIDs.count) selected").font(.subheadline).foregroundStyle(.secondary)
@@ -9493,7 +9497,15 @@ private struct LiveActivityView: View {
             }.disabled(selectedIDs.isEmpty || loading).accessibilityIdentifier("bulk-update-menu")
         }.padding(.horizontal).padding(.vertical, 10).background(.bar)
     }
-    private func bulkUpdate(action: String, cleared: Bool? = nil, flag: String? = nil, tags: [String]? = nil) async { loading = true; defer { loading = false }; do { try await store.bulkUpdateTransactions(.init(transactionIDs: selectedIDs.sorted(), action: action, cleared: cleared, flag: flag, tags: tags)); selectedIDs.removeAll(); selecting = false; await load(reset: true); errorMessage = nil } catch { errorMessage = error.localizedDescription } }
+    private func bulkUpdate(action: String, cleared: Bool? = nil, flag: String? = nil, tags: [String]? = nil) async {
+        loading = true; defer { loading = false }
+        do {
+            let update = try transactionSelection.update(action: action, cleared: cleared, flag: flag, tags: tags)
+            try await store.bulkUpdateTransactions(update)
+            transactionSelection.removeAll(); selecting = false
+            await load(reset: true); errorMessage = nil
+        } catch { errorMessage = error.localizedDescription }
+    }
     private func load(reset: Bool) async {
         let requestedKey = queryKey
         if loading && !reset { return }; loading = true; defer { if requestedKey == queryKey { loading = false } }
@@ -9506,7 +9518,7 @@ private struct LiveActivityView: View {
             guard requestedKey == queryKey else { return }
             if HistoryObservationPolicy.mustDiscard(after: error) {
                 rows = []; nextCursor = nil; totalCount = 0
-                selectedIDs.removeAll(); selecting = false; showTagPrompt = false
+                transactionSelection.removeAll(); selecting = false; showTagPrompt = false
             }
             if !Task.isCancelled { errorMessage = error.localizedDescription }
         }

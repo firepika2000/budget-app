@@ -1522,6 +1522,35 @@ public struct APITransactionBulkUpdate: Encodable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey { case transactionIDs = "transaction_ids"; case action, cleared, flag, tags; case expectedRevisions = "expected_revisions" }
 }
 
+/// Captures observations at selection time, not from a later refreshed page.
+public struct APITransactionSelection: Sendable {
+    private struct Observation: Sendable { let revision: String? }
+    private var observations: [String: Observation] = [:]
+    public init() {}
+    public var ids: Set<String> { Set(observations.keys) }
+    public mutating func removeAll() { observations.removeAll() }
+    public mutating func toggle(id: String, revision: String?) throws {
+        if observations.removeValue(forKey: id) != nil { return }
+        guard observations.count < 200 else { throw SelectionError.tooMany }
+        observations[id] = Observation(revision: revision)
+    }
+    public func update(action: String, cleared: Bool? = nil, flag: String? = nil, tags: [String]? = nil) throws -> APITransactionBulkUpdate {
+        let revisions = observations.compactMapValues(\.revision)
+        // Entirely legacy/local selections remain supported. Mixed observations must be reviewed.
+        guard revisions.isEmpty || revisions.count == observations.count else { throw SelectionError.mixedObservations }
+        return APITransactionBulkUpdate(transactionIDs: ids.sorted(), action: action, cleared: cleared, flag: flag, tags: tags, expectedRevisions: revisions.isEmpty ? nil : revisions)
+    }
+    public enum SelectionError: LocalizedError {
+        case tooMany, mixedObservations
+        public var errorDescription: String? {
+            switch self {
+            case .tooMany: "Select at most 200 transactions per update."
+            case .mixedObservations: "These transaction observations differ. Clear the selection, refresh, and select them again."
+            }
+        }
+    }
+}
+
 public struct APITransferCreate: Encodable, Sendable {
     public let sourceAccountID: String
     public let destinationAccountID: String

@@ -807,10 +807,14 @@ final class APIClientTests: XCTestCase {
             XCTAssertEqual(json["transaction_ids"] as? [String], ["t1", "t2"])
             XCTAssertEqual(json["action"] as? String, "add_tags")
             XCTAssertEqual(json["tags"] as? [String], ["reviewed"])
+            XCTAssertEqual(json["expected_revisions"] as? [String: String], ["t1": "v1:" + String(repeating: "1", count: 64), "t2": "v1:" + String(repeating: "2", count: 64)])
             return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, Data("[]".utf8))
         }
         let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: session)
-        let rows = try await client.bulkUpdateTransactions(budgetID: "b1", update: .init(transactionIDs: ["t1", "t2"], action: "add_tags", tags: ["reviewed"]), token: "secret")
+        var selection = APITransactionSelection()
+        try selection.toggle(id: "t2", revision: "v1:" + String(repeating: "2", count: 64))
+        try selection.toggle(id: "t1", revision: "v1:" + String(repeating: "1", count: 64))
+        let rows = try await client.bulkUpdateTransactions(budgetID: "b1", update: selection.update(action: "add_tags", tags: ["reviewed"]), token: "secret")
         XCTAssertTrue(rows.isEmpty)
     }
 

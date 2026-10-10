@@ -35,8 +35,12 @@ Native integration now preserves the original editor observation in SwiftUI Stat
 through RecordTransactionOperation/application service/API DTO on ordinary transaction updates.
 Quick clearing also includes the current row observation. A conflict keeps the editor's draft open;
 it does not silently replace the observation and retry. Older servers/local projections without a
-revision retain compatible behavior. Bulk multi-selection observation capture and durable edit
-outbox integration remain outstanding. No offline-edit completion, PostgreSQL concurrent-request
+revision retain compatible behavior. Activity multi-selection now captures each observation at
+selection time, retains it across paging/refresh and sends a deterministic complete revision map.
+The selection is bounded to 200, cleared on exit/success/authority revocation, and rejects mixed
+legacy/current observations instead of silently weakening protection. Conflicts retain selection;
+deselect/reselect explicitly captures fresh observations. Durable edit outbox integration remains
+outstanding. No offline-edit completion, PostgreSQL concurrent-request
 proof, or lost-acknowledgement guarantee is claimed.
 
 1. Every replayable command has an immutable UUID operation identity scoped to actor and budget,
