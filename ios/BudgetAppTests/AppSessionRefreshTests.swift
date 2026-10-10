@@ -131,6 +131,10 @@ final class AppSessionRefreshTests: XCTestCase {
     }
 
     private static func workspaceResponse(_ path: String) -> (Int, Data) {
+        if path.hasSuffix("/delegated-budgets/me") { return json(200, "null") }
+        if path.hasSuffix("/forecast") {
+            return json(200, #"{"as_of":"2026-09-01","through":"2026-12-01","currency_code":"USD","actual_total_on_budget_minor":0,"projected_total_on_budget_minor":0,"lowest_projected_total_minor":0,"accounts":[],"occurrences":[]}"#)
+        }
         if path.hasSuffix("/allocations/page") {
             return json(200, #"{"items":[],"next_cursor":null}"#)
         }
@@ -150,19 +154,19 @@ final class AppSessionRefreshTests: XCTestCase {
     }
 
     @MainActor
-    private func workspaceForRevocationTest() throws -> BudgetWorkspaceStore {
+    private func workspaceForRevocationTest(budget: APIBudget? = nil) throws -> BudgetWorkspaceStore {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [RefreshMockURLProtocol.self]
         let transport = URLSession(configuration: configuration)
         return BudgetWorkspaceStore.production(context: .live(
-            budget: APIBudget(id: "b1", householdID: "h1", name: "Home", currencyCode: "USD"),
+            budget: budget ?? APIBudget(id: "b1", householdID: "h1", name: "Home", currencyCode: "USD"),
             serverURL: URL(string: "https://budget.example.com")!, token: "current-token"),
             clientFactory: { try APIClient(baseURL: $0, session: transport) })
     }
 
     @MainActor
-    func testMoneyRequestAndAllocationRefreshErrorsAreNotPublishedAsEmptySuccess() async throws {
-        for route in ["/requests", "/allocations/page"] {
+    func testFinancialObservationRefreshErrorsAreNotPublishedAsEmptySuccess() async throws {
+        for route in ["/requests", "/allocations/page", "/allowances", "/delegated-budgets/me", "/forecast", "/members", "/delegated-budgets"] {
             for status in [503, 403] {
                 let phase = Counter()
                 RefreshMockURLProtocol.handler = { request in
@@ -185,6 +189,23 @@ final class AppSessionRefreshTests: XCTestCase {
                 }
             }
         }
+    }
+
+    @MainActor
+    func testNonOwnerAllowanceManagerDoesNotReadOwnerOnlyMemberDirectory() async throws {
+        let requests = CredentialRequestRecorder()
+        RefreshMockURLProtocol.handler = { request in
+            requests.append(path: request.url!.path, authorization: "test")
+            if request.url!.path.hasSuffix("/members") { return Self.json(404, #"{"detail":"Household not found"}"#) }
+            return Self.workspaceResponse(request.url!.path)
+        }
+        let store = try workspaceForRevocationTest(budget: APIBudget(id: "b1", householdID: "h1", name: "Managed", currencyCode: "USD", effectivePermission: .manage))
+        await store.refresh()
+        XCTAssertEqual(store.summary?.readyToAssignMinor, 42)
+        XCTAssertFalse(store.workspaceAccessDenied)
+        XCTAssertFalse(requests.paths.contains { $0.hasSuffix("/members") })
+        XCTAssertTrue(requests.paths.contains { $0.hasSuffix("/allowances") })
+        XCTAssertTrue(requests.paths.contains { $0.hasSuffix("/delegated-budgets") })
     }
 
     @MainActor

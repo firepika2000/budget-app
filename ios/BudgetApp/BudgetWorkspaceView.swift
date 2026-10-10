@@ -4463,11 +4463,12 @@ private final class LiveWorkspaceDataSource: WorkspaceDataSource {
             }
         }
         let requests = (budget.can("request_money") || budget.can("approve_request")) ? try await client.financialRequests(budgetID: budget.id, token: token) : []
-        let allowances = (try? await client.allowancePlans(budgetID: budget.id, includeInactive: budget.can("manage_allowances"), token: token)) ?? []
-        let delegated = try? await client.delegatedBudget(budgetID: budget.id, token: token)
-        let forecast: APIForecast? = if budget.can("view_account_balances") { try? await client.forecast(budgetID: budget.id, through: BudgetWorkspaceStore.dateString(Calendar.current.date(byAdding: .day, value: 90, to: Date())!), token: token) } else { nil }
-        let members = budget.can("manage_allowances") ? (try? await client.householdMembers(householdID: budget.householdID, token: token)) ?? [] : []
-        let delegatedBudgets = budget.can("manage_allowances") ? (try? await client.delegatedBudgets(budgetID: budget.id, token: token)) ?? [] : []
+        let allowances = try await client.allowancePlans(budgetID: budget.id, includeInactive: budget.can("manage_allowances"), token: token)
+        let delegated = budget.can("view_categories") ? try await client.delegatedBudget(budgetID: budget.id, token: token) : nil
+        let forecast: APIForecast? = if budget.can("view_account_balances") { try await client.forecast(budgetID: budget.id, through: BudgetWorkspaceStore.dateString(Calendar.current.date(byAdding: .day, value: 90, to: Date())!), token: token) } else { nil }
+        // Household member identities are owner-only, not an allowance-manager capability.
+        let members = budget.effectivePermission == .owner && budget.can("manage_allowances") ? try await client.householdMembers(householdID: budget.householdID, token: token) : []
+        let delegatedBudgets = budget.can("manage_allowances") ? try await client.delegatedBudgets(budgetID: budget.id, token: token) : []
         return WorkspaceSnapshot(accounts: accounts, accountBalances: Dictionary(uniqueKeysWithValues: balances.map { ($0.accountID, $0) }), categories: categories, groups: groups, transactions: transactions, summary: summary, payees: [], requests: requests, allowances: allowances, spending: spending, spendingTrends: spendingTrends, income: income, netWorth: netWorth, debt: debt, planPerformance: planPerformance, resilience: resilience, delegated: delegated, forecast: forecast, members: members, delegatedBudgets: delegatedBudgets, allocationOperations: allocationOperations, allocationNextCursor: allocationPage?.nextCursor, targets: targets, schedules: schedules)
     }
 
