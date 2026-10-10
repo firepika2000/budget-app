@@ -1,5 +1,26 @@
 # Production readiness mission ledger
 
+## Import review excludes impossible amount matches (2026-10-09)
+
+Statement review loaded every authorized posting in the date span before applying the matching
+limit. Unrelated amounts could therefore make a small statement fail with “Narrow the import
+review date range,” even though neither exact nor possible matching could use those transactions.
+The production adapter now passes the bounded set of exact signed candidate amounts into the
+authorized SQL observation query. Amount filtering happens before retrieval/limit; dates, account,
+posted state, whole-resource visibility and alias privacy still apply. General helper callers that
+omit amounts retain their previous behavior. The actual matching cap is unchanged, not bypassed.
+
+An actual HTTP 10,000-unrelated-posting regression failed before correction. It uses a reduced
+100-observation cap to exercise the production rejection branch efficiently, rather than claiming
+a default-cap 50,001-row benchmark. After correction it stages with no false duplicate suggestions.
+A relevant over-cap history still returns 422, leaves no failed staging batch, and posts no money.
+Restricted amount-filtered observations remain scoped and expose no private aliases.
+
+All 24 focused import routes/review/matching/staging tests passed; diff checks passed. No Swift or
+native rerun, schema migration, customer-data reset or TestFlight publication. Server update/restart
+required; no app rebuild for this checkpoint. Broad-span matching with many genuinely relevant
+observations can still hit the explicit cap; this is not a claim of unlimited import history.
+
 ## Searchable focused statement review (2026-10-09)
 
 Statement review previously required scrolling every recognized row without a way to find a payee,

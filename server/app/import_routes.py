@@ -105,6 +105,7 @@ def _response(db: Session, user: User, budget_id: str, batch: ImportBatch,
     observations = load_match_observations(
         db, user=user, budget_id=budget_id, account_id=batch.account_id,
         start_date=start, end_date=end,
+        amounts={row.amount_minor for row in candidates},
     )
     reviews = {row.source_row: row for row in review_candidates(
         candidates, observations, date_window_days=match_window_days,

@@ -38,6 +38,8 @@ def test_import_observations_scope_before_matching(client, owner_token, session_
         rows = load_match_observations(db, user=member, **arguments)
         assert [row.transaction_id for row in rows] == [shared["id"]]
         assert rows[0].payee_aliases == ()
+        assert load_match_observations(db, user=member, **arguments, amounts={-100}) == rows
+        assert load_match_observations(db, user=member, **arguments, amounts=set()) == []
         assert load_match_observations(db, user=member, **{**arguments, "end_date": date(2026, 9, 1)}) == []
         with pytest.raises(HTTPException) as error:
             load_match_observations(db, user=member, **{**arguments, "account_id": "missing"})

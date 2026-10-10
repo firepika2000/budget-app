@@ -10,11 +10,13 @@ from sqlalchemy.orm import Session
 from .access import can_access_resource, visible_resource_ids
 from .budgeting_routes import require_budget_capability, transaction_visibility_conditions
 from .import_matching import MAX_OBSERVATIONS, MatchObservation
+from .import_candidates import MAX_ROWS
 from .models import Account, PayeeAlias, Transaction, User
 
 
 def load_match_observations(db: Session, *, user: User, budget_id: str, account_id: str,
-                            start_date: date, end_date: date) -> list[MatchObservation]:
+                            start_date: date, end_date: date,
+                            amounts: set[int] | None = None) -> list[MatchObservation]:
     budget = require_budget_capability(db, user, budget_id, "view_transactions")
     require_budget_capability(db, user, budget_id, "create_transaction")
     account = db.scalar(select(Account).where(Account.id == account_id, Account.budget_id == budget.id))
@@ -22,12 +24,15 @@ def load_match_observations(db: Session, *, user: User, budget_id: str, account_
         raise HTTPException(status_code=404, detail="Account not found")
     if start_date > end_date:
         raise HTTPException(status_code=422, detail="Invalid review date range")
+    if amounts is not None and (len(amounts) > MAX_ROWS or any(type(amount) is not int for amount in amounts)):
+        raise HTTPException(status_code=422, detail="Invalid review amount set")
     rows = db.execute(select(Transaction.id, Transaction.occurred_on, Transaction.amount_minor,
                              Transaction.payee_name, Transaction.payee_id)
                       .where(*transaction_visibility_conditions(db, user, budget),
                              Transaction.account_id == account_id,
                              Transaction.occurred_on >= start_date, Transaction.occurred_on <= end_date,
                              Transaction.status == "posted")
+                      .where(True if amounts is None else Transaction.amount_minor.in_(sorted(amounts)))
                       .order_by(Transaction.id).limit(MAX_OBSERVATIONS + 1)).all()
     if len(rows) > MAX_OBSERVATIONS:
         raise HTTPException(status_code=422, detail="Narrow the import review date range")

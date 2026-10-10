@@ -1,4 +1,6 @@
 from app.models import ImportBatch, Transaction, User
+from sqlalchemy import insert
+from datetime import date
 
 from .conftest import auth
 from .test_budgeting_api import add_member, create_budget, create_budget_structure
@@ -20,6 +22,31 @@ def _stage(client, token, budget_id, account_id, content, **headers):
         f"/api/v1/budgets/{budget_id}/accounts/{account_id}/statement-imports",
         headers={**auth(token), **base}, content=content,
     )
+
+
+def test_review_excludes_impossible_amount_matches_before_history_limit(client, owner_token, session_factory, monkeypatch):
+    from app import import_review
+    monkeypatch.setattr(import_review, "MAX_OBSERVATIONS", 100)
+    budget = create_budget(client, owner_token, session_factory)
+    account, _ = create_budget_structure(client, owner_token, budget["id"])
+    with session_factory() as db:
+        owner = db.query(User).filter_by(email="owner@example.com").one()
+        db.execute(insert(Transaction), [
+            {"id": f"irrelevant-{i}", "budget_id": budget["id"], "account_id": account["id"],
+             "amount_minor": -1, "occurred_on": date(2026, 9, 15), "payee_name": "Other",
+             "created_by_user_id": owner.id} for i in range(10000)
+        ])
+        db.commit()
+    response = _stage(client, owner_token, budget["id"], account["id"], b"Date,Amount,Payee,Memo\n2026-09-15,-12.34,Market,statement\n")
+    assert response.status_code == 201, response.text
+    row = response.json()["candidates"][0]
+    assert row["exact_transaction_ids"] == []
+    assert row["possible_transaction_ids"] == []
+    limited = _stage(client, owner_token, budget["id"], account["id"], b"Date,Amount,Payee,Memo\n2026-09-15,-0.01,Other,statement\n")
+    assert limited.status_code == 422, "Relevant histories above the cap must still fail closed"
+    with session_factory() as db:
+        assert db.query(Transaction).filter_by(budget_id=budget["id"]).count() == 10000
+        assert db.query(ImportBatch).filter_by(budget_id=budget["id"]).count() == 1
 
 
 def test_csv_import_is_money_neutral_and_returns_duplicate_review(client, owner_token, session_factory):
