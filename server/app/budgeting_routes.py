@@ -8,7 +8,7 @@ from datetime import date, datetime, timezone, timedelta
 import hashlib
 import hmac
 from io import StringIO
-from typing import Optional
+from typing import Annotated, Optional
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, Request, status
@@ -2772,23 +2772,52 @@ def download_transaction_attachment(
 def detach_transaction_attachment(
     budget_id: str, transaction_id: str, attachment_id: str,
     user: User = Depends(get_current_user), db: Session = Depends(get_db),
+    operation_id: Annotated[Optional[UUID], Header(alias="X-Attachment-Operation-ID")] = None,
+    expected_sha256: Annotated[Optional[str], Query(pattern="^[0-9a-f]{64}$")] = None,
 ) -> None:
     budget = require_budget_capability(db, user, budget_id, "edit_transaction")
+    if operation_id is not None and expected_sha256 is None:
+        raise HTTPException(status_code=422, detail="Identified attachment removal requires the reviewed file digest")
+    lock_budget(db, budget_id)
     transaction = _attachment_transaction(db, user, budget, transaction_id)
     if transaction.created_by_user_id != user.id and not has_capability(db, user, budget, "manage_budget_structure"):
         raise HTTPException(status_code=403, detail="You may only detach files from your own transactions")
+    identity = str(operation_id) if operation_id is not None else None
+    digest = "v1:" + hashlib.sha256(json.dumps({"transaction_id": transaction_id,
+        "attachment_id": attachment_id, "expected_sha256": expected_sha256},
+        sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    if identity is not None:
+        receipt = db.get(WorkspaceCommandReceipt, (budget_id, user.id, identity))
+        if receipt is not None:
+            if (receipt.command_kind != "attachment_detach" or receipt.request_digest != digest
+                    or receipt.resource_id != attachment_id):
+                raise HTTPException(status_code=409, detail="Saved removal identity belongs to different intent")
+            # The atomic receipt remains proof after the tombstone is purged. Current
+            # transaction scope and ownership were rechecked above; never recreate bytes.
+            return
     attachment = db.scalar(select(TransactionAttachment).where(
         TransactionAttachment.id == attachment_id, TransactionAttachment.transaction_id == transaction_id,
         TransactionAttachment.budget_id == budget_id, TransactionAttachment.detached_at.is_(None),
     ).with_for_update())
     if attachment is None:
         raise HTTPException(status_code=404, detail="Attachment not found")
+    if expected_sha256 is not None and expected_sha256 != attachment.sha256:
+        raise HTTPException(status_code=409, detail="This attachment differs from the file reviewed for removal")
     now = datetime.now(timezone.utc)
     attachment.detached_at = now
     attachment.detached_by_user_id = user.id
     attachment.purge_after = now + timedelta(days=30)
     record_transaction_change(db, transaction, user, "attachment_detached", before=json.dumps({"attachment_id": attachment.id, "sha256": attachment.sha256}, sort_keys=True))
-    db.commit()
+    if identity is not None:
+        db.add(WorkspaceCommandReceipt(budget_id=budget_id, actor_user_id=user.id,
+            operation_id=identity, command_kind="attachment_detach", request_digest=digest, resource_id=attachment_id))
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        if identity is None or db.get(WorkspaceCommandReceipt, (budget_id, user.id, identity)) is None:
+            raise
+        return detach_transaction_attachment(budget_id, transaction_id, attachment_id, user, db, operation_id, expected_sha256)
 
 
 @router.post("/attachments/garbage-collect")

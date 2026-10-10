@@ -374,6 +374,27 @@ def _schedule(pg, **body):
     return r.json()["id"]
 
 
+def test_concurrent_identified_attachment_removal_has_one_tombstone_and_audit(pg):
+    from datetime import timezone, timedelta
+    from app.budgeting_routes import detach_transaction_attachment
+    from app.models import TransactionAttachment, TransactionChange, WorkspaceCommandReceipt
+    from .test_attachment_detach_receipts import reviewed_removal
+    budget, transaction, path, headers, params = reviewed_removal(pg.client, pg.token, pg.factory)
+    from uuid import UUID
+    identity = UUID(headers["X-Attachment-Operation-ID"])
+    attachment_id = path.rsplit("/", 1)[1]
+    def call(db, user):
+        return detach_transaction_attachment(budget["id"], transaction["id"], attachment_id, user, db,
+                                             identity, params["expected_sha256"])
+    results = run_race([route_attempt(pg.factory, pg.owner_id, call) for _ in range(2)])
+    assert outcomes(results) == ["ok", "ok"], results
+    with pg.factory() as db:
+        attachment = db.get(TransactionAttachment, attachment_id)
+        assert attachment.purge_after.astimezone(timezone.utc) - attachment.detached_at.astimezone(timezone.utc) == timedelta(days=30)
+        assert db.query(TransactionChange).filter_by(action="attachment_detached").count() == 1
+        assert db.query(WorkspaceCommandReceipt).filter_by(command_kind="attachment_detach").count() == 1
+
+
 def test_concurrent_identified_realization_does_not_post_next_overdue_occurrence(pg, monkeypatch):
     from app.models import ScheduledTransactionRevision, WorkspaceCommandReceipt
     freeze_today(monkeypatch, date(2026, 9, 5), planning_routes)

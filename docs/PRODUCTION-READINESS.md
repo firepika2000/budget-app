@@ -1,5 +1,32 @@
 # Production readiness mission ledger
 
+## Identified attachment removal server contract (2026-10-09)
+
+Attachment removal accepts optional `X-Attachment-Operation-ID` UUID and `expected_sha256`
+query. Identified removal requires the reviewed immutable file digest. The existing
+budget lock serializes removal with other authorized workspace mutations. Current edit
+capability, whole transaction resource scope and ownership are checked before receipt
+acknowledgement. Changed file observations or reused identities fail closed.
+
+Tombstone, attributed transaction history and removal receipt commit atomically. A lost
+response retry acknowledges the original removal without extending its 30-day retention,
+adding another audit event or recreating encrypted bytes. The accepted receipt survives
+subsequent tombstone purge, while current transaction access remains mandatory. Legacy
+unidentified deletion retains its existing missing-attachment 404 behavior. Financial
+amounts, balances, allocations and clearing/reconciliation state remain unchanged.
+
+Executed evidence: 60 focused tests pass across removal/upload receipts, transaction
+void/schedule/attachment lifecycle and financial golden vectors. The removal cases cover
+exact retention, response loss, purge, invalid/rebound identities, failed-commit rollback,
+revoked capability/account/category/ownership and legacy compatibility. One isolated
+PostgreSQL race passes, proving simultaneous identical removals create exactly one
+tombstone/audit/receipt. Retention is asserted as exact UTC elapsed time across DST.
+`git diff --check` passed. No Swift or migration changed; server restart is required.
+
+Native durable attachment removal integration remains next. Existing intentional removal
+confirmation and preview interaction are untouched; no new UI/runtime acceptance is claimed.
+No human attachment, Live database or Simulator data was changed. TestFlight remains on hold.
+
 ## Native durable reviewed scheduled realization (2026-10-09)
 
 The production schedule editor passes its captured revision through the shared schedule
