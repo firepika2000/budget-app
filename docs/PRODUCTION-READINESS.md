@@ -1,5 +1,30 @@
 # Production readiness mission ledger
 
+## Identified schedule creation server boundary (2026-10-09)
+
+Ordinary schedule creation now accepts optional UUID header `X-Planning-Operation-ID`.
+The existing actor/budget receipt table binds the complete validated request to one created
+schedule. Budget locking serializes receipt lookup and publication; the creation history and
+receipt commit atomically. An accepted retry returns the current authorized schedule without
+resetting a later pause, edit or realization. Changed intent or command kind returns 409;
+deleted or currently inaccessible schedules return 404 rather than being recreated. Current
+manage-planning capability is checked before acknowledging any accepted identity. Requests
+without the header retain the existing creation behavior.
+
+Executed evidence: 54 focused backend tests passed (11 new receipt cases, the existing
+scheduled-transaction contract and 23 financial golden vectors). New coverage includes exact
+large integer money, money-neutral creation/retry, preserved later pause/memo, changed intent,
+deleted non-resurrection, capability/account/category revocation, malformed UUID, command-kind
+collision, legacy behavior and failed-commit rollback/retry. A real isolated PostgreSQL race
+passed: simultaneous identified requests returned one schedule, one creation history and one
+receipt, without an actual transaction. The disposable test cluster was stopped afterward.
+No Live database or customer schedule was changed. `git diff --check` passed.
+
+Server update/restart required; no new migration beyond the existing 0049 receipt table.
+No Swift changes or native build in this checkpoint. Native schedule queuing, Make Recurring
+retry identity, and observed-edit conflict protection remain unfinished and must not be
+described as offline scheduled management yet. TestFlight remains on hold; no merge/tag/release.
+
 ## Offline pending attachment presentation (2026-10-09)
 
 Transaction detail now renders individual saved-upload rows, with filename, bounded file size

@@ -762,6 +762,26 @@ def test_concurrent_identified_void_acknowledges_one_reversal(pg):
         assert db.query(WorkspaceCommandReceipt).count() == 1
 
 
+def test_concurrent_identified_schedule_creation_returns_one_schedule_and_history(pg):
+    from app.models import ScheduledTransactionRevision, WorkspaceCommandReceipt
+    from app.schemas import ScheduledTransactionCreate
+    budget = create_budget(pg.client, pg.token, pg.factory)
+    account, category = create_budget_structure(pg.client, pg.token, budget["id"])
+    body = ScheduledTransactionCreate(account_id=account["id"], category_id=category["id"],
+        name="Concurrent schedule", amount_minor=-9007199254740993, next_date=date(2099, 1, 1), recurrence_unit="months")
+    identity = uuid4()
+    def call(db, user):
+        return planning_routes.create_scheduled_transaction(budget["id"], body, user, db, identity).id
+    results = run_race([route_attempt(pg.factory, pg.owner_id, call) for _ in range(2)])
+    assert outcomes(results) == ["ok", "ok"], results
+    assert results[0][1] == results[1][1]
+    with pg.factory() as db:
+        assert db.query(ScheduledTransaction).one().amount_minor == -9007199254740993
+        assert db.query(ScheduledTransactionRevision).filter_by(action="created").count() == 1
+        assert db.query(WorkspaceCommandReceipt).count() == 1
+        assert db.query(Transaction).count() == 0
+
+
 def test_concurrent_identified_attachment_upload_acknowledges_one_encrypted_object(pg):
     import hashlib
     from app.budgeting_routes import attach_transaction_file

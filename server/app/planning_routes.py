@@ -1,8 +1,11 @@
 from datetime import date, timedelta
+import hashlib
+import json
 from typing import Optional
-from uuid import uuid4
+from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
@@ -24,6 +27,7 @@ from .models import (
     ScheduledTransactionRevision,
     Transaction,
     User,
+    WorkspaceCommandReceipt,
 )
 from .payee_identity import resolve_or_create_payee, resolve_payee
 from .planning import next_occurrence, occurrences_between
@@ -296,8 +300,25 @@ def create_scheduled_transaction(
     body: ScheduledTransactionCreate,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
+    operation_id: Optional[UUID] = Header(default=None, alias="X-Planning-Operation-ID"),
 ) -> ScheduledTransaction:
     budget = require_budget_capability(db, user, budget_id, "manage_planning")
+    identity = str(operation_id) if operation_id is not None else None
+    digest = "v1:" + hashlib.sha256(json.dumps(
+        body.model_dump(mode="json"), sort_keys=True, separators=(",", ":"),
+    ).encode()).hexdigest()
+    # Serialize publication and receipt checks before allocating a second schedule/history row.
+    lock_budget(db, budget_id)
+    if identity is not None:
+        receipt = db.get(WorkspaceCommandReceipt, (budget_id, user.id, identity))
+        if receipt is not None:
+            if receipt.command_kind != "schedule_create" or receipt.request_digest != digest:
+                raise HTTPException(status_code=409, detail="Saved schedule identity belongs to different intent")
+            existing = db.get(ScheduledTransaction, receipt.resource_id)
+            if existing is None or existing.budget_id != budget_id or not _can_access_schedule_resources(db, user, budget, existing):
+                raise HTTPException(status_code=404, detail="Scheduled transaction not found")
+            # Return current authorized state, never reset a later edit, realization or pause.
+            return existing
     account = db.get(Account, body.account_id)
     destination = db.get(Account, body.destination_account_id) if body.destination_account_id else None
     category = db.get(Category, body.category_id) if body.category_id else None
@@ -338,7 +359,16 @@ def create_scheduled_transaction(
     db.add(schedule)
     db.flush()
     _append_schedule_revision(db, schedule, "created", user.id, None, _schedule_snapshot(schedule))
-    db.commit()
+    if identity is not None:
+        db.add(WorkspaceCommandReceipt(budget_id=budget_id, actor_user_id=user.id,
+            operation_id=identity, command_kind="schedule_create", request_digest=digest, resource_id=schedule.id))
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        if identity is None or db.get(WorkspaceCommandReceipt, (budget_id, user.id, identity)) is None:
+            raise
+        return create_scheduled_transaction(budget_id, body, user, db, operation_id)
     db.refresh(schedule)
     return schedule
 
