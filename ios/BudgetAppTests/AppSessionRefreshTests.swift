@@ -12,6 +12,21 @@ import UIKit
 /// user-visible "Invalid or expired refresh token" alert even though the winning refresh had already
 /// recovered the session. These tests lock in the single-flight fix and the clean sign-in transition.
 final class AppSessionRefreshTests: XCTestCase {
+    func testPendingTransactionDetailsRequireCurrentWholeResourceScope() {
+        let operation = RecordTransactionOperation(accountID: "checking", categoryID: nil, amountMinor: -3,
+            occurredOn: "2026-10-09", payeeName: "Private purchase", memo: "Sensitive", isCleared: false,
+            splits: [.init(categoryID: "food", amountMinor: -1, memo: ""),
+                     .init(categoryID: "hidden", amountMinor: -2, memo: "")],
+            flag: nil, tags: [], attachmentMetadata: [])
+        XCTAssertTrue(PendingTransactionVisibility.allows(operation, canView: true,
+            accountIDs: ["checking"], categoryIDs: ["food", "hidden"]))
+        XCTAssertFalse(PendingTransactionVisibility.allows(operation, canView: false,
+            accountIDs: ["checking"], categoryIDs: ["food", "hidden"]))
+        XCTAssertFalse(PendingTransactionVisibility.allows(operation, canView: true,
+            accountIDs: [], categoryIDs: ["food", "hidden"]))
+        XCTAssertFalse(PendingTransactionVisibility.allows(operation, canView: true,
+            accountIDs: ["checking"], categoryIDs: ["food"]))
+    }
     func testPairingPayloadRequiresVersionedHTTPSOrigin() throws {
         let valid = DevicePairingPayload(version: 1, serverURL: "https://budget.example.com", code: "secret")
         XCTAssertEqual(DevicePairingPayload.parse(try XCTUnwrap(valid.encoded)), valid)

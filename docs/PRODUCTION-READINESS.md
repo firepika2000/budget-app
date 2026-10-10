@@ -1,5 +1,33 @@
 # Production readiness mission ledger
 
+## Pending Sync current-scope privacy (2026-10-09)
+
+Pending Sync previously exposed raw retained outbox entries regardless of the current workspace
+capabilities and resource scope. A transaction queued before revocation could continue exposing its
+payee, date and amount after its account or one split category became inaccessible. Queue detail
+projection now requires current workspace access, `view_transactions`, the account and every direct
+or split category. Mixed-scope entries are hidden whole, not misleadingly partially redacted.
+
+The original queue bytes and operation identities are preserved. Hidden pending entries produce
+a neutral access/reconnect state instead of incorrectly saying everything synchronized. Retry stays
+available and uses the unchanged canonical replay/server authorization. Discard rechecks current
+visible-entry membership and workspace access; authority changes dismiss stale confirmation state.
+Destination adoption remains an explicit local binding, never an authorization grant.
+
+The actual production outbox/visibility host harness verifies capability, account and whole-split
+scope rejection plus byte preservation, alongside the prior adoption/replay/recovery regressions.
+Native coverage adds whole-resource scope cases. Regular Xcode 27 build-for-testing passed on the
+preserved iPhone 17 Pro Max / iOS 27 destination. Native cases were compiled, not executed; source
+wiring and host checks do not establish rendered runtime acceptance. Diff checks passed. App
+rebuild required; no server change, migration or customer-data deletion.
+
+**Confirmed remaining offline write gap:** hosted new-transaction creation is durable/idempotent,
+but transaction edits, quick clearing, allocations, reconciliation, transfers and authority changes
+remain online-only. They must not be blindly queued against potentially stale server observations.
+Broader hosted offline editing requires an explicit optimistic-conflict and replay-safe mutation
+contract before application-service/outbox integration. Local Device remains locally writable;
+this privacy checkpoint does not fulfill all hosted offline-update requirements. TestFlight is held.
+
 ## Full-range signed money editing and presentation (2026-10-09)
 
 The split checkpoint's separate signed-magnitude gap is corrected. Transaction and schedule

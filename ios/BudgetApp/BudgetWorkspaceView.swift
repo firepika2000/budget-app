@@ -4625,7 +4625,16 @@ final class BudgetWorkspaceStore: ObservableObject {
     }
 
     var pendingLiveTransactions: [LiveTransactionOutbox.Entry] {
-        (commandRepository as? LiveWorkspaceCommandRepository)?.pendingTransactions ?? []
+        guard !workspaceAccessDenied else { return [] }
+        let accountIDs = Set(accounts.map(\.id)), categoryIDs = Set(categories.map(\.id))
+        return ((commandRepository as? LiveWorkspaceCommandRepository)?.pendingTransactions ?? []).filter {
+            PendingTransactionVisibility.allows($0.operation, canView: budget.can("view_transactions"),
+                accountIDs: accountIDs, categoryIDs: categoryIDs)
+        }
+    }
+
+    var pendingLiveDetailsRestricted: Bool {
+        ((commandRepository as? LiveWorkspaceCommandRepository)?.pendingTransactionCount ?? 0) > pendingLiveTransactions.count
     }
 
     var pendingLiveQueueError: String? { (commandRepository as? LiveWorkspaceCommandRepository)?.pendingQueueError }
@@ -4641,6 +4650,10 @@ final class BudgetWorkspaceStore: ObservableObject {
     }
 
     func discardPendingLiveTransaction(id: String) throws {
+        try requireWorkspaceAccess()
+        guard pendingLiveTransactions.contains(where: { $0.id == id }) else {
+            throw BudgetApplicationError.invalidOperation("This pending transaction is not available under current access. Its saved copy is preserved.")
+        }
         guard let live = commandRepository as? LiveWorkspaceCommandRepository else { return }
         try live.discardPendingTransaction(id: id)
         pendingSyncCount = live.pendingTransactionCount
@@ -5996,7 +6009,7 @@ private struct PendingLiveTransactionsView: View {
                 if let error = store.pendingLiveQueueError {
                     ContentUnavailableView("Pending Changes Unavailable", systemImage: "exclamationmark.icloud", description: Text(error))
                         .accessibilityIdentifier("pending-sync-unreadable")
-                } else if store.pendingLiveTransactions.isEmpty {
+                } else if store.pendingLiveTransactions.isEmpty && !store.pendingLiveDetailsRestricted {
                     ContentUnavailableView("No Pending Changes", systemImage: "checkmark.icloud", description: Text("Everything saved on this iPhone has synchronized."))
                 } else {
                     ForEach(store.pendingLiveTransactions) { entry in
@@ -6017,13 +6030,18 @@ private struct PendingLiveTransactionsView: View {
                         }
                         .accessibilityElement(children: .contain)
                     }
+                    if store.pendingLiveDetailsRestricted {
+                        ContentUnavailableView("Pending Details Unavailable", systemImage: "lock.icloud",
+                            description: Text("Saved transactions are preserved. Their details require current account and category access. Reconnect to verify access; server authorization still applies before anything posts."))
+                            .accessibilityIdentifier("pending-sync-restricted")
+                    }
                 }
             } header: {
                 Text("Pending transactions")
             } footer: {
                 Text("Retry first. Discard only if the server rejected an item you no longer want to post. Discarding removes only the local queued copy; it never deletes a server transaction.")
             }
-            if !store.pendingLiveTransactions.isEmpty {
+            if !store.pendingLiveTransactions.isEmpty || store.pendingLiveDetailsRestricted {
                 Section {
                     Button("Retry Synchronization", systemImage: "arrow.clockwise") { Task { await store.refresh() } }
                         .disabled(store.isBackgroundSyncing || store.isLoading || store.pendingLegacyServerReview)
@@ -6033,6 +6051,7 @@ private struct PendingLiveTransactionsView: View {
         }
         .navigationTitle("Pending Sync")
         .navigationBarTitleDisplayMode(.inline)
+        .onChange(of: store.authorityRevision) { _, _ in pendingDiscard = nil; confirmServer = false }
         .confirmationDialog("Use This Server for Older Pending Changes?", isPresented: $confirmServer) {
             Button("Confirm Destination") {
                 do { try store.confirmLegacyPendingServer() }
@@ -6053,7 +6072,7 @@ private struct PendingLiveTransactionsView: View {
         } message: {
             Text("This removes the transaction waiting on this iPhone. It does not change any transaction already accepted by the server.")
         }
-        .alert("Unable to discard", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
+        .alert("Unable to update pending changes", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
             Button("OK", role: .cancel) {}
         } message: { Text(errorMessage ?? "Unknown error") }
     }

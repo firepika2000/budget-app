@@ -362,6 +362,15 @@ final class LiveTransactionOutbox {
     }
 }
 
+enum PendingTransactionVisibility {
+    static func allows(_ operation: RecordTransactionOperation, canView: Bool,
+                       accountIDs: Set<String>, categoryIDs: Set<String>) -> Bool {
+        guard canView, accountIDs.contains(operation.accountID) else { return false }
+        if let categoryID = operation.categoryID, !categoryIDs.contains(categoryID) { return false }
+        return operation.splits.allSatisfy { categoryIDs.contains($0.categoryID) }
+    }
+}
+
 struct LiveWorkspaceCachePayload: Codable {
     let savedAt: Date
     let accessRevision: String?

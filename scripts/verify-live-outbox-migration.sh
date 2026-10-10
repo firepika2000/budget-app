@@ -22,6 +22,9 @@ prepare = send_body.index("try await credentials.prepare()")
 binding = send_body.index("try transactionOutbox.requireServer(")
 mutation = send_body.index("client.createTransaction(")
 abort "Canonical mutation must recheck binding after refresh" unless prepare && binding && mutation && prepare < binding && binding < mutation
+abort "Pending rows bypass workspace access" unless workspace.include?('guard !workspaceAccessDenied else { return [] }') && workspace.include?('PendingTransactionVisibility.allows($0.operation, canView: budget.can("view_transactions")')
+abort "Pending restricted state appears fully synced" unless workspace.include?('store.pendingLiveTransactions.isEmpty && !store.pendingLiveDetailsRestricted') && workspace.include?('pending-sync-restricted')
+abort "Pending discard bypasses visible entry check" unless workspace.include?('guard pendingLiveTransactions.contains(where: { $0.id == id }) else')
 puts <<'SWIFT'
 try await MainActor.run {
  let root = FileManager.default.temporaryDirectory.appendingPathComponent("outbox-migration-\(UUID().uuidString)")
@@ -32,6 +35,18 @@ try await MainActor.run {
   splits: [], flag: "orange", tags: ["qa"], attachmentMetadata: [], clientOperationID: UUID().uuidString)
  let original = LiveTransactionOutbox(fileURL: legacyURL); try original.enqueue(operation)
  let bytes = try Data(contentsOf: legacyURL)
+ precondition(PendingTransactionVisibility.allows(operation, canView: true, accountIDs: ["checking"], categoryIDs: ["food"]))
+ precondition(!PendingTransactionVisibility.allows(operation, canView: false, accountIDs: ["checking"], categoryIDs: ["food"]))
+ precondition(!PendingTransactionVisibility.allows(operation, canView: true, accountIDs: [], categoryIDs: ["food"]))
+ precondition(!PendingTransactionVisibility.allows(operation, canView: true, accountIDs: ["checking"], categoryIDs: []))
+ let split = RecordTransactionOperation(accountID: "checking", categoryID: nil, amountMinor: -3,
+  occurredOn: "2026-10-09", payeeName: "Private mixed purchase", memo: "Sensitive", isCleared: false,
+  splits: [.init(categoryID: "food", amountMinor: -1, memo: ""), .init(categoryID: "hidden", amountMinor: -2, memo: "")],
+  flag: nil, tags: [], attachmentMetadata: [])
+ precondition(!PendingTransactionVisibility.allows(split, canView: true, accountIDs: ["checking"], categoryIDs: ["food"]))
+ precondition(PendingTransactionVisibility.allows(split, canView: true, accountIDs: ["checking"], categoryIDs: ["food", "hidden"]))
+ let preservedAfterScopeChecks = try Data(contentsOf: legacyURL)
+ precondition(preservedAfterScopeChecks == bytes)
  let server = URL(string: "https://server.example/family")!
  let scope = liveServerStorageScope(budgetID: "budget", serverURL: server, token: "token")
  let route = WorkspaceRouteContext.live(budget: APIBudget(id: "budget"), serverURL: server, token: "token")
@@ -66,7 +81,7 @@ try await MainActor.run {
  let retry = LiveTransactionOutbox(fileURL: delayed, legacyFileURL: secondLegacy, scope: scope)
  precondition(retry.requiresLegacyReview); try retry.confirmLegacyServer()
  precondition(retry.entries == secondOriginal.entries && !retry.requiresLegacyReview)
- print("PASS: explicit adoption, no legacy replay/append/discard, exact preserved identity/money/metadata, endpoint isolation, relaunch, canonical acknowledgement, interrupted-publication recovery")
+ print("PASS: current whole-resource scope and preserved bytes, explicit adoption, no legacy replay/append/discard, exact identity/money/metadata, endpoint isolation, relaunch, canonical acknowledgement, interrupted-publication recovery")
 }
 SWIFT
 RUBY
