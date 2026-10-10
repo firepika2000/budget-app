@@ -18,6 +18,24 @@ def _search(client, token, budget_id, query=""):
     return response.json()
 
 
+def test_identity_selection_is_bounded_and_cannot_cross_budget(client, owner_token, session_factory):
+    budget = create_budget(client, owner_token, session_factory)
+    other = create_budget(client, owner_token, session_factory, name="Other")
+    account, category = create_budget_structure(client, owner_token, other["id"])
+    transaction = record(client, owner_token, other["id"], account_id=account["id"],
+                         category_id=category["id"], amount_minor=-100)
+    assert _search(client, owner_token, budget["id"], f"?transaction_id={transaction['id']}") == {
+        "items": [], "next_cursor": None, "total_count": 0,
+    }
+    path = f"/api/v1/budgets/{budget['id']}/transactions/search"
+    for ids in [[""], ["x" * 129], ["missing"] * 501]:
+        response = client.get(path, headers=auth(owner_token), params=[("transaction_id", value) for value in ids])
+        assert response.status_code == 422, response.text
+    assert _search(client, owner_token, budget["id"], "?" + "&".join(["transaction_id=missing"] * 500)) == {
+        "items": [], "next_cursor": None, "total_count": 0,
+    }
+
+
 def test_transaction_browser_filters_sorts_and_paginates_without_mutation(
     client, owner_token, session_factory
 ):
@@ -57,6 +75,17 @@ def test_transaction_browser_filters_sorts_and_paginates_without_mutation(
     assert [item["id"] for item in _search(client, owner_token, budget["id"], "?transaction_type=refund")["items"]] == [refund["id"]]
     assert [item["id"] for item in _search(client, owner_token, budget["id"], f"?category_id={dining['id']}")["items"]] == [second["id"]]
     assert [item["id"] for item in _search(client, owner_token, budget["id"], "?cleared=true")["items"]] == [first["id"]]
+
+    # Report contributors are selected by identity, without depending on a hydrated page.
+    ids = f"transaction_id={first['id']}&transaction_id={refund['id']}&transaction_id={first['id']}&transaction_id=missing"
+    selected = _search(client, owner_token, budget["id"], f"?{ids}&limit=1&sort=date_asc")
+    assert selected["total_count"] == 2
+    assert [item["id"] for item in selected["items"]] == [first["id"]]
+    following = _search(client, owner_token, budget["id"], f"?{ids}&limit=1&sort=date_asc&cursor={selected['next_cursor']}")
+    assert [item["id"] for item in following["items"]] == [refund["id"]]
+    assert following["next_cursor"] is None
+    filtered = _search(client, owner_token, budget["id"], f"?{ids}&minimum_amount_minor=0")
+    assert [item["id"] for item in filtered["items"]] == [refund["id"]]
 
     # Querying is observational only.
     assert len(client.get(f"/api/v1/budgets/{budget['id']}/transactions", headers=auth(owner_token)).json()) == 3
@@ -145,10 +174,14 @@ def test_restricted_search_never_leaks_hidden_rows_or_counts(
     all_visible = _search(client, token, budget["id"])
     assert all_visible["total_count"] == 1
     assert [item["id"] for item in all_visible["items"]] == [visible["id"]]
-    for query in ["?q=secret", f"?category_id={private_category['id']}", "?tag=secret"]:
+    for query in ["?q=secret", f"?category_id={private_category['id']}", "?tag=secret", f"?transaction_id={private['id']}"]:
         hidden = _search(client, token, budget["id"], query)
         assert hidden == {"items": [], "next_cursor": None, "total_count": 0}
         assert private["id"] not in str(hidden)
+
+    mixed = _search(client, token, budget["id"], f"?transaction_id={private['id']}&transaction_id={visible['id']}")
+    assert mixed["total_count"] == 1
+    assert [item["id"] for item in mixed["items"]] == [visible["id"]]
 
     hidden_payee = client.get(
         f"/api/v1/budgets/{budget['id']}/payees/search?q=secret", headers=auth(token)
