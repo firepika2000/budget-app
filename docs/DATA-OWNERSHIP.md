@@ -19,6 +19,21 @@ the server returns. Completing only one additional command does not close this m
 
 #### Canonical server mutation/replay boundary
 
+Preparatory server support (2026-10-09): transaction responses expose a `v1:` SHA-256
+content precondition named `revision`. Ordinary updates optionally accept `expected_revision`;
+bulk metadata updates optionally accept `expected_revisions` covering exactly the selected IDs.
+After current authorization/reconciliation checks and before mutation, a mismatch rejects the
+whole operation with HTTP 409. Legacy requests that omit these fields remain compatible.
+The fingerprint includes canonical transaction/split state, not actor display names or derived
+report fields; split ordering is normalized by identity. It is a content precondition, NOT a
+monotonic edit counter: returning to identical content returns the same fingerprint.
+Creation `client_operation_id` is now immutable through ordinary editing, including omitted
+and replacement values. This prevents an edit from erasing creation retry identity, but does
+not supply immutable replay receipts for subsequently edited transactions.
+
+These fields are not yet integrated into native commands or the durable outbox. No offline-edit
+completion, PostgreSQL concurrent-request proof, or lost-acknowledgement guarantee is claimed.
+
 1. Every replayable command has an immutable UUID operation identity scoped to actor and budget,
    a versioned typed payload and a canonical payload digest. A transactional receipt is committed
    with the existing application-service effects, never before or in a separate transaction.

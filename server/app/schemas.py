@@ -1,11 +1,14 @@
 from datetime import date, datetime
-from typing import Literal, Optional
+from typing import Annotated, Literal, Optional
+import hashlib
+import json
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
 
 
 MIN_INT64 = -(2**63)
 MAX_INT64 = 2**63 - 1
+TransactionRevision = Annotated[str, Field(pattern=r"^v1:[0-9a-f]{64}$")]
 
 
 class BootstrapRequest(BaseModel):
@@ -836,7 +839,7 @@ class TransactionCreate(BaseModel):
 
 
 class TransactionUpdate(TransactionCreate):
-    pass
+    expected_revision: Optional[TransactionRevision] = None
 
 
 class TransactionDuplicateRequest(BaseModel):
@@ -866,6 +869,7 @@ class TransactionAttachmentResponse(BaseModel):
 
 
 class TransactionBulkUpdateRequest(BaseModel):
+    expected_revisions: Optional[dict[str, TransactionRevision]] = Field(default=None, max_length=200)
     transaction_ids: list[str] = Field(min_length=1, max_length=200)
     action: Literal["set_cleared", "set_flag", "add_tags", "remove_tags"]
     cleared: Optional[bool] = None
@@ -896,6 +900,8 @@ class TransactionBulkUpdateRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_action_value(self) -> "TransactionBulkUpdateRequest":
+        if self.expected_revisions is not None and set(self.expected_revisions) != set(self.transaction_ids):
+            raise ValueError("expected_revisions must cover exactly the selected transactions")
         if self.action == "set_cleared" and self.cleared is None:
             raise ValueError("cleared is required for set_cleared")
         if self.action in {"add_tags", "remove_tags"} and not self.tags:
@@ -936,6 +942,20 @@ class TransactionResponse(BaseModel):
     reversal_of_transaction_id: Optional[str] = None
     reversal_transaction_id: Optional[str] = None
     splits: list[TransactionSplitResponse] = Field(default_factory=list)
+
+    @computed_field
+    @property
+    def revision(self) -> str:
+        # Exact authorized transaction content, not display attribution or wall-clock time.
+        payload = self.model_dump(mode="json", include={
+            "id", "budget_id", "account_id", "category_id", "payee_id", "amount_minor",
+            "occurred_on", "payee_name", "memo", "financial_classification", "is_cleared",
+            "is_reconciled", "flag", "tags", "attachment_metadata", "transfer_id",
+            "scheduled_transaction_id", "status", "voided_at", "voided_by_user_id", "void_reason",
+            "reversal_of_transaction_id", "reversal_transaction_id", "splits",
+        })
+        payload["splits"].sort(key=lambda split: split["id"])
+        return "v1:" + hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
 class TransactionPageResponse(BaseModel):

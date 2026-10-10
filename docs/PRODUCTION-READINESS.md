@@ -3010,3 +3010,22 @@ available. Scope consent and any real-data upload require the owner's informed a
 use a development-console generated token as a shortcut. This walkthrough has NOT been performed or
 human accepted. No software rebuild, migration or server restart is needed for the console evidence;
 use a current development build when conducting the remaining live workflow. TestFlight remains on hold.
+
+### Hosted edit precondition foundation — 2026-10-09
+
+Actual HTTP regressions first reproduced stale ordinary and bulk edits succeeding against changed
+transactions. Optional authorized content preconditions now reject these requests with 409 before
+mutation; a stale member of a bulk selection rejects the whole batch. Fresh ordinary preconditions
+succeed. Strict format/identity-set validation rejects malformed or incomplete bulk observations.
+Ordinary edits also preserve immutable creation retry identity rather than overwriting it with the
+update DTO's default null or a replacement UUID. Native integration and durable edit replay are NOT
+implemented by this checkpoint; identical-content ABA and immutable replay receipts remain distinct
+requirements, as documented in DATA-OWNERSHIP.md.
+
+70 focused backend tests pass across transaction bulk, credit cards, browser, history, provenance
+and financial golden vectors. Existing no-op comparisons remain exact; clearing metadata comparisons
+exclude only clearing state and its necessarily changed derived revision. `git diff --check` passes.
+No Swift or migration changes: no app rebuild/native rerun required; deploying server changes requires
+a server update/restart. No customer data was changed. Regular Xcode 27.0 (27A266a) at
+`/Applications/Xcode.app/Contents/Developer` is confirmed and replaces Beta for future native operations.
+TestFlight remains on hold; no human acceptance or real PostgreSQL concurrency proof is claimed.

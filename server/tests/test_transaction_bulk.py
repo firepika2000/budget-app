@@ -1,4 +1,5 @@
 import pytest
+from uuid import uuid4
 
 from app.models import Transaction, TransactionChange, User
 
@@ -13,6 +14,63 @@ def _bulk(client, token, budget_id, transaction_ids, action, **values):
         headers=auth(token),
         json={"transaction_ids": transaction_ids, "action": action, **values},
     )
+
+
+def test_stale_bulk_observation_rejects_entire_batch(client, owner_token, session_factory):
+    budget = create_budget(client, owner_token, session_factory)
+    account, category = create_budget_structure(client, owner_token, budget["id"])
+    rows = [record(client, owner_token, budget["id"], account_id=account["id"], category_id=category["id"], amount_minor=-100) for _ in range(2)]
+    revisions = {row["id"]: row.get("revision", "v1:" + "0" * 64) for row in rows}
+    assert _bulk(client, owner_token, budget["id"], [rows[0]["id"]], "set_flag", flag="orange").status_code == 200
+    before = client.get(f"/api/v1/budgets/{budget['id']}/transactions", headers=auth(owner_token)).json()
+    response = _bulk(client, owner_token, budget["id"], [row["id"] for row in rows], "set_cleared", cleared=True, expected_revisions=revisions)
+    assert response.status_code == 409, response.text
+    assert client.get(f"/api/v1/budgets/{budget['id']}/transactions", headers=auth(owner_token)).json() == before
+
+
+def test_transaction_edit_rejects_stale_observation_without_overwriting_metadata(client, owner_token, session_factory):
+    budget = create_budget(client, owner_token, session_factory)
+    account, category = create_budget_structure(client, owner_token, budget["id"])
+    row = record(client, owner_token, budget["id"], account_id=account["id"], category_id=category["id"], amount_minor=-100, memo="Original")
+    body = {key: row[key] for key in ["account_id", "category_id", "amount_minor", "occurred_on", "payee_name", "payee_id", "memo", "is_cleared", "flag", "tags"]}
+    body.update(expected_revision=row.get("revision", "v1:" + "0" * 64), memo="Stale edit")
+    assert _bulk(client, owner_token, budget["id"], [row["id"]], "set_flag", flag="orange").status_code == 200
+    path = f"/api/v1/budgets/{budget['id']}/transactions"
+    response = client.put(f"{path}/{row['id']}", headers=auth(owner_token), json=body)
+    assert response.status_code == 409, response.text
+    current = next(r for r in client.get(path, headers=auth(owner_token)).json() if r["id"] == row["id"])
+    assert current["memo"] == "Original" and current["flag"] == "orange"
+    body.update(expected_revision=current["revision"], flag="orange")
+    accepted = client.put(f"{path}/{row['id']}", headers=auth(owner_token), json=body)
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["revision"] != current["revision"]
+
+
+@pytest.mark.parametrize("replace_identity", [False, True])
+def test_transaction_edit_preserves_creation_retry_identity(client, owner_token, session_factory, replace_identity):
+    budget = create_budget(client, owner_token, session_factory)
+    account, category = create_budget_structure(client, owner_token, budget["id"])
+    identity = str(uuid4())
+    row = record(client, owner_token, budget["id"], account_id=account["id"], category_id=category["id"], amount_minor=-100, client_operation_id=identity)
+    body = {key: row[key] for key in ["account_id", "category_id", "amount_minor", "occurred_on", "payee_name", "memo", "is_cleared", "flag", "tags"]}
+    body.update(memo="Edited", expected_revision=row["revision"])
+    if replace_identity:
+        body["client_operation_id"] = str(uuid4())
+    response = client.put(f"/api/v1/budgets/{budget['id']}/transactions/{row['id']}", headers=auth(owner_token), json=body)
+    assert response.status_code == 200, response.text
+    with session_factory() as db:
+        assert db.get(Transaction, row["id"]).client_operation_id == identity
+
+
+@pytest.mark.parametrize("revisions", [{}, {"foreign": "v1:" + "0" * 64}, {"foreign": "invalid"}])
+def test_bulk_revision_contract_requires_exact_selected_identity_set(client, owner_token, session_factory, revisions):
+    budget = create_budget(client, owner_token, session_factory)
+    account, category = create_budget_structure(client, owner_token, budget["id"])
+    row = record(client, owner_token, budget["id"], account_id=account["id"], category_id=category["id"], amount_minor=-100)
+    response = _bulk(client, owner_token, budget["id"], [row["id"]], "set_cleared", cleared=True, expected_revisions=revisions)
+    assert response.status_code == 422, response.text
+    with session_factory() as db:
+        assert db.get(Transaction, row["id"]).is_cleared is False
 
 
 @pytest.mark.parametrize("action,values", [
@@ -133,7 +191,7 @@ def test_single_transaction_clearing_persists_without_financial_mutation_or_perm
         record(client, owner_token, budget["id"], account_id=account["id"], category_id=category["id"], amount_minor=-3333, payee_name="Metadata Payee", memo="keep exactly", flag="purple"),
     ]
     def unchanged_metadata(row):
-        return {key: value for key, value in row.items() if key != "is_cleared"}
+        return {key: value for key, value in row.items() if key not in {"is_cleared", "revision"}}
 
     for transaction in transactions:
         cleared = _bulk(client, owner_token, budget["id"], [transaction["id"]], "set_cleared", cleared=True)

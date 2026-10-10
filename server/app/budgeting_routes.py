@@ -2301,6 +2301,11 @@ def bulk_update_transactions(
 
     by_id = {transaction.id: transaction for transaction in transactions}
     ordered = [by_id[transaction_id] for transaction_id in body.transaction_ids]
+    if body.expected_revisions is not None and any(
+        body.expected_revisions[transaction.id] != TransactionResponse.model_validate(transaction).revision
+        for transaction in ordered
+    ):
+        raise HTTPException(status_code=409, detail="One or more transactions changed. Refresh and review before applying this edit.")
     proposed_tags = {}
     if body.action == "add_tags":
         for transaction in ordered:
@@ -2628,6 +2633,8 @@ def update_transaction(
     if transaction.created_by_user_id != user.id and not has_capability(db, user, budget, "manage_budget_structure"):
         raise HTTPException(status_code=403, detail="You may only edit your own transactions")
     before_snapshot = transaction_snapshot(transaction)
+    if body.expected_revision is not None and body.expected_revision != TransactionResponse.model_validate(transaction).revision:
+        raise HTTPException(status_code=409, detail="This transaction changed. Refresh and review before applying this edit.")
     if body.occurred_on > today():
         raise HTTPException(status_code=422, detail="Future transactions belong in the planning layer")
     account = db.scalar(select(Account).where(Account.id == body.account_id).with_for_update())
@@ -2664,7 +2671,8 @@ def update_transaction(
     )
     if financial_changed:
         db.execute(delete(CreditCardReserveEvent).where(CreditCardReserveEvent.source_transaction_id == transaction.id))
-    values = body.model_dump(exclude={"splits"})
+    # Creation retry identity is immutable, including when an edit omits it.
+    values = body.model_dump(exclude={"splits", "expected_revision", "client_operation_id"})
     for key, value in values.items():
         setattr(transaction, key, value)
     if financial_changed:
