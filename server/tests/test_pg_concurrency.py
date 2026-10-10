@@ -782,6 +782,29 @@ def test_concurrent_identified_schedule_creation_returns_one_schedule_and_histor
         assert db.query(Transaction).count() == 0
 
 
+def test_concurrent_identified_make_recurring_creates_one_template(pg):
+    from app.budgeting_routes import create_schedule_from_transaction
+    from app.models import TransactionChange, WorkspaceCommandReceipt
+    from app.schemas import TransactionScheduleRequest
+    budget = create_budget(pg.client, pg.token, pg.factory)
+    account, category = create_budget_structure(pg.client, pg.token, budget["id"])
+    original = record(pg.client, pg.token, budget["id"], account_id=account["id"],
+                      category_id=category["id"], amount_minor=-9007199254740993)
+    body = TransactionScheduleRequest(expected_revision=original["revision"], mutation_operation_id=uuid4(),
+                                      next_date=date(2099, 1, 1), recurrence_unit="months")
+    def call(db, user):
+        return create_schedule_from_transaction(budget["id"], original["id"], body, user, db).id
+    results = run_race([route_attempt(pg.factory, pg.owner_id, call) for _ in range(2)])
+    assert outcomes(results) == ["ok", "ok"], results
+    assert results[0][1] == results[1][1]
+    with pg.factory() as db:
+        assert db.query(ScheduledTransaction).one().amount_minor == -9007199254740993
+        assert db.query(TransactionChange).filter_by(action="schedule_created").count() == 1
+        assert db.query(WorkspaceCommandReceipt).count() == 1
+        assert db.query(Transaction).count() == 1
+        assert db.get(Transaction, original["id"]).amount_minor == -9007199254740993
+
+
 def test_concurrent_identified_attachment_upload_acknowledges_one_encrypted_object(pg):
     import hashlib
     from app.budgeting_routes import attach_transaction_file

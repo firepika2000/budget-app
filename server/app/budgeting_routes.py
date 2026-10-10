@@ -2582,13 +2582,33 @@ def create_schedule_from_transaction(
     db: Session = Depends(get_db),
 ) -> ScheduledTransaction:
     budget = require_budget_capability(db, user, budget_id, "manage_planning")
+    lock_budget(db, budget_id)
     original = db.scalar(select(Transaction).options(selectinload(Transaction.splits)).where(Transaction.id == transaction_id, Transaction.budget_id == budget_id))
     if original is None or not _can_access_transaction_resources(db, user, budget, original):
         raise HTTPException(status_code=404, detail="Transaction not found")
+    identity = str(body.mutation_operation_id) if body.mutation_operation_id is not None else None
+    digest = "v1:" + hashlib.sha256(json.dumps({
+        "transaction_id": transaction_id,
+        "request": body.model_dump(mode="json", exclude={"mutation_operation_id"}),
+    }, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    if identity is not None:
+        receipt = db.get(WorkspaceCommandReceipt, (budget_id, user.id, identity))
+        if receipt is not None:
+            if receipt.command_kind != "make_recurring" or receipt.request_digest != digest:
+                raise HTTPException(status_code=409, detail="Saved recurring identity belongs to different intent")
+            accepted = db.get(ScheduledTransaction, receipt.resource_id)
+            from .planning_routes import _can_access_schedule_resources
+            if accepted is None or accepted.budget_id != budget_id or not _can_access_schedule_resources(db, user, budget, accepted):
+                raise HTTPException(status_code=404, detail="Scheduled transaction not found")
+            return accepted
+    if body.expected_revision is not None and body.expected_revision != TransactionResponse.model_validate(original).revision:
+        raise HTTPException(status_code=409, detail="This transaction changed. Refresh and review its recurring template.")
     if original.status != "posted" or original.transfer_id is not None or original.payee_name in {"Starting Balance", "Reconciliation adjustment"}:
         raise HTTPException(status_code=409, detail="This transaction cannot be used as a recurring template")
     if original.splits:
         raise HTTPException(status_code=409, detail="Split schedules are not supported yet")
+    if identity is not None and body.next_date <= today():
+        raise HTTPException(status_code=409, detail="The reviewed next date is no longer in the future. Review before creating this schedule.")
     next_date = body.next_date or next_occurrence(original.occurred_on, body.recurrence_unit, body.interval_count)
     while next_date is not None and next_date <= today():
         next_date = next_occurrence(next_date, body.recurrence_unit, body.interval_count)
@@ -2604,7 +2624,16 @@ def create_schedule_from_transaction(
     db.add(schedule)
     db.flush()
     record_transaction_change(db, original, user, "schedule_created", before=transaction_snapshot(original), after=json.dumps({"scheduled_transaction_id": schedule.id}))
-    db.commit()
+    if identity is not None:
+        db.add(WorkspaceCommandReceipt(budget_id=budget_id, actor_user_id=user.id,
+            operation_id=identity, command_kind="make_recurring", request_digest=digest, resource_id=schedule.id))
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        if identity is None or db.get(WorkspaceCommandReceipt, (budget_id, user.id, identity)) is None:
+            raise
+        return create_schedule_from_transaction(budget_id, transaction_id, body, user, db)
     db.refresh(schedule)
     return schedule
 

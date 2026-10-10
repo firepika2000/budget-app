@@ -1,5 +1,31 @@
 # Production readiness mission ledger
 
+## Identified Make Recurring server boundary (2026-10-09)
+
+Make Recurring now accepts an optional stable mutation UUID with the observed source
+transaction revision and an explicit next date. A budget lock serializes source review,
+schedule creation and receipt publication. Changed templates or expired reviewed dates
+return 409 instead of silently copying newer metadata or advancing the requested date.
+Legacy requests retain their existing behavior.
+
+Accepted retries return the current authorized schedule, preserving subsequent edits or
+pauses. Changed intent or command kind returns 409; deleted schedules are not resurrected.
+Current capability and source/schedule resource visibility remain mandatory before receipt
+acknowledgement. Schedule creation, the existing source audit and receipt commit atomically;
+the posted transaction and financial values remain unchanged.
+
+Executed evidence: 66 focused backend tests passed, including 12 new recurring receipt,
+observation, date and authorization cases, existing void/schedule/attachment and scheduled
+contract coverage, and financial golden vectors. One real isolated PostgreSQL race passed:
+two simultaneous identified requests returned the same schedule with one receipt and one
+source audit, retaining the original exact large integer amount and sole posted transaction.
+The temporary cluster was stopped afterward. No Live data was changed.
+
+This is the server prerequisite, not completed native offline Make Recurring. The current
+native caller still needs durable observed intent, identity and Pending Sync integration.
+Server update/restart required; no new migration beyond 0049. No Swift changes or native
+test execution in this checkpoint. TestFlight remains on hold; no merge/tag/release.
+
 ## Native durable schedule creation (2026-10-09)
 
 Ordinary schedule creation now persists its complete typed intent and stable UUID in the shared

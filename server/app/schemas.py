@@ -878,9 +878,17 @@ class TransactionVoidRequest(BaseModel):
 
 
 class TransactionScheduleRequest(BaseModel):
+    expected_revision: Optional[TransactionRevision] = None
+    mutation_operation_id: Optional[UUID] = None
     recurrence_unit: Literal["days", "weeks", "months", "years"]
     interval_count: int = Field(default=1, gt=0, le=365)
     next_date: Optional[date] = None
+
+    @model_validator(mode="after")
+    def require_schedule_observation(self) -> "TransactionScheduleRequest":
+        if self.mutation_operation_id is not None and (self.expected_revision is None or self.next_date is None):
+            raise ValueError("identified recurring templates require an observed revision and explicit next date")
+        return self
 
 
 class TransactionAttachmentResponse(BaseModel):
