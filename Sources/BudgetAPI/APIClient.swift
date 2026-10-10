@@ -165,6 +165,19 @@ public struct APIClient {
         try await send(path: "api/v1/budgets/\(budgetID)/accounts", token: token)
     }
 
+    public func accountBalancesPage(budgetID: String, limit: Int = 200, offset: Int = 0, token: String) async throws -> [APIAccountBalance] {
+        guard (1...200).contains(limit), offset >= 0 else {
+            throw APIClientError.server(status: 422, message: "Choose a bounded account balance page.")
+        }
+        let page: [APIAccountBalance] = try await send(path: "api/v1/budgets/\(budgetID)/account-balances",
+            queryItems: [.init(name: "limit", value: String(limit)), .init(name: "offset", value: String(offset))], token: token)
+        guard page.count <= limit, Set(page.map(\.accountID)).count == page.count,
+              page.allSatisfy({ $0.throughDate == nil }) else {
+            throw APIClientError.server(status: 502, message: "The server returned invalid account balances. Refresh again.")
+        }
+        return page
+    }
+
     public func accountBalance(budgetID: String, accountID: String, throughDate: String? = nil, token: String) async throws -> APIAccountBalance {
         let observation: APIAccountBalance = try await send(path: "api/v1/budgets/\(budgetID)/accounts/\(accountID)/balance",
                        queryItems: throughDate.map { [.init(name: "through_date", value: $0)] } ?? [], token: token)

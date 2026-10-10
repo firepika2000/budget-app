@@ -4439,7 +4439,29 @@ private final class LiveWorkspaceDataSource: WorkspaceDataSource {
                 }
             }
         }
-        let balances = await withTaskGroup(of: APIAccountBalance?.self) { group in for account in accounts { group.addTask { try? await client.accountBalance(budgetID: budget.id, accountID: account.id, token: self.token) } }; var values: [APIAccountBalance] = []; for await value in group { if let value { values.append(value) } }; return values }
+        var balances: [APIAccountBalance] = []
+        if budget.can("view_account_balances") {
+            do {
+                var offset = 0
+                while true {
+                    try Task.checkCancellation()
+                    let page = try await client.accountBalancesPage(budgetID: budget.id, offset: offset, token: token)
+                    let existing = Set(balances.map(\.accountID))
+                    guard page.allSatisfy({ !existing.contains($0.accountID) }) else {
+                        throw APIClientError.server(status: 502, message: "Account history changed while loading. Refresh again.")
+                    }
+                    balances.append(contentsOf: page)
+                    if page.count < 200 { break }
+                    offset += page.count
+                }
+            } catch let APIClientError.server(status, _) where status == 404 && balances.isEmpty {
+                // Compatibility with older servers, without concurrent per-account request bursts.
+                for account in accounts {
+                    try Task.checkCancellation()
+                    balances.append(try await client.accountBalance(budgetID: budget.id, accountID: account.id, token: token))
+                }
+            }
+        }
         let requests = (budget.can("request_money") || budget.can("approve_request")) ? (try? await client.financialRequests(budgetID: budget.id, token: token)) ?? [] : []
         let allowances = (try? await client.allowancePlans(budgetID: budget.id, includeInactive: budget.can("manage_allowances"), token: token)) ?? []
         let delegated = try? await client.delegatedBudget(budgetID: budget.id, token: token)

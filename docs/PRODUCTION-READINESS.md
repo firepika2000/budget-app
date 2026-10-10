@@ -1,5 +1,36 @@
 # Production readiness mission ledger
 
+## Hosted refresh and statement validation (2026-10-10)
+
+Hosted refresh now loads category targets and account balances in bounded pages rather than
+launching one concurrent request per resource. Both routes enforce current capability and
+resource scope. Balance pages and individual observations share exact ledger sums, date
+cutoffs and recorded reconciliation balances. Older servers use sequential individual requests
+when the additive route is unavailable. Transient and authorization errors are not silently
+converted into missing balance or target observations. The account-balance endpoint checkpoint
+is `e519546`; targets use server `1eabd04` and app `6c993da`. Neither requires a migration.
+Verification: 31 balance/reconciliation/golden-vector backend checks and 108 focused Swift
+API/identity checks passed; two focused balance API tests then passed with additional exact-money
+and invalid-response coverage. Regular Xcode 27 app/native-test build-for-testing passed on the
+preserved simulator. The preceding target checkpoint passed 33 focused backend checks
+and 107 focused Swift checks. Native runtime and human acceptance remain separate gates.
+
+Local statement import rejects oversized payee/memo metadata instead of truncating it,
+rejects ambiguous or missing column mappings, and validates headers before showing column
+choices. Exact production-parser host checks exercised malformed headers, metadata boundaries
+and exact monetary parsing; 55 backend parser checks passed. Regular Xcode 27 compiled these
+native changes and tests. Report history refresh also retains loaded rows during transient
+outages, while authoritative access denial clears observations and retry preserves its original
+refresh intent. Host checks exercised the production observation-error policy; source-order
+assertions and native compilation are not rendered interaction proof.
+
+Human retest after rebuilding: refresh a hosted budget and compare account cleared, uncleared,
+working and last reconciled balances; confirm targets remain visible; open report history,
+disconnect temporarily and refresh, then reconnect and retry. In Local Device statement import,
+check malformed/duplicate headers and oversized metadata produce validation rather than
+truncation or unusable column choices. Server updates are needed for the batched fast path;
+the older-server fallback remains supported. TestFlight publishing stays held.
+
 ## Net Worth contributor privacy and navigation (2026-10-10)
 
 Server checkpoint `26c1fea` adds bounded, context-bound Net Worth contributor paging through

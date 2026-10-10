@@ -2,6 +2,44 @@ import XCTest
 @testable import BudgetAPI
 
 final class APIClientTests: XCTestCase {
+    func testBalancePageIsBoundedAndUsesCurrentCredential() async throws {
+        let configuration = URLSessionConfiguration.ephemeral; configuration.protocolClasses = [MockURLProtocol.self]
+        var calls = 0
+        MockURLProtocol.handler = { request in
+            calls += 1
+            XCTAssertEqual(request.url?.path, "/api/v1/budgets/b1/account-balances")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer current")
+            let items = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!.queryItems!
+            XCTAssertEqual(items.first { $0.name == "limit" }?.value, "200")
+            XCTAssertEqual(items.first { $0.name == "offset" }?.value, "200")
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, Data("[]".utf8))
+        }
+        let client = try APIClient(baseURL: URL(string: "https://example.com")!, session: URLSession(configuration: configuration))
+        let page = try await client.accountBalancesPage(budgetID: "b1", offset: 200, token: "current")
+        XCTAssertTrue(page.isEmpty)
+        do { _ = try await client.accountBalancesPage(budgetID: "b1", limit: 201, token: "current"); XCTFail("Unbounded request") } catch {}
+        do { _ = try await client.accountBalancesPage(budgetID: "b1", offset: -1, token: "current"); XCTFail("Invalid offset") } catch {}
+        XCTAssertEqual(calls, 1)
+    }
+
+    func testBalancePagePreservesExactMoneyAndRejectsDuplicateOrDatedObservations() async throws {
+        let configuration = URLSessionConfiguration.ephemeral; configuration.protocolClasses = [MockURLProtocol.self]
+        let row = #"{"account_id":"a1","currency_code":"USD","cleared_balance_minor":9007199254740993,"uncleared_balance_minor":-100,"working_balance_minor":9007199254740893,"reconciled_balance_minor":123}"#
+        var payload = "[\(row)]"
+        MockURLProtocol.handler = { request in
+            (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, Data(payload.utf8))
+        }
+        let client = try APIClient(baseURL: URL(string: "https://example.com")!, session: URLSession(configuration: configuration))
+        let page = try await client.accountBalancesPage(budgetID: "b1", token: "current")
+        XCTAssertEqual(page.first?.workingBalanceMinor, 9007199254740893)
+        XCTAssertEqual(page.first?.reconciledBalanceMinor, 123)
+        for invalid in ["[\(row),\(row)]", "[\(row.dropLast()),\"through_date\":\"2026-09-04\"}]"] {
+            payload = invalid
+            do { _ = try await client.accountBalancesPage(budgetID: "b1", token: "current"); XCTFail("Invalid observation accepted") }
+            catch let APIClientError.server(status, _) { XCTAssertEqual(status, 502) }
+        }
+    }
+
     func testCategoryTargetPageUsesBoundedAuthenticatedListing() async throws {
         let configuration = URLSessionConfiguration.ephemeral; configuration.protocolClasses = [MockURLProtocol.self]
         var calls = 0
