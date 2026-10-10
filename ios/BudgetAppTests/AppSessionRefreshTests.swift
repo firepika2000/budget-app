@@ -131,6 +131,9 @@ final class AppSessionRefreshTests: XCTestCase {
     }
 
     private static func workspaceResponse(_ path: String) -> (Int, Data) {
+        if path.hasSuffix("/allocations/page") {
+            return json(200, #"{"items":[],"next_cursor":null}"#)
+        }
         if path.hasSuffix("/transactions/search") {
             return json(200, #"{"items":[],"next_cursor":null,"total_count":0}"#)
         }
@@ -155,6 +158,33 @@ final class AppSessionRefreshTests: XCTestCase {
             budget: APIBudget(id: "b1", householdID: "h1", name: "Home", currencyCode: "USD"),
             serverURL: URL(string: "https://budget.example.com")!, token: "current-token"),
             clientFactory: { try APIClient(baseURL: $0, session: transport) })
+    }
+
+    @MainActor
+    func testMoneyRequestAndAllocationRefreshErrorsAreNotPublishedAsEmptySuccess() async throws {
+        for route in ["/requests", "/allocations/page"] {
+            for status in [503, 403] {
+                let phase = Counter()
+                RefreshMockURLProtocol.handler = { request in
+                    if phase.value > 0 && request.url!.path.hasSuffix(route) {
+                        return Self.json(status, #"{"detail":"Observation unavailable"}"#)
+                    }
+                    return Self.workspaceResponse(request.url!.path)
+                }
+                let store = try workspaceForRevocationTest()
+                await store.refresh()
+                XCTAssertEqual(store.summary?.readyToAssignMinor, 42)
+                _ = phase.increment()
+                await store.refresh()
+                if status == 503 {
+                    XCTAssertEqual(store.summary?.readyToAssignMinor, 42)
+                    XCTAssertTrue(store.isWorkingOffline, "Failed observations cannot look like successful empty refreshes")
+                } else {
+                    XCTAssertTrue(store.workspaceAccessDenied)
+                    XCTAssertNil(store.summary)
+                }
+            }
+        }
     }
 
     @MainActor

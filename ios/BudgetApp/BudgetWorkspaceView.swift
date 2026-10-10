@@ -4410,7 +4410,7 @@ private final class LiveWorkspaceDataSource: WorkspaceDataSource {
         let spending = reports.spending, spendingTrends = reports.spendingTrends, income = reports.income
         let netWorth = reports.netWorth, debt = reports.debt, planPerformance = reports.planPerformance, resilience = reports.resilience
         let allocationPage = budget.can("view_allocation_history")
-            ? try? await client.allocationOperationsPage(budgetID: budget.id, limit: 50, cursor: nil, token: token)
+            ? try await client.allocationOperationsPage(budgetID: budget.id, limit: 50, cursor: nil, token: token)
             : nil
         let allocationOperations = allocationPage?.items ?? []
         let schedules = budget.can("view_transactions") ? try await client.scheduledTransactions(budgetID: budget.id, includeInactive: true, token: token) : []
@@ -4462,7 +4462,7 @@ private final class LiveWorkspaceDataSource: WorkspaceDataSource {
                 }
             }
         }
-        let requests = (budget.can("request_money") || budget.can("approve_request")) ? (try? await client.financialRequests(budgetID: budget.id, token: token)) ?? [] : []
+        let requests = (budget.can("request_money") || budget.can("approve_request")) ? try await client.financialRequests(budgetID: budget.id, token: token) : []
         let allowances = (try? await client.allowancePlans(budgetID: budget.id, includeInactive: budget.can("manage_allowances"), token: token)) ?? []
         let delegated = try? await client.delegatedBudget(budgetID: budget.id, token: token)
         let forecast: APIForecast? = if budget.can("view_account_balances") { try? await client.forecast(budgetID: budget.id, through: BudgetWorkspaceStore.dateString(Calendar.current.date(byAdding: .day, value: 90, to: Date())!), token: token) } else { nil }
