@@ -1,5 +1,27 @@
 # Production readiness mission ledger
 
+## Transfer metadata preserves original payment observations (2026-10-09)
+
+Following the card-purchase correction, an actual HTTP regression proved unchanged and metadata-only
+card-payment transfer saves replaced the original reserve-event identity and manufactured two
+`updated` decisions. Unlike the purchase regression, the reproduced transfer balances stayed correct;
+the defect is unnecessary observation replacement and false edit attribution, not a demonstrated
+payment-balance change.
+
+Transfer updates now retain payment reserve events when source/destination accounts, amount and
+date are unchanged. Memo and clearing changes still update both legs and record actual decisions;
+unchanged saves append none. Genuine financial edits still rebuild through the existing payment
+engine. Existing row locks, account validation, ownership, resource authorization and reconciliation
+protections run before this distinction. Local Device/Demo already performs exact net transfer
+deltas, and its persisted transaction audit skips unchanged snapshots; no Swift change was needed.
+
+The new production HTTP case failed on reserve identity before correction. After correction, 55
+focused card, advanced-ledger and financial golden-vector tests passed, including the existing
+payment amount/date edit and deletion lifecycle. Diff checks passed. No native rerun was necessary
+for this server-only change; the previous regular Xcode 27 compile evidence is unchanged, not new
+runtime evidence. Server deployment/restart required; no migration or app rebuild for this checkpoint.
+No historical records were rewritten and no customer/Simulator data was touched. TestFlight remains held.
+
 ## Metadata-only transaction edits preserve payment money (2026-10-09)
 
 Actual production HTTP reproduction proved that an unchanged resave or metadata-only edit to the

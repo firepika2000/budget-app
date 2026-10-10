@@ -203,6 +203,34 @@ def test_card_payment_transfer_edit_and_delete_recompute_reserve_atomically(clie
     assert account_balance(client, owner_token, budget["id"], card["id"]) == -30000
 
 
+def test_card_payment_metadata_save_preserves_reserve_identity_and_truthful_history(client, owner_token, session_factory):
+    budget = create_budget(client, owner_token, session_factory)
+    checking, category = create_budget_structure(client, owner_token, budget["id"])
+    card = create_credit_card(client, owner_token, budget["id"])
+    fund(client, owner_token, budget["id"], checking["id"], amount=50000)
+    assert client.put(f"/api/v1/budgets/{budget['id']}/categories/{category['id']}/assignment", headers=auth(owner_token), json={"month": "2026-09-01", "assigned_minor": 10000}).status_code == 200
+    record(client, owner_token, budget["id"], account_id=card["id"], category_id=category["id"], amount_minor=-10000)
+    body = {"source_account_id": checking["id"], "destination_account_id": card["id"], "amount_minor": 10000, "occurred_on": "2026-09-04"}
+    payment = client.post(f"/api/v1/budgets/{budget['id']}/transfers", headers=auth(owner_token), json=body)
+    assert payment.status_code == 201, payment.text
+    transfer_id = payment.json()["transfer_id"]
+    ids = [payment.json()[leg]["id"] for leg in ["source", "destination"]]
+    def observations():
+        with session_factory() as db:
+            events = [(e.id, e.amount_minor, e.actor_user_id) for e in db.query(CreditCardReserveEvent).filter_by(transfer_id=transfer_id).all()]
+            changes = db.query(TransactionChange).filter(TransactionChange.transaction_id.in_(ids), TransactionChange.action == "updated").count()
+            return events, changes
+    before, count = observations()
+    for metadata, expected_changes in [({}, count), ({"memo": "Payment note", "is_cleared": True}, count + 2)]:
+        response = client.put(f"/api/v1/budgets/{budget['id']}/transfers/{transfer_id}", headers=auth(owner_token), json={**body, **metadata})
+        assert response.status_code == 200, response.text
+        events, changes = observations()
+        assert events == before
+        assert changes == expected_changes
+        assert account_balance(client, owner_token, budget["id"], checking["id"]) == 40000
+        assert account_balance(client, owner_token, budget["id"], card["id"]) == 0
+
+
 def test_partially_funded_purchase_increases_debt_without_inventing_reserve(
     client, owner_token, session_factory
 ):

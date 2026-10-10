@@ -2833,18 +2833,27 @@ def update_transfer(
     source_leg = next(leg for leg in legs if leg.amount_minor < 0)
     destination_leg = next(leg for leg in legs if leg.amount_minor > 0)
     before = {leg.id: transaction_snapshot(leg) for leg in legs}
+    financial_changed = (
+        source_leg.account_id != body.source_account_id
+        or destination_leg.account_id != body.destination_account_id
+        or destination_leg.amount_minor != body.amount_minor
+        or any(leg.occurred_on != body.occurred_on for leg in legs)
+    )
     common = {"occurred_on": body.occurred_on, "memo": body.memo, "is_cleared": body.is_cleared}
     for key, value in common.items():
         setattr(source_leg, key, value); setattr(destination_leg, key, value)
     source_leg.account_id = body.source_account_id; source_leg.amount_minor = -body.amount_minor
     destination_leg.account_id = body.destination_account_id; destination_leg.amount_minor = body.amount_minor
-    db.execute(delete(CreditCardReserveEvent).where(CreditCardReserveEvent.transfer_id == transfer_id))
-    if destination.account_type == "credit":
-        add_payment_reserve_event(db, credit_account=destination, transfer_id=transfer_id, occurred_on=body.occurred_on, amount_minor=-body.amount_minor, actor=user, kind="payment")
-    elif source.account_type == "credit":
-        add_payment_reserve_event(db, credit_account=source, transfer_id=transfer_id, occurred_on=body.occurred_on, amount_minor=body.amount_minor, actor=user, kind="payment_reversal")
+    if financial_changed:
+        db.execute(delete(CreditCardReserveEvent).where(CreditCardReserveEvent.transfer_id == transfer_id))
+        if destination.account_type == "credit":
+            add_payment_reserve_event(db, credit_account=destination, transfer_id=transfer_id, occurred_on=body.occurred_on, amount_minor=-body.amount_minor, actor=user, kind="payment")
+        elif source.account_type == "credit":
+            add_payment_reserve_event(db, credit_account=source, transfer_id=transfer_id, occurred_on=body.occurred_on, amount_minor=body.amount_minor, actor=user, kind="payment_reversal")
     for leg in legs:
-        record_transaction_change(db, leg, user, "updated", before=before[leg.id], after=transaction_snapshot(leg))
+        after = transaction_snapshot(leg)
+        if before[leg.id] != after:
+            record_transaction_change(db, leg, user, "updated", before=before[leg.id], after=after)
     db.commit(); db.refresh(source_leg); db.refresh(destination_leg)
     return TransferResponse(transfer_id=transfer_id, source=TransactionResponse.model_validate(source_leg), destination=TransactionResponse.model_validate(destination_leg))
 
