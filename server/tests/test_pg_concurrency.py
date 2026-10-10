@@ -740,6 +740,28 @@ def test_quick_unclear_cannot_slip_between_reconciliation_review_and_commit(pg, 
         assert row.is_cleared and row.is_reconciled
 
 
+def test_concurrent_identified_void_acknowledges_one_reversal(pg):
+    from app.budgeting_routes import void_transaction
+    from app.schemas import TransactionVoidRequest
+    from app.models import TransactionChange, WorkspaceCommandReceipt
+    budget = create_budget(pg.client, pg.token, pg.factory)
+    account, category = create_budget_structure(pg.client, pg.token, budget["id"])
+    original = record(pg.client, pg.token, budget["id"], account_id=account["id"], category_id=category["id"],
+                      amount_minor=-9007199254740993, payee_name="Reviewed void")
+    body = TransactionVoidRequest(reason="Duplicate", expected_revision=original["revision"], mutation_operation_id=uuid4())
+    def call(db, user):
+        return void_transaction(budget_id=budget["id"], transaction_id=original["id"], body=body, user=user, db=db).id
+    results = run_race([route_attempt(pg.factory, pg.owner_id, call) for _ in range(2)])
+    assert outcomes(results) == ["ok", "ok"], results
+    assert results[0][1] == results[1][1]
+    with pg.factory() as db:
+        reversals = list(db.scalars(select(Transaction).where(Transaction.reversal_of_transaction_id == original["id"])))
+        assert len(reversals) == 1 and reversals[0].amount_minor == 9007199254740993
+        assert db.query(TransactionChange).filter_by(transaction_id=original["id"], action="voided").count() == 1
+        assert db.query(TransactionChange).filter_by(transaction_id=reversals[0].id, action="reversal_created").count() == 1
+        assert db.query(WorkspaceCommandReceipt).count() == 1
+
+
 # ---------------------------------------------------------------------------
 # 6. Authorization is not bypassed under contention
 # ---------------------------------------------------------------------------

@@ -43,6 +43,16 @@ the server returns. Completing only one additional command does not close this m
 
 #### Canonical server mutation/replay boundary
 
+Void-with-reversal now optionally accepts `mutation_operation_id` and requires an observed
+`expected_revision` for identified commands. The exact reason, observation and original target
+are bound to an actor/budget receipt in the same commit as the canonical reversal, reserve
+effects and two audit decisions. Accepted retries return the existing authorized reversal;
+they cannot create another reversal or change later reconciliation state. Changed intent/target
+or reused command kinds conflict. Current delete capability, ownership and both original/reversal
+resource scope are rechecked before acknowledgement. Unidentified legacy callers retain existing
+one-way behavior. Native void still sends directly and is **not yet offline queue-enabled**;
+the safe server contract is the prerequisite, not completion of the user-facing offline flow.
+
 Assign and category Move Money now optionally accept `mutation_operation_id` with a required
 `expected_allocation_version`. The existing 0049 receipt table binds the exact validated request
 and category/command identity in the same commit as allocation effects. Budget locking precedes

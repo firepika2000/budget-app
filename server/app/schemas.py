@@ -866,6 +866,14 @@ class TransactionDuplicateRequest(BaseModel):
 
 class TransactionVoidRequest(BaseModel):
     reason: str = Field(default="", max_length=500)
+    expected_revision: Optional[TransactionRevision] = None
+    mutation_operation_id: Optional[UUID] = None
+
+    @model_validator(mode="after")
+    def require_void_observation(self) -> "TransactionVoidRequest":
+        if self.mutation_operation_id is not None and self.expected_revision is None:
+            raise ValueError("expected_revision is required for an identified void")
+        return self
 
 
 class TransactionScheduleRequest(BaseModel):

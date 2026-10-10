@@ -2487,10 +2487,43 @@ def void_transaction(
     original = db.scalar(select(Transaction).options(selectinload(Transaction.splits)).where(
         Transaction.id == transaction_id, Transaction.budget_id == budget_id,
     ).with_for_update())
+    if original is None or not _can_access_transaction_resources(db, user, budget, original):
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    if original.created_by_user_id != user.id and not has_capability(db, user, budget, "manage_budget_structure"):
+        raise HTTPException(status_code=403, detail="You may only void your own transactions")
+    operation_id = str(body.mutation_operation_id) if body.mutation_operation_id is not None else None
+    digest = "v1:" + hashlib.sha256(json.dumps({
+        "kind": "transaction_void", "transaction_id": transaction_id,
+        "body": body.model_dump(mode="json", exclude={"mutation_operation_id"}),
+    }, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    if operation_id is not None:
+        receipt = db.get(WorkspaceCommandReceipt, (budget_id, user.id, operation_id))
+        if receipt is not None:
+            if receipt.command_kind != "transaction_void" or receipt.resource_id != transaction_id or receipt.request_digest != digest:
+                raise HTTPException(status_code=409, detail="Operation identity was already used for a different command.")
+            reversal = db.scalar(select(Transaction).options(selectinload(Transaction.splits)).where(
+                Transaction.id == original.reversal_transaction_id, Transaction.budget_id == budget_id,
+                Transaction.reversal_of_transaction_id == original.id,
+            ))
+            if reversal is None or not _can_access_transaction_resources(db, user, budget, reversal):
+                raise HTTPException(status_code=404, detail="Reversal transaction not found")
+            return reversal
+    if body.expected_revision is not None and body.expected_revision != TransactionResponse.model_validate(original).revision:
+        raise HTTPException(status_code=409, detail="This transaction changed. Refresh and review before voiding it.")
     reversal = void_transaction_in_session(
         budget=budget, original=original, reason=body.reason, user=user, db=db,
     )
-    db.commit()
+    if operation_id is not None:
+        db.add(WorkspaceCommandReceipt(budget_id=budget_id, actor_user_id=user.id,
+            operation_id=operation_id, command_kind="transaction_void", resource_id=transaction_id,
+            request_digest=digest))
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        if operation_id is None or db.get(WorkspaceCommandReceipt, (budget_id, user.id, operation_id)) is None:
+            raise
+        return void_transaction(budget_id=budget_id, transaction_id=transaction_id, body=body, user=user, db=db)
     db.refresh(reversal)
     return reversal
 

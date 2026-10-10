@@ -1,5 +1,34 @@
 # Production readiness mission ledger
 
+## Identified void/reversal server contract (2026-10-09)
+
+The offline audit found native Void with Reversal still calls an unidentified one-way endpoint.
+A lost response leaves the caller unable to distinguish its accepted void from unrelated later
+state. Before native queue integration, the canonical endpoint now accepts optional mutation UUID
+and observed transaction revision (required together for identified commands). The validated
+original target, reason and revision are digest-bound to the actor/budget receipt in the same
+commit as the normal reversal, card reserve effects and original/reversal audit decisions.
+
+Matching retries acknowledge the existing reversal without financial effects, even if that
+reversal was later reconciled. Current capability, original ownership, and original/reversal
+resource visibility are rechecked. Wrong payload, target or command-kind identity conflicts;
+stale observations reject before posting. Missing/malformed observations return 422. Existing
+unidentified callers retain the legacy one-way behavior. No authentication/accounting rules
+were weakened and no new receipt table/migration was needed.
+
+Sixty-nine focused backend cases passed across void, attachments/schedules, cards, bulk receipts
+and financial golden vectors. Final twelve void-receipt regressions passed, including added
+funded-card retry (reserve released exactly once) and cross-kind identity collision. Five bounded
+isolated PostgreSQL races passed: identified concurrent voids acknowledged the same single exact
+Int64 reversal and two audit decisions; all four reconciliation contention cases remained green.
+The private test database was stopped; Live/Simulator data were untouched. `git diff --check`
+passed. No Swift change, native build, full-suite claim, release/tag or TestFlight upload.
+
+Server update/restart required; migration 0049 is an existing prerequisite, no new migration.
+Native observed void transport and durable queue integration remain the next gap, not completed
+or human-accepted by this server checkpoint. Existing human void acceptance need not be repeated
+from zero; the new acceptance will target interrupted/retried observed voids specifically.
+
 ## Durable reviewed reconciliation — native checkpoint (2026-10-09)
 
 Live reconciliation now uses the existing actor/server/budget-bound protected outbox and
