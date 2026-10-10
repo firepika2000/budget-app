@@ -401,6 +401,11 @@ struct WorkspaceReportQuery: Equatable {
               payee: payee, memberID: memberID, transactionType: "", cleared: cleared,
               flag: flag, tag: tag, spendingTrendDimension: spendingTrendDimension, includeTracking: includeTracking)
     }
+    func netWorthHistory(end: Date) -> Self {
+        .init(start: min(start, end), end: end, accountID: accountID, categoryID: "", categoryGroup: "",
+              payee: "", memberID: "", transactionType: "", cleared: "all", flag: "", tag: "",
+              spendingTrendDimension: spendingTrendDimension, includeTracking: includeTracking)
+    }
 }
 
 struct WorkspaceReportContext: Equatable {
@@ -802,6 +807,11 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
         case .categorySpending: ids = Set(value.spending?.categories.flatMap(\.transactionIDs) ?? [])
         case .income: ids = Set(value.income?.incomeTransactionIDs ?? [])
         case .spending: ids = Set(value.income?.spendingTransactionIDs ?? [])
+        case .netWorth:
+            guard actorCapabilities.contains("view_account_balances") else {
+                throw APIClientError.server(status: 403, message: "Insufficient permission")
+            }
+            ids = Set(value.netWorth?.accounts.flatMap(\.transactionIDs) ?? [])
         }
         let rows = value.transactions.filter {
             ids.contains($0.id) && (query.contributorStart == nil || $0.occurredOn >= query.contributorStart!)
@@ -13607,6 +13617,15 @@ private struct NetWorthReportView: View {
             LabeledContent("Assets", value: store.format(report.assetsMinor))
             LabeledContent("Liabilities", value: store.format(report.liabilitiesMinor))
             LabeledContent("Net worth", value: store.format(report.netWorthMinor)).fontWeight(.semibold)
+            if store.budget.can("view_transactions") {
+                NavigationLink {
+                    LiveReportTransactionsView(title: "Balance History", transactionIDs: [], purpose: "balance history",
+                        reportKind: .netWorth, reportStart: report.startDate, reportEnd: report.endDate)
+                } label: { Label("View visible balance history", systemImage: "list.bullet.rectangle") }
+                .accessibilityIdentifier("net-worth-contributors")
+                Text("Includes visible postings through the selected date, including earlier history and transfers. Authorized account balances may also include postings whose details are private.")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
             if let point = selectedPoint {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Selected \(point.asOf)").font(.headline)
@@ -13614,6 +13633,13 @@ private struct NetWorthReportView: View {
                     LabeledContent("Liabilities", value: store.format(point.liabilitiesMinor))
                     LabeledContent("Net worth", value: store.format(point.netWorthMinor))
                 }.accessibilityIdentifier("net-worth-selected-point")
+                if store.budget.can("view_transactions") {
+                    NavigationLink {
+                        LiveReportTransactionsView(title: "Balance History · \(point.asOf)", transactionIDs: [], purpose: "balance history",
+                            reportKind: .netWorth, reportStart: report.startDate, reportEnd: point.asOf)
+                    } label: { Label("View history through \(point.asOf)", systemImage: "list.bullet.rectangle") }
+                    .accessibilityIdentifier("net-worth-selected-contributors")
+                }
             }
             ForEach(report.accounts) { row in
                 if let account = store.accounts.first(where: { $0.id == row.accountID }) {
@@ -14036,7 +14062,9 @@ private struct LiveReportTransactionsView: View {
                 let query = context.query.selectingTrend(dimension: reportDimension, id: reportDimensionID, start: reportStart, end: reportEnd)
                 page = try await store.reportContributors(query: query, kind: .categorySpending, cursor: nextCursor)
             } else if let reportKind, let reportStart, let reportEnd {
-                let query = context.query.incomeSpendingPeriod(start: BudgetWorkspaceStore.parseDate(reportStart), end: BudgetWorkspaceStore.parseDate(reportEnd))
+                let query = reportKind == .netWorth
+                    ? context.query.netWorthHistory(end: BudgetWorkspaceStore.parseDate(reportEnd))
+                    : context.query.incomeSpendingPeriod(start: BudgetWorkspaceStore.parseDate(reportStart), end: BudgetWorkspaceStore.parseDate(reportEnd))
                 page = try await store.reportContributors(query: query, kind: reportKind, cursor: nextCursor)
             } else {
                 let value = try await store.browseTransactions(.init(transactionIDs: batches[batchIndex], limit: 50, cursor: nextCursor))

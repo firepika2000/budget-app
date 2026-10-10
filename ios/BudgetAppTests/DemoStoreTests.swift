@@ -11,6 +11,28 @@ import UniformTypeIdentifiers
 
 final class DemoStoreTests: XCTestCase {
     @MainActor
+    func testNetWorthContributorsKeepFullHistoryAndAccountScope() async throws {
+        let store = BudgetWorkspaceStore.demo()
+        await store.refresh()
+        await store.loadReports([.netWorth])
+        let report = try XCTUnwrap(store.netWorthReport)
+        let summary = store.summary, balances = store.accountBalances
+        let query = store.reportContext.query.selectingCategory("ignored-category")
+            .netWorthHistory(end: BudgetWorkspaceStore.parseDate(report.endDate))
+        XCTAssertEqual(query.categoryID, ""); XCTAssertEqual(query.payee, "")
+        XCTAssertEqual(query.cleared, "all"); XCTAssertEqual(query.memberID, "")
+        var cursor: String?, found = Set<String>()
+        repeat {
+            let page = try await store.reportContributors(query: query, kind: .netWorth, cursor: cursor)
+            XCTAssertTrue(found.isDisjoint(with: page.items.map(\.id)))
+            XCTAssertTrue(page.items.allSatisfy { $0.occurredOn <= report.endDate })
+            found.formUnion(page.items.map(\.id)); cursor = page.nextCursor
+        } while cursor != nil
+        XCTAssertEqual(found, Set(report.accounts.flatMap(\.transactionIDs)))
+        XCTAssertEqual(store.summary, summary); XCTAssertEqual(store.accountBalances, balances)
+    }
+
+    @MainActor
     func testTrendContributorsPreserveCanonicalDimensionAndSelectedPeriod() async throws {
         let store = BudgetWorkspaceStore.demo()
         await store.refresh()

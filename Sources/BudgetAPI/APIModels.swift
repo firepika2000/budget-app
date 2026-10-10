@@ -1386,7 +1386,7 @@ public struct APITransaction: Identifiable, Codable, Equatable, Sendable {
     }
 }
 
-public enum APIReportContributorKind: String, Sendable { case categorySpending = "category_spending", income, spending }
+public enum APIReportContributorKind: String, Sendable { case categorySpending = "category_spending", income, spending, netWorth = "net_worth" }
 
 public struct APIReportContributorPage: Decodable, Equatable, Sendable {
     public let items: [APITransaction]

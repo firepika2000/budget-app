@@ -1,5 +1,33 @@
 # Production readiness mission ledger
 
+## Net Worth contributor privacy and navigation (2026-10-10)
+
+Server checkpoint `26c1fea` adds bounded, context-bound Net Worth contributor paging through
+the selected observation date, including earlier history and transfer postings. Account and
+tracking selection share the existing Net Worth account boundary. Unsupported activity filters
+are rejected rather than changing the meaning of a balance. Optional compact contributor IDs
+now require transaction permission and exclude hidden transaction/category details; authorized
+account balances remain unchanged. Default aggregate queries avoid the extra detail visibility
+calculation. Verification: 98 analytics/scale/financial-vector checks passed, followed by all
+67 analytics tests after the final paging test and aggregate-query optimization.
+
+The app adds full visible balance-history navigation for the report end date and selected
+chart point through the shared paged transaction list and production editor. Local Device/Demo
+reuse existing authorized Net Worth contributor identities; Live uses current credentials and
+the server endpoint. Only account/tracking filters apply. The interface explains that authorized
+account balances can include postings whose details are private, so a visible list is not
+necessarily a complete explanation of a restricted balance. No accounting mutation is added.
+
+All 106 focused Swift API/identity tests pass. New native coverage compares the local contributor
+set with canonical Net Worth identities and checks unchanged financial state. Regular Xcode
+27 passes app/native/UI build-for-testing on preserved simulator
+`3ABD861E-D38D-4AFD-A356-959266051564`; runtime execution and human acceptance remain pending.
+Rebuild the app and update the server through `26c1fea`;
+no migration. Human retest: open Insights → Net Worth → visible balance history, inspect an
+earlier posting and both transfer legs where available, select a chart point and check its
+date cutoff, open/edit through the normal editor and return, and repeat with account/tracking
+filters. Restricted members must not see private transaction identities. TestFlight remains held.
+
 ## Full spending trend navigation (2026-10-10)
 
 All category, group and payee Spending Trends rows now open the shared full contributor list
