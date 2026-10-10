@@ -281,8 +281,18 @@ public actor DropboxBackupDestination {
 
     private func allEntries(path: String, recursive: Bool) async throws -> [DropboxBackupEntry] {
         var entries: [DropboxBackupEntry] = [], cursor: String?
+        var seenCursors: Set<String> = [], seenPaths: Set<String> = []
         repeat {
+            try Task.checkCancellation()
             let page = try await transport.list(path: path, recursive: recursive, cursor: cursor)
+            guard page.entries.allSatisfy({ seenPaths.insert($0.path.lowercased()).inserted }) else {
+                throw DropboxBackupDestinationError.invalidPackage("The Dropbox listing contains duplicate paths. Refresh and try again.")
+            }
+            if let next = page.cursor {
+                guard !next.isEmpty, seenCursors.insert(next).inserted else {
+                    throw DropboxBackupDestinationError.invalidPackage("The Dropbox listing did not advance. Refresh and try again.")
+                }
+            }
             entries.append(contentsOf: page.entries)
             cursor = page.cursor
         } while cursor != nil

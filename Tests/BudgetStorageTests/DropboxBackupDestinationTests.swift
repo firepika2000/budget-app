@@ -2,6 +2,39 @@ import XCTest
 @testable import BudgetStorage
 
 final class DropboxBackupDestinationTests: XCTestCase {
+    func testMalformedPaginationFailsBeforeRestoreDownloadOrRemoteDeletion() async throws {
+        let entry = DropboxBackupEntry(path: "/Backups/Test.clearpocketbackup", name: "Test.clearpocketbackup", isFolder: true)
+        let cases: [[DropboxBackupPage]] = [
+            [.init(entries: [], cursor: "again"), .init(entries: [], cursor: "again")],
+            [.init(entries: [], cursor: "")],
+            [.init(entries: [entry], cursor: "next"), .init(entries: [entry])],
+            [.init(entries: [entry, .init(path: entry.path.uppercased(), name: entry.name, isFolder: true)])],
+        ]
+        for (index, pages) in cases.enumerated() {
+          for restore in [false, true] {
+            let transport = FakeDropboxBackupTransport()
+            await transport.seedFolder(entry.path)
+            await transport.overridePages(pages)
+            let destination = try DropboxBackupDestination(transport: transport)
+            let output = FileManager.default.temporaryDirectory.appendingPathComponent("dropbox-rejected-page-\(index)-\(UUID().uuidString).clearpocketbackup")
+            do {
+                if restore { try await destination.download(remotePath: entry.path, destinationURL: output) }
+                else { _ = try await destination.generations() }
+                XCTFail("Malformed listing must not publish partial generations")
+            } catch let error as DropboxBackupDestinationError {
+                guard case .invalidPackage = error else { return XCTFail("Unexpected error: \(error)") }
+            }
+            let calls = await transport.listCalls()
+            XCTAssertEqual(calls, pages.count)
+            let downloads = await transport.downloadedPaths()
+            XCTAssertTrue(downloads.isEmpty)
+            XCTAssertFalse(FileManager.default.fileExists(atPath: output.path))
+            let paths = await transport.paths()
+            XCTAssertEqual(paths, [entry.path])
+          }
+        }
+    }
+
     func testInvalidAdvertisedManifestSizeRejectsBeforeAnyDownloadOrStaging() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("dropbox-manifest-size-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
@@ -289,6 +322,7 @@ private actor FakeDropboxBackupTransport: DropboxBackupTransport {
     private var corruptDownloads: Set<String> = []
     private var listedOverrides: [String: DropboxBackupEntry] = [:]
     private var downloads: [String] = []
+    private var forcedPages: [DropboxBackupPage]?
 
     init(pageSize: Int = 100, corruptUploadMetadata: Bool = false, failListing: Bool = false, loseMoveResponse: Bool = false) {
         self.pageSize = pageSize; self.corruptUploadMetadata = corruptUploadMetadata
@@ -297,6 +331,7 @@ private actor FakeDropboxBackupTransport: DropboxBackupTransport {
     }
 
     func seedFolder(_ path: String) { folders.insert(path) }
+    func overridePages(_ pages: [DropboxBackupPage]) { forcedPages = pages }
     func seedFile(_ path: String, data: Data) { files[path] = data }
     func overrideListedEntry(_ entry: DropboxBackupEntry) { listedOverrides[entry.path] = entry }
     func downloadedPaths() -> [String] { downloads }
@@ -348,6 +383,10 @@ private actor FakeDropboxBackupTransport: DropboxBackupTransport {
     func list(path: String, recursive: Bool, cursor: String?) throws -> DropboxBackupPage {
         calls += 1
         if failListing { throw TestError.missing }
+        if let forcedPages {
+            guard calls <= forcedPages.count else { throw TestError.missing }
+            return forcedPages[calls - 1]
+        }
         let all: [DropboxBackupEntry] = (folders.map { value in
             .init(path: value, name: (value as NSString).lastPathComponent, isFolder: true)
         } + files.map { value, data in
