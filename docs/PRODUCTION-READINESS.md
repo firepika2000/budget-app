@@ -1,5 +1,33 @@
 # Production readiness mission ledger
 
+## Proven Quick Unclear / reconciliation race correction (2026-10-09)
+
+An event-coordinated real PostgreSQL regression reproduced Quick Unclear committing after
+reconciliation's reviewed-set calculation and before its commit. Reconciliation's account lock
+did not protect bulk metadata/clearing, which locked transactions but not the account. The test
+failed before correction: the bulk action completed inside the reconciliation critical section.
+
+Bulk transaction mutation and reconciliation now both acquire the existing budget row lock
+before account/transaction locks and retain it through commit/receipt publication. This avoids
+introducing opposite account/transaction lock order. After reconciliation commits, the waiting
+bulk action reloads the transaction and receives the existing 409 reconciled protection; the
+row remains both cleared and reconciled. Financial calculations, permissions, amounts, reserve
+rules, reconciliation history semantics and native UI behavior are unchanged. This serializes
+these two paths within one budget, not globally across households.
+
+Four bounded isolated PostgreSQL races passed (the new race plus nearby reconciliation and
+transfer receipt checks), and 60 focused observation/receipt/bulk/credit/golden cases passed.
+The final regression explicitly observes the bulk backend waiting on a PostgreSQL Lock for
+the budget query through pg_stat_activity, rather than treating a synthetic swipe or elapsed
+delay as proof. Disposable private-socket PostgreSQL only; no Live/Simulator data touched.
+The test cluster is stopped after verification. `git diff --check` passed.
+
+This closes the proven quick-clearing race, not every other overlapping transaction mutation.
+Ordinary edit/delete/void, transfer, scheduled realization and import lock ordering still require
+the corresponding audit before offline reconciliation is claimed safe. Reconciliation remains
+outside the native outbox. Server update/restart required; no new migration/native rebuild,
+merge/tag or TestFlight upload.
+
 ## Real PostgreSQL checkpoint and migration 0040 portability fix (2026-10-09)
 
 A bounded three-case concurrency run used a newly initialized PostgreSQL 17.11 cluster under

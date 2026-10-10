@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import os
 import threading
+import time
 from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
@@ -652,6 +653,78 @@ def test_concurrent_identified_transfer_creation_acknowledges_exactly_two_legs(p
         assert len(legs) == 2 and sum(leg.amount_minor for leg in legs) == 0
         assert sorted(leg.amount_minor for leg in legs) == [-9007199254740993, 9007199254740993]
         assert db.query(WorkspaceCommandReceipt).count() == 1
+
+
+def test_quick_unclear_cannot_slip_between_reconciliation_review_and_commit(pg, monkeypatch):
+    from app import budgeting_routes
+    budget = create_budget(pg.client, pg.token, pg.factory)
+    account, _ = create_budget_structure(pg.client, pg.token, budget["id"])
+    transaction = record(pg.client, pg.token, budget["id"], account_id=account["id"], amount_minor=100, is_cleared=True)
+    path = f"/api/v1/budgets/{budget['id']}/accounts/{account['id']}"
+    observation = pg.client.get(f"{path}/reconciliation-observation?through_date=2026-09-05", headers=auth(pg.token)).json()
+    reviewed, release, bulk_started, bulk_finished = [threading.Event() for _ in range(4)]
+    original_review = budgeting_routes._reconciliation_review
+    def pause_after_review(*args, **kwargs):
+        value = original_review(*args, **kwargs)
+        reviewed.set()
+        assert release.wait(10), "Test failed to release reconciliation"
+        return value
+    monkeypatch.setattr(budgeting_routes, "_reconciliation_review", pause_after_review)
+    results, errors = {}, []
+    def reconcile():
+        try:
+            with pg.factory() as db:
+                results["reconcile"] = reconcile_account(budget_id=budget["id"], account_id=account["id"],
+                    body=ReconcileRequest(statement_balance_minor=100, through_date=date(2026, 9, 5),
+                        expected_cleared_balance_minor=100, expected_review_revision=observation["review_revision"]),
+                    user=db.get(User, pg.owner_id), db=db, settings=pg.client.app.state.settings)
+        except BaseException as error:
+            errors.append(error)
+    def unclear():
+        try:
+            with pg.factory() as db:
+                user = db.get(User, pg.owner_id)
+                results["bulk_pid"] = db.scalar(text("SELECT pg_backend_pid()"))
+                bulk_started.set()
+                try:
+                    bulk_update_transactions(budget_id=budget["id"], body=TransactionBulkUpdateRequest(
+                        transaction_ids=[transaction["id"]], action="set_cleared", cleared=False), user=user, db=db)
+                    results["bulk"] = 200
+                except HTTPException as error:
+                    db.rollback()
+                    results["bulk"] = error.status_code
+        except BaseException as error:
+            errors.append(error)
+        finally:
+            bulk_finished.set()
+    threads = [threading.Thread(target=reconcile), threading.Thread(target=unclear)]
+    threads[0].start()
+    try:
+        assert reviewed.wait(10)
+        threads[1].start()
+        assert bulk_started.wait(10)
+        deadline = time.monotonic() + 5
+        blocked = False
+        while not bulk_finished.is_set() and time.monotonic() < deadline:
+            with pg.engine.connect() as connection:
+                wait = connection.execute(text("SELECT wait_event_type, query FROM pg_stat_activity WHERE pid=:pid"),
+                    {"pid": results["bulk_pid"]}).one()
+            if wait.wait_event_type == "Lock" and "budgets" in wait.query:
+                blocked = True
+                break
+            bulk_finished.wait(0.01)
+        assert blocked and not bulk_finished.is_set(), "Quick Unclear did not wait on the reconciliation budget lock"
+    finally:
+        release.set()
+        for thread in threads:
+            if thread.ident is not None:
+                thread.join(timeout=10)
+    assert not errors, errors
+    assert all(not thread.is_alive() for thread in threads)
+    assert results["bulk"] == 409
+    with pg.factory() as db:
+        row = db.get(Transaction, transaction["id"])
+        assert row.is_cleared and row.is_reconciled
 
 
 # ---------------------------------------------------------------------------

@@ -2355,6 +2355,9 @@ def bulk_update_transactions(
     db: Session = Depends(get_db),
 ) -> list[Transaction]:
     budget = require_budget_capability(db, user, budget_id, "edit_transaction")
+    # Share reconciliation's critical section before taking transaction locks.
+    # Otherwise quick Unclear can commit after review validation but before R is set.
+    lock_budget(db, budget_id)
     transactions = list(db.scalars(select(Transaction).options(selectinload(Transaction.splits)).where(
         Transaction.budget_id == budget_id, Transaction.id.in_(body.transaction_ids),
     ).order_by(Transaction.id).with_for_update()))
@@ -3165,6 +3168,9 @@ def reconcile_account(
     settings: Settings = Depends(get_settings),
 ) -> ReconcileResponse:
     budget = require_budget_capability(db, user, budget_id, "reconcile_account")
+    # Take the shared budget lock before account/transaction work, matching bulk
+    # mutation lock ordering and retaining it through receipt/history commit.
+    lock_budget(db, budget_id)
     account = db.scalar(select(Account).where(Account.id == account_id).with_for_update())
     if account is None or account.budget_id != budget_id or not can_access_resource(
         db, user, budget, "account", account_id
