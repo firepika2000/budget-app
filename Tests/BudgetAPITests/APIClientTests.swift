@@ -1521,6 +1521,16 @@ final class APIClientTests: XCTestCase {
         XCTAssertEqual(try JSONDecoder().decode(APITransaction.self, from: response).revision, revision)
     }
 
+    func testIdentifiedEditEncodesSeparateMutationIdentityWithoutCreationIdentity() throws {
+        let identity = UUID().uuidString.lowercased()
+        let update = APITransactionCreate(accountID: "a", categoryID: "c", amountMinor: -1234,
+            occurredOn: "2026-09-04", payeeName: "Market", expectedRevision: "v1:" + String(repeating: "a", count: 64), mutationOperationID: identity)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(update)) as? [String: Any])
+        XCTAssertEqual(json["mutation_operation_id"] as? String, identity)
+        XCTAssertNil(json["client_operation_id"])
+        XCTAssertEqual(json["amount_minor"] as? Int64, -1234)
+    }
+
     func testStaleObservedEditSendsOriginalRevisionAndDoesNotRetryConflict() async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]

@@ -30,6 +30,13 @@ reconciliation. Cross-target identity collisions roll back tentative work and re
 This is server support only: native edit UUID persistence/outbox integration, other mutation kinds
 and real PostgreSQL overlap/lost-acknowledgement proof remain incomplete. Creation retains its separate
 legacy-compatible identity namespace; do not claim one universal receipt protocol across all commands.
+The native operation and API DTO can now carry this separate mutation identity through translation;
+the editor does not yet assign/persist it or queue updates. An implementation audit also confirmed
+that existing creation sends before enqueueing and only persists after a connectivity exception.
+Termination during the initial send therefore remains an uncertain-outcome durability gap. The typed
+outbox integration must fix creation and edit submission together: persist first, then send/replay,
+then atomically acknowledge, with explicit retained review state on definite rejection. This is not
+evidence of durable-before-send behavior in the current app.
 
 Creation-specific immutable receipts now bind `(budget, actor, operation UUID)` to the original
 validated request digest and accepted transaction ID, committed with creation effects. Matching retries

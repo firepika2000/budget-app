@@ -2582,6 +2582,7 @@ public struct APIAllowancePlanRevision: Identifiable, Codable, Equatable, Sendab
 }
 
 public struct APITransactionCreate: Encodable, Equatable, Sendable {
+    public let mutationOperationID: String?
     public let expectedRevision: String?
     public let accountID: String
     public let categoryID: String?
@@ -2613,7 +2614,8 @@ public struct APITransactionCreate: Encodable, Equatable, Sendable {
         tags: [String] = [],
         attachmentMetadata: [[String: String]] = [],
         clientOperationID: String? = nil,
-        expectedRevision: String? = nil
+        expectedRevision: String? = nil,
+        mutationOperationID: String? = nil
     ) {
         self.accountID = accountID
         self.categoryID = categoryID
@@ -2630,6 +2632,7 @@ public struct APITransactionCreate: Encodable, Equatable, Sendable {
         self.attachmentMetadata = attachmentMetadata
         self.clientOperationID = clientOperationID
         self.expectedRevision = expectedRevision
+        self.mutationOperationID = mutationOperationID
     }
 
     enum CodingKeys: String, CodingKey {
@@ -2645,6 +2648,7 @@ public struct APITransactionCreate: Encodable, Equatable, Sendable {
         case attachmentMetadata = "attachment_metadata"
         case clientOperationID = "client_operation_id"
         case expectedRevision = "expected_revision"
+        case mutationOperationID = "mutation_operation_id"
     }
 }
 

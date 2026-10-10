@@ -342,6 +342,21 @@ migration/update/restart required; no Swift change or rebuild. No customer datab
 This checkpoint does NOT integrate native durable edit UUIDs/outbox replay, implement other command
 receipts, prove real PostgreSQL concurrent requests, or complete offline editing. Native and provider
 acceptance gates remain. TestFlight stays on hold; no merge or release tag.
+
+### Native identified-edit contract and submission audit — 2026-10-09
+
+RecordTransactionOperation and its canonical API translation now carry optional mutation_operation_id
+separately from immutable creation client_operation_id. The focused Swift DTO test verifies the UUID,
+exact minor-unit amount and omission of the creation identity. Regular Xcode 27 production app/native
+test build-for-testing passed against the preserved iPhone simulator; runtime tests were not executed.
+`git diff --check` passes. No server change in this checkpoint and no new customer-visible queue mode.
+
+The existing creation repository was inspected: sendTransaction happens before enqueue and persistence
+occurs only after a transient connectivity error. Termination while awaiting the initial request can
+lose its replay identity. Durable-before-send submission remains an actual implementation gap, not
+merely additional test coverage. Typed creation/edit persistence, current-scope visibility and explicit
+blocked/review state must be implemented before claiming offline-edit closure. The edit UI does not
+yet generate/persist this optional identity. TestFlight remains on hold; no data reset or release.
 The focused analytics, delegated privacy and report-scale suite passed 82 cases, zero failures;
 diff checks passed. No redundant native build was run for this server-only change.
 

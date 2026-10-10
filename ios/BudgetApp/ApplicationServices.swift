@@ -65,6 +65,7 @@ struct RecordTransactionOperation: Codable, Equatable, Sendable {
     let attachmentMetadata: [[String: String]]
     var clientOperationID: String? = nil
     var expectedRevision: String? = nil
+    var mutationOperationID: String? = nil
 }
 
 struct MakeRecurringOperation: Equatable, Sendable {
@@ -900,7 +901,8 @@ extension RecordTransactionOperation {
             tags: tags,
             attachmentMetadata: attachmentMetadata,
             clientOperationID: clientOperationID,
-            expectedRevision: expectedRevision
+            expectedRevision: expectedRevision,
+            mutationOperationID: mutationOperationID
         )
     }
 }
