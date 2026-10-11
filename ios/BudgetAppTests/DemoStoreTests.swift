@@ -5060,9 +5060,11 @@ final class DemoStoreTests: XCTestCase {
     @MainActor
     func testRestrictedLocalStatementReviewDoesNotExposePayeeDefaultsOrAliases() async throws {
         let source = DemoWorkspaceDataSource()
+        let account = try XCTUnwrap(source.demo.accounts.first)
+        let category = try XCTUnwrap(source.demo.categories.first)
+        source.demo.accounts[0].restrictedFromChildren = false
+        source.demo.categories[0].delegatedTo = .alex
         source.demo.persona = .alex
-        let account = try XCTUnwrap(source.demo.visibleAccounts.first)
-        let category = try XCTUnwrap(source.demo.visibleCategories.first)
         source.demo.payees.append(.init(
             id: "private-statement-payee", name: "Private Merchant",
             defaultCategoryID: category.id, aliases: ["PRIVATE BANK ALIAS"]
@@ -5101,6 +5103,64 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertEqual(candidate.exactTransactionIDs.count, 20)
         XCTAssertTrue(candidate.suggestionsTruncated)
         XCTAssertEqual(candidate.exactTransactionIDs, candidate.exactTransactionIDs.sorted())
+    }
+
+    @MainActor
+    func testLocalStatementCachedReviewsRespectCurrentPermissionAndOwnership() async throws {
+        let source = DemoWorkspaceDataSource()
+        let account = try XCTUnwrap(source.demo.accounts.first)
+        let data = Data("Date,Amount,Payee\n2026-09-15,10.25,Private deposit\n".utf8)
+        let mapping = APIStatementImportMapping(sourceFormat: "csv", currencyCode: "USD", dateColumn: "Date",
+            amountColumn: "Amount", payeeColumn: "Payee", dateOrder: "ymd")
+        let batch = try await source.stageStatementImport(accountID: account.id, data: data, mapping: mapping)
+        let before = source.demo.transactions
+        _ = try await source.updateAccessProfile(userID: "jordan", value: .init(
+            capabilities: ["view_budget"], restrictAccounts: false, accountIDs: [],
+            restrictCategories: false, categoryIDs: [], expectedVersion: nil))
+        source.demo.persona = .partner
+        let readsAndWrites: [() async throws -> Void] = [
+            { _ = try await source.statementImports(accountID: account.id, limit: 25, offset: 0) },
+            { _ = try await source.statementImport(accountID: account.id, batchID: batch.id) },
+            { _ = try await source.stageStatementImport(accountID: account.id, data: data, mapping: mapping) },
+            { _ = try await source.cancelStatementImport(accountID: account.id, batchID: batch.id, expectedVersion: batch.version) },
+            { _ = try await source.approveStatementImport(accountID: account.id, batchID: batch.id,
+                approval: .init(expectedVersion: batch.version, items: [.init(sourceRow: 2, action: "skip")])) },
+            { _ = try await source.undoStatementImport(accountID: account.id, batchID: batch.id, expectedVersion: batch.version) },
+        ]
+        for operation in readsAndWrites {
+            do { try await operation(); XCTFail("Cached statement reviews must not bypass current permissions") }
+            catch let APIClientError.server(status, _) { XCTAssertEqual(status, 403) }
+        }
+        XCTAssertEqual(source.demo.transactions, before)
+        source.demo.persona = .rey
+        _ = try await source.updateAccessProfile(userID: "jordan", value: .init(
+            capabilities: ["view_budget", "view_transactions", "create_transaction"],
+            restrictAccounts: false, accountIDs: [], restrictCategories: false, categoryIDs: [], expectedVersion: nil))
+        source.demo.persona = .partner
+        let otherHistory = try await source.statementImports(accountID: account.id, limit: 25, offset: 0)
+        XCTAssertTrue(otherHistory.items.isEmpty, "Another actor's import metadata must not appear")
+        for index in [1, 3, 4, 5] {
+            do { try await readsAndWrites[index](); XCTFail("Import ownership must be checked before cached detail or mutation") }
+            catch let APIClientError.server(status, _) { XCTAssertEqual(status, 404) }
+        }
+        source.demo.persona = .rey
+        let retained = try await source.statementImport(accountID: account.id, batchID: batch.id)
+        XCTAssertEqual(retained.status, "review")
+        XCTAssertEqual(retained.version, batch.version)
+        XCTAssertEqual(retained.candidates.first?.payee, "Private deposit")
+        _ = try await source.updateAccessProfile(userID: "jordan", value: .init(
+            capabilities: ["view_budget", "view_transactions", "create_transaction"],
+            restrictAccounts: true, accountIDs: [], restrictCategories: false, categoryIDs: [], expectedVersion: nil))
+        source.demo.persona = .partner
+        for operation in readsAndWrites {
+            do { try await operation(); XCTFail("Import access must respect current account scope") }
+            catch let APIClientError.server(status, _) { XCTAssertEqual(status, 404) }
+        }
+        source.demo.persona = .rey
+        for limit in [0, -1, Int.max] {
+            do { _ = try await source.statementImports(accountID: account.id, limit: limit, offset: 0); XCTFail("Invalid pages must fail safely") }
+            catch { }
+        }
     }
 
     @MainActor

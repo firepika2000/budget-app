@@ -691,6 +691,8 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
     }
     private var invitationRecords: [InvitationRecord] = []
     private var statementImportBatches: [String: APIStatementImport] = [:]
+    private var statementImportOwners: [String: String] = [:]
+    private var statementActorID: String { demo.persona == .rey ? (localIdentity?.ownerUserID ?? requestActorID) : requestActorID }
     private var accessEventRecords: [AccessEventRecord] = []
     private var removedMembers: Set<DemoPersona> = []
     private var membershipVersions: [DemoPersona: Int] = [:]
@@ -1878,8 +1880,12 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
 
 extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
     func statementImports(accountID: String, limit: Int, offset: Int) async throws -> APIStatementImportList { try requireActiveMembership()
-        guard demo.visibleAccounts.contains(where: { $0.id == accountID }) else { throw workspaceRepositoryError("Account not found.") }
+        try await requireStatementAccount(accountID)
+        guard (1...100).contains(limit), offset >= 0 else { throw workspaceRepositoryError("Statement history request is out of range.") }
         if let localAuthority {
+            guard statementActorID == localIdentity?.ownerUserID else {
+                return APIStatementImportList(items: [], hasMore: false, nextOffset: nil)
+            }
             let records = try await localAuthority.statementImports(
                 budgetID: budget.id, accountID: accountID, limit: min(limit + 1, 101), offset: offset
             )
@@ -1894,7 +1900,7 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
             return APIStatementImportList(items: items, hasMore: hasMore,
                                           nextOffset: hasMore ? offset + items.count : nil)
         }
-        let rows = statementImportBatches.values.filter { $0.accountID == accountID }.sorted {
+        let rows = statementImportBatches.values.filter { $0.accountID == accountID && statementImportOwners[$0.id] == statementActorID }.sorted {
             ($0.createdAt, $0.id) > ($1.createdAt, $1.id)
         }
         let start = min(offset, rows.count), end = min(start + limit, rows.count)
@@ -1908,7 +1914,7 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         return try await loadStatementImport(accountID: accountID, batchID: batchID)
     }
     func stageStatementImport(accountID: String, data: Data, mapping: APIStatementImportMapping) async throws -> APIStatementImport { try requireActiveMembership();
-        guard demo.visibleAccounts.contains(where: { $0.id == accountID }) else { throw workspaceRepositoryError("Account not found.") }
+        try await requireStatementAccount(accountID)
         let parsed: [LocalDelimitedStatementParser.Candidate]
         switch mapping.sourceFormat {
         case "csv": parsed = try LocalDelimitedStatementParser.parse(data: data, mapping: mapping)
@@ -1992,6 +1998,7 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
                                        candidateCount: candidates.count, candidates: candidates,
                                        createdAt: ISO8601DateFormatter().string(from: now()))
         statementImportBatches[batch.id] = batch
+        statementImportOwners[batch.id] = statementActorID
         try await persistStatementImportIfNeeded(batch)
         return batch
     }
@@ -2105,8 +2112,13 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
     }
 
     private func loadStatementImport(accountID: String, batchID: String) async throws -> APIStatementImport {
-        if let cached = statementImportBatches[batchID], cached.accountID == accountID { return cached }
+        try await requireStatementAccount(accountID)
+        if let cached = statementImportBatches[batchID], cached.accountID == accountID {
+            guard statementImportOwners[batchID] == statementActorID else { throw APIClientError.server(status: 404, message: "Statement import not found") }
+            return cached
+        }
         if let localAuthority {
+            guard statementActorID == localIdentity?.ownerUserID else { throw APIClientError.server(status: 404, message: "Statement import not found") }
             do {
                 let record = try await localAuthority.statementImport(id: batchID, budgetID: budget.id, accountID: accountID)
                 let value = try decodeStatementImport(record.payloadJSON)
@@ -2115,12 +2127,25 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
                     throw workspaceRepositoryError("Statement import history is unreadable.")
                 }
                 statementImportBatches[value.id] = value
+                statementImportOwners[value.id] = statementActorID
                 return value
             } catch LocalStorageError.recordNotFound(_) {
                 throw workspaceRepositoryError("Statement import not found.")
             }
         }
         throw workspaceRepositoryError("Statement import not found.")
+    }
+
+    private func requireStatementAccount(_ accountID: String) async throws {
+        if localAuthority != nil, !localAuthorityLoaded {
+            try await synchronizeLocalAuthority()
+        }
+        guard actorCapabilities.contains("view_transactions"), actorCapabilities.contains("create_transaction") else {
+            throw APIClientError.server(status: 403, message: "Insufficient permission")
+        }
+        guard actorAccountIDs.contains(accountID), demo.accounts.contains(where: { $0.id == accountID && !$0.isClosed }) else {
+            throw APIClientError.server(status: 404, message: "Account not found")
+        }
     }
 
     private func decodeStatementImport(_ payload: String) throws -> APIStatementImport {
