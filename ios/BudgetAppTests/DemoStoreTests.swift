@@ -373,6 +373,13 @@ final class DemoStoreTests: XCTestCase {
             XCTAssertTrue(view.contains("retryIntent = .refresh"), name)
             XCTAssertTrue(view.contains("retryIntent = .older"), name)
         }
+        let start = try XCTUnwrap(source.range(of: "private struct TransactionChangeHistoryView: View"))
+        let end = source.range(of: "\nprivate struct ", range: start.upperBound..<source.endIndex)?.lowerBound ?? source.endIndex
+        let transactionHistory = source[start.lowerBound..<end]
+        XCTAssertTrue(transactionHistory.contains("if loading && changes.isEmpty"))
+        XCTAssertTrue(transactionHistory.contains("retryIntent = append ? .older : .refresh"))
+        XCTAssertTrue(transactionHistory.contains("load(append: !retryIntent.shouldReset(hasLoadedRows: !changes.isEmpty))"))
+        XCTAssertTrue(transactionHistory.contains("History could not be refreshed."))
     }
 
     func testHistoryDiscardsDefinitiveDenialsButRetainsTemporaryFailures() {

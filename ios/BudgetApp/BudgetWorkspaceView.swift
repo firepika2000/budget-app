@@ -11001,10 +11001,11 @@ private struct TransactionChangeHistoryView: View {
     @State private var loadingOlder = false
     @State private var hasMore = false
     @State private var errorMessage: String?
+    @State private var retryIntent: HistoryRetryIntent = .refresh
 
     var body: some View {
         List {
-            if loading {
+            if loading && changes.isEmpty {
                 HStack { Spacer(); ProgressView(); Spacer() }
             } else if let errorMessage, changes.isEmpty {
                 ContentUnavailableView("History Unavailable", systemImage: "exclamationmark.triangle", description: Text(errorMessage))
@@ -11043,11 +11044,13 @@ private struct TransactionChangeHistoryView: View {
                 }
                 if let errorMessage {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("Older history could not be loaded.")
+                        Text(retryIntent == .older ? "Older history could not be loaded." : "History could not be refreshed.")
                             .font(.subheadline.weight(.semibold))
                         Text(errorMessage).font(.caption).foregroundStyle(.secondary)
-                        Button("Try Loading Older Again") { Task { await load(append: true) } }
-                            .disabled(loadingOlder)
+                        Button(retryIntent == .older ? "Try Loading Older Again" : "Try Refreshing Again") {
+                            Task { await load(append: !retryIntent.shouldReset(hasLoadedRows: !changes.isEmpty)) }
+                        }
+                            .disabled(loading || loadingOlder)
                     }
                     .accessibilityIdentifier("transaction-history-older-error")
                 }
@@ -11069,6 +11072,7 @@ private struct TransactionChangeHistoryView: View {
             errorMessage = nil
         }
         catch {
+            retryIntent = append ? .older : .refresh
             if HistoryObservationPolicy.mustDiscard(after: error) { changes = []; hasMore = false }
             errorMessage = error.localizedDescription
         }
