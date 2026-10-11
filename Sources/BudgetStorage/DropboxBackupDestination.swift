@@ -243,6 +243,7 @@ public actor DropboxBackupDestination {
             let data = try await verifiedDownload(entry)
             try data.write(to: payload.appendingPathComponent(record.payloadName), options: .atomic)
         }
+        try Task.checkCancellation()
         try FileManager.default.moveItem(at: staging, to: destination)
         published = true
     }
@@ -267,7 +268,11 @@ public actor DropboxBackupDestination {
     }
 
     private func verifiedDownload(_ entry: DropboxBackupEntry) async throws -> Data {
+        try Task.checkCancellation()
         let (metadata, data) = try await transport.download(path: entry.path)
+        // A transport may finish successfully despite cancellation during its request.
+        // Never turn that late response into a published local recovery generation.
+        try Task.checkCancellation()
         let expectedSize = entry.size ?? metadata.size
         let expectedHash = entry.contentHash ?? metadata.contentHash
         guard Int64(data.count) == expectedSize,

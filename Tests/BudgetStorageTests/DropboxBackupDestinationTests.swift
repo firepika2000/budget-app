@@ -2,6 +2,27 @@ import XCTest
 @testable import BudgetStorage
 
 final class DropboxBackupDestinationTests: XCTestCase {
+    func testCancellationDuringDownloadNeverPublishesAndPreservesRemoteBackup() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("dropbox-cancel-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let package = try makePackage(root: root, name: "Generation.clearpocketbackup", payloads: [Data("ciphertext".utf8)])
+        for suffix in ["manifest.json", "payload/000000.cpenc"] {
+            let transport = FakeDropboxBackupTransport()
+            let destination = try DropboxBackupDestination(transport: transport)
+            let published = try await destination.publish(packageURL: package)
+            let remoteBefore = await transport.paths()
+            await transport.cancelDownload(path: published.remotePath + "/" + suffix)
+            let output = root.appendingPathComponent("Cancelled.clearpocketbackup")
+            let task = Task { try await destination.download(remotePath: published.remotePath, destinationURL: output) }
+            do { try await task.value; XCTFail("Cancellation must not publish a downloaded generation") }
+            catch is CancellationError { }
+            XCTAssertFalse(FileManager.default.fileExists(atPath: output.path))
+            XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: root.path), [package.lastPathComponent])
+            let remoteAfter = await transport.paths()
+            XCTAssertEqual(remoteAfter, remoteBefore)
+        }
+    }
+
     func testMalformedPaginationFailsBeforeRestoreDownloadOrRemoteDeletion() async throws {
         let entry = DropboxBackupEntry(path: "/Backups/Test.clearpocketbackup", name: "Test.clearpocketbackup", isFolder: true)
         let cases: [[DropboxBackupPage]] = [
@@ -323,6 +344,7 @@ private actor FakeDropboxBackupTransport: DropboxBackupTransport {
     private var listedOverrides: [String: DropboxBackupEntry] = [:]
     private var downloads: [String] = []
     private var forcedPages: [DropboxBackupPage]?
+    private var cancelledDownload: String?
 
     init(pageSize: Int = 100, corruptUploadMetadata: Bool = false, failListing: Bool = false, loseMoveResponse: Bool = false) {
         self.pageSize = pageSize; self.corruptUploadMetadata = corruptUploadMetadata
@@ -340,6 +362,7 @@ private actor FakeDropboxBackupTransport: DropboxBackupTransport {
     func uploadSessionCount() -> Int { sessionStarts }
     func largestUploadChunk() -> Int { maximumChunk }
     func corruptDownload(path: String) { corruptDownloads.insert(path) }
+    func cancelDownload(path: String) { cancelledDownload = path }
 
     func createFolder(path: String) { folders.insert(path) }
 
@@ -403,6 +426,7 @@ private actor FakeDropboxBackupTransport: DropboxBackupTransport {
 
     func download(path: String) throws -> (DropboxBackupMetadata, Data) {
         downloads.append(path)
+        if path == cancelledDownload { withUnsafeCurrentTask { $0?.cancel() } }
         guard var data = files[path] else { throw TestError.missing }
         let metadata = metadata(path, data)
         if corruptDownloads.contains(path), !data.isEmpty { data[0] ^= 0xff }
