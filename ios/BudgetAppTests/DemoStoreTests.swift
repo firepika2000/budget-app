@@ -5106,6 +5106,39 @@ final class DemoStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testLocalStatementLaterPostingFailureRollsBackEarlierRows() async throws {
+        let source = DemoWorkspaceDataSource(fresh: true)
+        try await source.createAccount(.init(name: "Checking", kind: "checking", isOnBudget: true, openingBalanceMinor: 0))
+        let account = try XCTUnwrap(source.demo.accounts.first)
+        let beforeAccounts = source.demo.accounts, beforeCategories = source.demo.categories
+        let beforeTransactions = source.demo.transactions, beforeRTA = source.demo.unassignedMinor
+        let batch = try await source.stageStatementImport(accountID: account.id,
+            data: Data("Date,Amount,Payee\n2026-09-15,92233720368547758.06,First valid row\n2026-09-15,0.03,Overflow row\n".utf8),
+            mapping: .init(sourceFormat: "csv", currencyCode: "USD", dateColumn: "Date",
+                amountColumn: "Amount", payeeColumn: "Payee", dateOrder: "ymd"))
+        do {
+            _ = try await source.approveStatementImport(accountID: account.id, batchID: batch.id,
+                approval: .init(expectedVersion: batch.version, items: batch.candidates.map { .init(sourceRow: $0.sourceRow, action: "post") }))
+            XCTFail("A later overflow must reject the whole financial batch")
+        } catch { }
+        XCTAssertEqual(source.demo.accounts, beforeAccounts)
+        XCTAssertEqual(source.demo.categories, beforeCategories)
+        XCTAssertEqual(source.demo.transactions, beforeTransactions)
+        XCTAssertEqual(source.demo.unassignedMinor, beforeRTA)
+        let retained = try await source.statementImport(accountID: account.id, batchID: batch.id)
+        XCTAssertEqual(retained.status, "review")
+        XCTAssertEqual(retained.version, batch.version)
+        XCTAssertTrue(retained.candidates.allSatisfy { $0.postedTransactionID == nil })
+        let approved = try await source.approveStatementImport(accountID: account.id, batchID: batch.id,
+            approval: .init(expectedVersion: batch.version, items: batch.candidates.enumerated().map {
+                .init(sourceRow: $0.element.sourceRow, action: $0.offset == 0 ? "skip" : "post")
+            }))
+        XCTAssertEqual(approved.status, "approved")
+        XCTAssertEqual(source.demo.accounts.first?.balance, 3)
+        XCTAssertEqual(source.demo.transactions.count, beforeTransactions.count + 1)
+    }
+
+    @MainActor
     func testLocalStatementCachedReviewsRespectCurrentPermissionAndOwnership() async throws {
         let source = DemoWorkspaceDataSource()
         let account = try XCTUnwrap(source.demo.accounts.first)

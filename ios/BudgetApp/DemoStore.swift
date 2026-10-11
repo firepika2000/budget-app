@@ -994,6 +994,22 @@ final class DemoStore: ObservableObject {
         return true
     }
 
+    /// Uses the same posting engine as ordinary entry, but treats financial validation of
+    /// an explicitly approved statement as one unit. A later failure must not retain earlier rows.
+    func recordCanonicalTransactionBatch(_ operations: [RecordTransactionOperation]) -> [String]? {
+        let before = checkpoint()
+        var ids: [String] = []
+        for operation in operations {
+            let id = UUID().uuidString
+            guard recordCanonicalTransaction(operation, id: id) else {
+                restore(before)
+                return nil
+            }
+            ids.append(id)
+        }
+        return ids
+    }
+
     private func applyCanonicalTransaction(_ transaction: DemoTransaction) throws {
         guard let accountIndex = accounts.firstIndex(where: { $0.id == transaction.accountID }) else { return }
         let amounts = canonicalCategoryAmounts(for: transaction)

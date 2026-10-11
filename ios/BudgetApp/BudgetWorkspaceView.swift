@@ -2020,15 +2020,10 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
             try validateTransactionTarget(operation)
             return operation
         }
-        var postedIDs: [Int: String] = [:]
-        for (index, operation) in operations.enumerated() {
-            let existing = Set(demo.transactions.map(\.id))
-            try await recordTransaction(operation)
-            guard let created = demo.transactions.first(where: { !existing.contains($0.id) }) else {
-                throw workspaceRepositoryError("The imported transaction could not be identified.")
-            }
-            postedIDs[index] = created.id
+        guard let createdIDs = demo.recordCanonicalTransactionBatch(operations) else {
+            throw workspaceRepositoryError(demo.errorMessage)
         }
+        let postedIDs = Dictionary(uniqueKeysWithValues: createdIDs.enumerated().map { ($0.offset, $0.element) })
         try await synchronizeLocalAuthorityForBackup()
         var postedIndex = 0
         let completedCandidates = batch.candidates.map { row -> APIStatementImportCandidate in
