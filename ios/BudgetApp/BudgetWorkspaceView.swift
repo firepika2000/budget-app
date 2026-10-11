@@ -1998,6 +1998,10 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
     func approveStatementImport(accountID: String, batchID: String, approval: APIStatementImportApprove) async throws -> APIStatementImport { try requireActiveMembership();
         let batch = try await loadStatementImport(accountID: accountID, batchID: batchID)
         guard batch.status == "review", batch.version == approval.expectedVersion else { throw APIClientError.server(status: 409, message: "This statement review changed. Refresh and try again.") }
+        guard Set(approval.items.map(\.sourceRow)).count == approval.items.count,
+              approval.items.allSatisfy({ ["post", "skip"].contains($0.action) }) else {
+            throw workspaceRepositoryError("Choose Post or Skip exactly once for each imported row.")
+        }
         let choices = Dictionary(uniqueKeysWithValues: approval.items.map { ($0.sourceRow, $0) })
         guard Set(choices.keys) == Set(batch.candidates.map(\.sourceRow)) else { throw workspaceRepositoryError("Review every imported row before posting.") }
         let operations = try batch.candidates.compactMap { row -> RecordTransactionOperation? in

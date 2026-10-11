@@ -5104,6 +5104,38 @@ final class DemoStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testLocalStatementRejectsDuplicateAndUnknownApprovalChoicesWithoutMutation() async throws {
+        let source = DemoWorkspaceDataSource()
+        let account = try XCTUnwrap(source.demo.accounts.first)
+        let batch = try await source.stageStatementImport(accountID: account.id,
+            data: Data("Date,Amount,Payee\n2026-09-15,10.25,Local deposit\n".utf8),
+            mapping: .init(sourceFormat: "csv", currencyCode: "USD", dateColumn: "Date",
+                           amountColumn: "Amount", payeeColumn: "Payee", dateOrder: "ymd"))
+        let before = source.demo.transactions
+        let choices: [[APIStatementImportApprovalItem]] = [
+            [.init(sourceRow: 2, action: "skip"), .init(sourceRow: 2, action: "post")],
+            [.init(sourceRow: 2, action: "unknown")],
+        ]
+        for items in choices {
+            do {
+                _ = try await source.approveStatementImport(accountID: account.id, batchID: batch.id,
+                    approval: .init(expectedVersion: batch.version, items: items))
+                XCTFail("Invalid review choices must be rejected before ledger mutation")
+            } catch { }
+            XCTAssertEqual(source.demo.transactions, before)
+            let retained = try await source.statementImport(accountID: account.id, batchID: batch.id)
+            XCTAssertEqual(retained.status, "review")
+            XCTAssertEqual(retained.version, batch.version)
+            XCTAssertNil(retained.candidates.first?.approvalAction)
+            XCTAssertNil(retained.candidates.first?.postedTransactionID)
+        }
+        let approved = try await source.approveStatementImport(accountID: account.id, batchID: batch.id,
+            approval: .init(expectedVersion: batch.version, items: [.init(sourceRow: 2, action: "post")]))
+        XCTAssertEqual(approved.status, "approved")
+        XCTAssertEqual(source.demo.transactions.count, before.count + 1)
+    }
+
+    @MainActor
     func testLocalStatementUndoUsesCanonicalVoidAndReversalPath() async throws {
         let source = DemoWorkspaceDataSource()
         let account = try XCTUnwrap(source.demo.accounts.first)
