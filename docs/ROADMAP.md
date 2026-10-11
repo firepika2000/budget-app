@@ -175,6 +175,13 @@ Remaining v0.12 work should continue auditing other mutable
 planning and administrative observations
 for overwrite-only or export gaps rather than duplicating established histories.
 
+The subsequent recovery audit closes omitted portable-import sections for decision histories,
+reconciliations, saved payoff plans and accepted command receipts. Populated recovery tests now
+prove exact observation preservation and duplicate-free replay of accepted commands. History
+retry preserves whether a refresh or an older page failed and prevents overlapping refreshes.
+See `V0.12-CLOSURE-AUDIT.md` for verification and remaining human acceptance; these corrections
+do not establish release completion.
+
 **Consumer Budget Server distribution remains required.** The earlier v0.9 graphical installer,
 manager, secure pairing and no-Terminal household operating experience below are retained as a
 cross-cutting distribution workstream through v1.0; a developer launcher is not a substitute.
@@ -205,6 +212,11 @@ Automatic Dropbox backup recovery now reuses a retained encrypted generation aft
 30-minute cooldown when the app is active, instead of indefinitely requiring manual intervention.
 The same single-run claim and verified immutable upload path apply; no additional snapshot is made
 until the pending generation is resolved. Explicit retry and saving elsewhere remain available.
+
+Dropbox listings now fail closed on nonadvancing cursors and duplicate paths instead of looping
+or exposing incomplete generations. Cancelled restores do not publish local recovery packages;
+temporary staging is removed while customer backups remain untouched. The focused storage,
+transport and OAuth suite passes, but live-provider acceptance is still required.
 
 Receipt assistance now supports direct native camera capture as well as choosing an existing photo.
 The shared camera bridge feeds the same on-device OCR/review workflow after camera dismissal;

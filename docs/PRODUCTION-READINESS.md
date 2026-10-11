@@ -1,5 +1,28 @@
 # Production readiness mission ledger
 
+## Portable recovery and Dropbox reliability
+
+Portable recovery checkpoints `213caaf` and `1a80225` preserve decision histories, reconciliation
+observations, saved payoff plans and accepted command identities. The populated fixture verifies
+exact money, every mapped table count, immutable observations after re-export, encrypted attachment
+access and duplicate-free accepted-command replay. The focused backend runs passed 35 tests and
+four populated portable-import tests. No Live database was reset; deploying the updated server
+does not require a new migration.
+
+Dropbox checkpoint `a4085ed` rejects repeated or empty continuation cursors and duplicate paths,
+including case-insensitive duplicates, before exposing a partial listing or downloading a restore.
+Checkpoint `c2987bb` honors cancellation before and after transport download and before publishing
+the local recovery generation. The new test reproduced publication despite cancellation before
+the fix; cancellation during manifest and payload downloads now removes temporary staging without
+changing remote backups. Twenty-five focused Dropbox storage, transport and OAuth tests passed
+under regular Xcode 27. Live Dropbox acceptance remains open; these tests use a controlled transport.
+
+History checkpoints `50178ae` and `96e9ea8` retain the failed request's refresh/older-page intent
+and guard overlapping requests. Three and four focused native tests respectively executed and
+passed on the preserved iPhone 17 Pro Max / iOS 27 simulator. They include pure-policy and source
+composition assertions, not a human acceptance claim. App changes require a rebuild; TestFlight
+remains held, and no merge or release tag is authorized.
+
 ## Household history privacy and native refresh verification
 
 Server checkpoints `6326762` and `47dff07` close proven resource-scope leaks in delegated authority
