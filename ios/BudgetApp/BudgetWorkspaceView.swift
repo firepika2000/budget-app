@@ -10654,12 +10654,14 @@ private struct ScheduledTransactionHistoryView: View {
     @State private var rows: [APIScheduledTransactionRevision] = []
     @State private var loading = true
     @State private var loadingMore = false
+    @State private var requestInFlight = false
+    @State private var retryIntent: HistoryRetryIntent = .refresh
     @State private var hasMore = false
     @State private var error: String?
     private let pageSize = 50
     var body: some View {
         List {
-            if let error { Section { ContentUnavailableView("History unavailable", systemImage: "exclamationmark.triangle", description: Text(error)); Button("Try Again") { Task { await load() } } } }
+            if let error { Section { ContentUnavailableView("History unavailable", systemImage: "exclamationmark.triangle", description: Text(error)); Button("Try Again") { Task { if retryIntent.shouldReset(hasLoadedRows: !rows.isEmpty) { await load() } else { await loadMore() } } }.disabled(requestInFlight || loadingMore) } }
             else if rows.isEmpty && !loading { ContentUnavailableView("No schedule decisions yet", systemImage: "clock.arrow.circlepath", description: Text("Creates, edits, pauses, entries, and deletions will appear here.")) }
             ForEach(rows) { row in
                 VStack(alignment: .leading, spacing: 5) {
@@ -10702,10 +10704,12 @@ private struct ScheduledTransactionHistoryView: View {
     }
     private func symbol(_ action: String) -> String { switch action { case "created": "plus.circle"; case "paused": "pause.circle"; case "resumed": "play.circle"; case "deleted": "trash"; case "realized": "checkmark.circle"; default: "pencil.circle" } }
     @MainActor private func load() async {
-        guard !loadingMore else { return }
-        loading = true; error = nil; defer { loading = false }
+        guard !requestInFlight, !loadingMore else { return }
+        requestInFlight = true; loading = true; error = nil
+        defer { requestInFlight = false; loading = false }
         do { let page = try await store.scheduleHistory(limit: pageSize, offset: 0); rows = page; hasMore = page.count == pageSize }
         catch {
+            retryIntent = .refresh
             if HistoryObservationPolicy.mustDiscard(after: error) { rows = []; hasMore = false }
             self.error = error.localizedDescription
         }
@@ -10715,6 +10719,7 @@ private struct ScheduledTransactionHistoryView: View {
         loadingMore = true; error = nil; defer { loadingMore = false }
         do { let page = try await store.scheduleHistory(limit: pageSize, offset: rows.count); rows += page; hasMore = page.count == pageSize }
         catch {
+            retryIntent = .older
             if HistoryObservationPolicy.mustDiscard(after: error) { rows = []; hasMore = false }
             self.error = error.localizedDescription
         }
@@ -15222,12 +15227,14 @@ private struct DelegatedPolicyHistoryView: View {
     @State private var rows: [APIDelegatedPolicyRevision] = []
     @State private var loading = true
     @State private var loadingMore = false
+    @State private var requestInFlight = false
+    @State private var retryIntent: HistoryRetryIntent = .refresh
     @State private var hasMore = false
     @State private var error: String?
     private let pageSize = 50
     var body: some View {
         List {
-            if let error { Section { ContentUnavailableView("History unavailable", systemImage: "exclamationmark.triangle", description: Text(error)); Button("Try Again") { Task { await load() } } } }
+            if let error { Section { ContentUnavailableView("History unavailable", systemImage: "exclamationmark.triangle", description: Text(error)); Button("Try Again") { Task { if retryIntent.shouldReset(hasLoadedRows: !rows.isEmpty) { await load() } else { await loadMore() } } }.disabled(requestInFlight || loadingMore) } }
             else if rows.isEmpty && !loading { ContentUnavailableView("No authority decisions yet", systemImage: "clock.arrow.circlepath", description: Text("Creates and changes to this member's authority will appear here.")) }
             ForEach(rows) { row in
                 VStack(alignment: .leading, spacing: 5) {
@@ -15260,10 +15267,12 @@ private struct DelegatedPolicyHistoryView: View {
             categoryName: { id in store.categories.first(where: { $0.id == id }).map { store.categoryDisplayName($0) } ?? "Category no longer available" })
     }
     @MainActor private func load() async {
-        guard !loadingMore else { return }
-        loading = true; error = nil; defer { loading = false }
+        guard !requestInFlight, !loadingMore else { return }
+        requestInFlight = true; loading = true; error = nil
+        defer { requestInFlight = false; loading = false }
         do { let page = try await store.delegatedPolicyHistory(userID: member.userID, limit: pageSize, offset: 0); rows = page; hasMore = page.count == pageSize }
         catch {
+            retryIntent = .refresh
             if HistoryObservationPolicy.mustDiscard(after: error) { rows = []; hasMore = false }
             self.error = error.localizedDescription
         }
@@ -15273,6 +15282,7 @@ private struct DelegatedPolicyHistoryView: View {
         loadingMore = true; error = nil; defer { loadingMore = false }
         do { let page = try await store.delegatedPolicyHistory(userID: member.userID, limit: pageSize, offset: rows.count); rows += page; hasMore = page.count == pageSize }
         catch {
+            retryIntent = .older
             if HistoryObservationPolicy.mustDiscard(after: error) { rows = []; hasMore = false }
             self.error = error.localizedDescription
         }

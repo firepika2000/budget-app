@@ -363,6 +363,16 @@ final class DemoStoreTests: XCTestCase {
             XCTAssertTrue(view.contains("guard !loading, !loadingOlder else { return }"), name)
             XCTAssertTrue(view.contains("HistoryObservationPolicy.mustDiscard(after: error)"), name)
         }
+        for name in ["ScheduledTransactionHistoryView", "DelegatedPolicyHistoryView"] {
+            let start = try XCTUnwrap(source.range(of: "private struct \(name): View"))
+            let end = source.range(of: "\nprivate struct ", range: start.upperBound..<source.endIndex)?.lowerBound ?? source.endIndex
+            let view = source[start.lowerBound..<end]
+            XCTAssertTrue(view.contains("guard !requestInFlight, !loadingMore else { return }"), name)
+            XCTAssertTrue(view.contains("defer { requestInFlight = false; loading = false }"), name)
+            XCTAssertTrue(view.contains("retryIntent.shouldReset(hasLoadedRows: !rows.isEmpty)"), name)
+            XCTAssertTrue(view.contains("retryIntent = .refresh"), name)
+            XCTAssertTrue(view.contains("retryIntent = .older"), name)
+        }
     }
 
     func testHistoryDiscardsDefinitiveDenialsButRetainsTemporaryFailures() {
