@@ -1244,14 +1244,14 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
         return try decode(["as_of": BudgetWorkspaceStore.dateString(start), "through": BudgetWorkspaceStore.dateString(through), "currency_code": budget.currencyCode, "actual_total_on_budget_minor": actualTotal, "projected_total_on_budget_minor": try Money.sumMinorUnits(onBudgetIDs.map { projected[$0] ?? 0 }), "lowest_projected_total_minor": lowestTotal, "accounts": accountRows, "occurrences": occurrenceRows])
     }
 
-    private func synchronizeLocalAuthority() async throws {
+    private func synchronizeLocalAuthority(committingStatementImport: LocalStatementImportRecord? = nil) async throws {
         guard let localOperationGate else {
-            try await synchronizeLocalAuthorityWhileExclusive()
+            try await synchronizeLocalAuthorityWhileExclusive(committingStatementImport: committingStatementImport)
             return
         }
         await localOperationGate.acquire()
         do {
-            try await synchronizeLocalAuthorityWhileExclusive()
+            try await synchronizeLocalAuthorityWhileExclusive(committingStatementImport: committingStatementImport)
             await localOperationGate.release()
         } catch {
             await localOperationGate.release()
@@ -1265,7 +1265,7 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
         try await synchronizeLocalAuthorityWhileExclusive()
     }
 
-    private func synchronizeLocalAuthorityWhileExclusive() async throws {
+    private func synchronizeLocalAuthorityWhileExclusive(committingStatementImport: LocalStatementImportRecord? = nil) async throws {
         guard let localAuthority, let localIdentity else { return }
         if !localAuthorityLoaded {
             var value: LocalAuthoritySnapshot
@@ -1353,7 +1353,9 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
             preservingAttachmentTombstones: previous.attachmentTombstones,
             debtTerms: debtTerms, transactionChanges: [],
             creditReserveEvents: previous.creditReserveEvents,
-            statementImports: previous.statementImports
+            statementImports: committingStatementImport.map { record in
+                previous.statementImports.filter { $0.id != record.id } + [record]
+            } ?? previous.statementImports
         )
         let stamp = ISO8601DateFormatter().string(from: now())
         let transactionChanges = try LocalTransactionAudit.appendingChanges(
@@ -1422,8 +1424,9 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
             creditReserveEvents: projected.creditReserveEvents,
             statementImports: projected.statementImports
         )
+        if committingStatementImport != nil { try await localAuthority.integrityCheck() }
         try await localAuthority.replaceWorkspaceState(value)
-        try await localAuthority.integrityCheck()
+        if committingStatementImport == nil { try await localAuthority.integrityCheck() }
     }
 
     private func appendingAccountRevisions(
@@ -2020,11 +2023,13 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
             try validateTransactionTarget(operation)
             return operation
         }
+        let rollback = demo.financialRollback()
+        var published = false
+        defer { if !published { rollback() } }
         guard let createdIDs = demo.recordCanonicalTransactionBatch(operations) else {
             throw workspaceRepositoryError(demo.errorMessage)
         }
         let postedIDs = Dictionary(uniqueKeysWithValues: createdIDs.enumerated().map { ($0.offset, $0.element) })
-        try await synchronizeLocalAuthorityForBackup()
         var postedIndex = 0
         let completedCandidates = batch.candidates.map { row -> APIStatementImportCandidate in
             guard choices[row.sourceRow]?.action == "post" else { return APIStatementImportCandidate(
@@ -2045,8 +2050,9 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         let completed = APIStatementImport(id: batch.id, budgetID: batch.budgetID, accountID: batch.accountID,
             status: "approved", version: batch.version + 1, sourceFormat: batch.sourceFormat,
             candidateCount: batch.candidateCount, candidates: completedCandidates, createdAt: batch.createdAt)
+        try await synchronizeLocalAuthority(committingStatementImport: statementImportRecord(completed))
+        published = true
         statementImportBatches[batch.id] = completed
-        try await persistStatementImportIfNeeded(completed)
         return completed
     }
     func undoStatementImport(accountID: String, batchID: String, expectedVersion: Int) async throws -> APIStatementImport { try requireActiveMembership();
@@ -2095,15 +2101,19 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
 
     private func persistStatementImportIfNeeded(_ value: APIStatementImport) async throws {
         guard let localAuthority else { return }
+        try await localAuthority.upsertStatementImport(statementImportRecord(value))
+    }
+
+    private func statementImportRecord(_ value: APIStatementImport) throws -> LocalStatementImportRecord {
         let data = try JSONEncoder().encode(value)
         guard let payload = String(data: data, encoding: .utf8) else {
             throw workspaceRepositoryError("Statement import history could not be stored.")
         }
-        try await localAuthority.upsertStatementImport(.init(
+        return .init(
             id: value.id, budgetID: value.budgetID, accountID: value.accountID,
             status: value.status, version: Int64(value.version), sourceFormat: value.sourceFormat,
             candidateCount: Int64(value.candidateCount), payloadJSON: payload, createdAt: value.createdAt
-        ))
+        )
     }
 
     private func loadStatementImport(accountID: String, batchID: String) async throws -> APIStatementImport {

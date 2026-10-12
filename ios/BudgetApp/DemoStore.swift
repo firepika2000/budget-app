@@ -458,6 +458,12 @@ final class DemoStore: ObservableObject {
         reserveAttribution = value.reserve; unassignedMinor = value.unassigned
     }
 
+    /// Keeps the canonical financial state available for rollback until a local publication succeeds.
+    func financialRollback() -> () -> Void {
+        let saved = checkpoint()
+        return { self.restore(saved) }
+    }
+
     static func payeeID(_ name: String) -> String { "demo-payee-" + name.lowercased().filter { $0.isLetter || $0.isNumber } }
     private static var seedPayees: [DemoPayee] {
         let system = Set(["transfer", "starting balance", "reconciliation adjustment"])

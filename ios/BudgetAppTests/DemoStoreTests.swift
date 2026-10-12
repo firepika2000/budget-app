@@ -5357,6 +5357,42 @@ final class DemoStoreTests: XCTestCase {
         )
         XCTAssertEqual(persistedCancellation.status, "cancelled")
         XCTAssertEqual(persistedCancellation.version, staged.version + 1)
+        let approvalBatch = try await afterMutationRelaunch.stageStatementImport(accountID: account.id,
+            data: Data("Date,Amount,Payee\n2026-09-15,10.25,Atomic deposit\n".utf8),
+            mapping: .init(sourceFormat: "csv", currencyCode: "USD", dateColumn: "Date",
+                amountColumn: "Amount", payeeColumn: "Payee", dateOrder: "ymd"))
+        let approval = APIStatementImportApprove(expectedVersion: approvalBatch.version,
+            items: approvalBatch.candidates.map { .init(sourceRow: $0.sourceRow, action: "post") })
+        let beforeRows = afterMutationRelaunch.demo.transactions
+        let beforeAccounts = afterMutationRelaunch.demo.accounts
+        let database = try LocalDatabase(fileURL: root.appendingPathComponent("authority.sqlite3"))
+        try await database.execute(.init("CREATE TRIGGER reject_import_approval BEFORE INSERT ON statement_imports WHEN NEW.status='approved' BEGIN SELECT RAISE(ABORT,'simulated approval publication failure'); END"))
+        do {
+            _ = try await afterMutationRelaunch.approveStatementImport(accountID: account.id, batchID: approvalBatch.id, approval: approval)
+            XCTFail("A failed review-marker write must roll back the financial publication")
+        } catch { }
+        XCTAssertEqual(afterMutationRelaunch.demo.transactions, beforeRows)
+        XCTAssertEqual(afterMutationRelaunch.demo.accounts, beforeAccounts)
+        let failedSnapshot = try await authority.snapshot(budgetID: identity.budgetID)
+        XCTAssertTrue(failedSnapshot.transactions.allSatisfy { $0.payeeName != "Atomic deposit" })
+        let failedReview = try await afterMutationRelaunch.statementImport(accountID: account.id, batchID: approvalBatch.id)
+        XCTAssertEqual(failedReview.status, "review")
+        XCTAssertEqual(failedReview.version, approvalBatch.version)
+        try await database.execute(.init("DROP TRIGGER reject_import_approval"))
+        let approved = try await afterMutationRelaunch.approveStatementImport(accountID: account.id, batchID: approvalBatch.id, approval: approval)
+        let finalSource = DemoWorkspaceDataSource(fresh: true, budgetOverride: budget,
+            localAuthority: authority, localIdentity: identity)
+        let recovered = try await finalSource.statementImport(accountID: account.id, batchID: approvalBatch.id)
+        XCTAssertEqual(recovered.status, "approved")
+        XCTAssertEqual(recovered.version, approved.version)
+        XCTAssertEqual(recovered.candidates.first?.postedTransactionID, approved.candidates.first?.postedTransactionID)
+        XCTAssertEqual(finalSource.demo.transactions.filter { $0.payee == "Atomic deposit" }.count, 1)
+        XCTAssertEqual(finalSource.demo.accounts.first { $0.id == account.id }?.balance, 1025)
+        do {
+            _ = try await finalSource.approveStatementImport(accountID: account.id, batchID: approvalBatch.id, approval: approval)
+            XCTFail("Recovered approval must reject replay")
+        } catch let APIClientError.server(status, _) { XCTAssertEqual(status, 409) }
+        await database.close()
     }
 
     @MainActor
