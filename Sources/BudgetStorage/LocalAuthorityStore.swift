@@ -903,16 +903,17 @@ public actor LocalAuthorityStore {
         )).map(scheduleRevisionRecord)
     }
 
-    public func upsertStatementImport(_ value: LocalStatementImportRecord) async throws {
+    public func upsertStatementImport(_ value: LocalStatementImportRecord, requiringStatementImport expected: LocalStatementImportRecord? = nil) async throws {
         guard value.version > 0, value.candidateCount >= 0 else {
             throw LocalStorageError.operationFailed("Statement import metadata is invalid")
         }
-        try await database.execute(.init(
+        let statement = LocalSQLStatement(
             "INSERT INTO statement_imports(id,budget_id,account_id,status,version,source_format,candidate_count,payload_json,created_at) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET status=excluded.status,version=excluded.version,source_format=excluded.source_format,candidate_count=excluded.candidate_count,payload_json=excluded.payload_json",
             values: [.text(value.id), .text(value.budgetID), .text(value.accountID), .text(value.status),
                      .integer(value.version), .text(value.sourceFormat), .integer(value.candidateCount),
                      .text(value.payloadJSON), .text(value.createdAt)]
-        ))
+        )
+        try await database.transaction([statement], requiringRow: expected.map(Self.statementImportPrecondition))
     }
 
     public func statementImport(id: String, budgetID: String, accountID: String) async throws -> LocalStatementImportRecord {
@@ -1044,7 +1045,7 @@ public actor LocalAuthorityStore {
     /// Atomically publishes a complete, already-validated workspace projection. This is the commit
     /// boundary used by the on-device application-service adapter: readers observe either the old
     /// authority or the new one, never a partially persisted command.
-    public func replaceWorkspaceState(_ value: LocalAuthoritySnapshot) async throws {
+    public func replaceWorkspaceState(_ value: LocalAuthoritySnapshot, requiringStatementImport expected: LocalStatementImportRecord? = nil) async throws {
         for transaction in value.transactions { try validateTransaction(transaction) }
         let budgetID = value.identity.budgetID
         var statements: [LocalSQLStatement] = [
@@ -1152,7 +1153,12 @@ public actor LocalAuthorityStore {
         statements += value.cashRolloverPolicies.map { item in
             .init("INSERT INTO cash_rollover_policies(id,budget_id,effective_month,policy,version,source,actor_user_id,created_at) VALUES (?,?,?,?,?,?,?,?)", values: [.text(item.id), .text(item.budgetID), .text(item.effectiveMonth), .text(item.policy), .integer(item.version), .text(item.source), optionalText(item.actorUserID), .text(item.createdAt)])
         }
-        try await database.transaction(statements)
+        let precondition = expected.map(Self.statementImportPrecondition)
+        try await database.transaction(statements, requiringRow: precondition)
+    }
+
+    private static func statementImportPrecondition(_ item: LocalStatementImportRecord) -> LocalSQLStatement {
+        .init("SELECT id FROM statement_imports WHERE id=? AND budget_id=? AND account_id=? AND version=? AND status=?", values: [.text(item.id), .text(item.budgetID), .text(item.accountID), .integer(item.version), .text(item.status)])
     }
 
     private func loadAccounts(budgetID: String) async throws -> [LocalAccountRecord] {

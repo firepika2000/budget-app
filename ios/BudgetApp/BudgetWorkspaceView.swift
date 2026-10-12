@@ -692,6 +692,7 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
     private var invitationRecords: [InvitationRecord] = []
     private var statementImportBatches: [String: APIStatementImport] = [:]
     private var statementImportOwners: [String: String] = [:]
+    private var statementMutationsInFlight: Set<String> = []
     private var statementActorID: String { demo.persona == .rey ? (localIdentity?.ownerUserID ?? requestActorID) : requestActorID }
     private var accessEventRecords: [AccessEventRecord] = []
     private var removedMembers: Set<DemoPersona> = []
@@ -1244,16 +1245,18 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
         return try decode(["as_of": BudgetWorkspaceStore.dateString(start), "through": BudgetWorkspaceStore.dateString(through), "currency_code": budget.currencyCode, "actual_total_on_budget_minor": actualTotal, "projected_total_on_budget_minor": try Money.sumMinorUnits(onBudgetIDs.map { projected[$0] ?? 0 }), "lowest_projected_total_minor": lowestTotal, "accounts": accountRows, "occurrences": occurrenceRows])
     }
 
-    private func synchronizeLocalAuthority(committingStatementImport: LocalStatementImportRecord? = nil) async throws {
+    private func synchronizeLocalAuthority(committingStatementImport: LocalStatementImportRecord? = nil, requiringStatementImport: LocalStatementImportRecord? = nil) async throws {
         guard let localOperationGate else {
-            try await synchronizeLocalAuthorityWhileExclusive(committingStatementImport: committingStatementImport)
+            do { try await synchronizeLocalAuthorityWhileExclusive(committingStatementImport: committingStatementImport, requiringStatementImport: requiringStatementImport) }
+            catch { invalidateStaleStatementState(after: error); throw error }
             return
         }
         await localOperationGate.acquire()
         do {
-            try await synchronizeLocalAuthorityWhileExclusive(committingStatementImport: committingStatementImport)
+            try await synchronizeLocalAuthorityWhileExclusive(committingStatementImport: committingStatementImport, requiringStatementImport: requiringStatementImport)
             await localOperationGate.release()
         } catch {
+            invalidateStaleStatementState(after: error)
             await localOperationGate.release()
             throw error
         }
@@ -1265,7 +1268,7 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
         try await synchronizeLocalAuthorityWhileExclusive()
     }
 
-    private func synchronizeLocalAuthorityWhileExclusive(committingStatementImport: LocalStatementImportRecord? = nil) async throws {
+    private func synchronizeLocalAuthorityWhileExclusive(committingStatementImport: LocalStatementImportRecord? = nil, requiringStatementImport: LocalStatementImportRecord? = nil) async throws {
         guard let localAuthority, let localIdentity else { return }
         if !localAuthorityLoaded {
             var value: LocalAuthoritySnapshot
@@ -1425,7 +1428,7 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
             statementImports: projected.statementImports
         )
         if committingStatementImport != nil { try await localAuthority.integrityCheck() }
-        try await localAuthority.replaceWorkspaceState(value)
+        try await localAuthority.replaceWorkspaceState(value, requiringStatementImport: requiringStatementImport)
         if committingStatementImport == nil { try await localAuthority.integrityCheck() }
     }
 
@@ -2006,6 +2009,8 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         return batch
     }
     func approveStatementImport(accountID: String, batchID: String, approval: APIStatementImportApprove) async throws -> APIStatementImport { try requireActiveMembership();
+        guard statementMutationsInFlight.insert(batchID).inserted else { throw APIClientError.server(status: 409, message: "This statement is already being updated.") }
+        defer { statementMutationsInFlight.remove(batchID) }
         let batch = try await loadStatementImport(accountID: accountID, batchID: batchID)
         guard batch.status == "review", batch.version == approval.expectedVersion else { throw APIClientError.server(status: 409, message: "This statement review changed. Refresh and try again.") }
         guard Set(approval.items.map(\.sourceRow)).count == approval.items.count,
@@ -2050,12 +2055,14 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         let completed = APIStatementImport(id: batch.id, budgetID: batch.budgetID, accountID: batch.accountID,
             status: "approved", version: batch.version + 1, sourceFormat: batch.sourceFormat,
             candidateCount: batch.candidateCount, candidates: completedCandidates, createdAt: batch.createdAt)
-        try await synchronizeLocalAuthority(committingStatementImport: statementImportRecord(completed))
+        try await synchronizeLocalAuthority(committingStatementImport: statementImportRecord(completed), requiringStatementImport: statementImportRecord(batch))
         published = true
         statementImportBatches[batch.id] = completed
         return completed
     }
     func undoStatementImport(accountID: String, batchID: String, expectedVersion: Int) async throws -> APIStatementImport { try requireActiveMembership();
+        guard statementMutationsInFlight.insert(batchID).inserted else { throw APIClientError.server(status: 409, message: "This statement is already being updated.") }
+        defer { statementMutationsInFlight.remove(batchID) }
         let batch = try await loadStatementImport(accountID: accountID, batchID: batchID)
         guard batch.status == "approved", batch.version == expectedVersion,
               batch.candidates.contains(where: { $0.postedTransactionID != nil }),
@@ -2087,25 +2094,35 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         let result = APIStatementImport(id: batch.id, budgetID: batch.budgetID, accountID: batch.accountID,
             status: batch.status, version: batch.version + 1, sourceFormat: batch.sourceFormat,
             candidateCount: batch.candidateCount, candidates: rows, createdAt: batch.createdAt)
-        try await synchronizeLocalAuthority(committingStatementImport: statementImportRecord(result))
+        try await synchronizeLocalAuthority(committingStatementImport: statementImportRecord(result), requiringStatementImport: statementImportRecord(batch))
         published = true
         statementImportBatches[batch.id] = result
         return result
     }
     func cancelStatementImport(accountID: String, batchID: String, expectedVersion: Int) async throws -> APIStatementImport { try requireActiveMembership()
+        guard statementMutationsInFlight.insert(batchID).inserted else { throw APIClientError.server(status: 409, message: "This statement is already being updated.") }
+        defer { statementMutationsInFlight.remove(batchID) }
         let batch = try await loadStatementImport(accountID: accountID, batchID: batchID)
         guard batch.status == "review", batch.version == expectedVersion else { throw APIClientError.server(status: 409, message: "This statement review changed. Refresh and try again.") }
         let cancelled = APIStatementImport(id: batch.id, budgetID: batch.budgetID, accountID: batch.accountID,
             status: "cancelled", version: batch.version + 1, sourceFormat: batch.sourceFormat,
             candidateCount: batch.candidateCount, candidates: batch.candidates, createdAt: batch.createdAt)
-        try await persistStatementImportIfNeeded(cancelled)
+        try await persistStatementImportIfNeeded(cancelled, requiringStatementImport: statementImportRecord(batch))
         statementImportBatches[batch.id] = cancelled
         return cancelled
     }
 
-    private func persistStatementImportIfNeeded(_ value: APIStatementImport) async throws {
+    private func persistStatementImportIfNeeded(_ value: APIStatementImport, requiringStatementImport: LocalStatementImportRecord? = nil) async throws {
         guard let localAuthority else { return }
-        try await localAuthority.upsertStatementImport(statementImportRecord(value))
+        do { try await localAuthority.upsertStatementImport(statementImportRecord(value), requiringStatementImport: requiringStatementImport) }
+        catch { invalidateStaleStatementState(after: error); throw error }
+    }
+
+    private func invalidateStaleStatementState(after error: Error) {
+        guard error as? LocalStorageError == .staleObservation else { return }
+        localAuthorityLoaded = false
+        statementImportBatches.removeAll()
+        statementImportOwners.removeAll()
     }
 
     private func statementImportRecord(_ value: APIStatementImport) throws -> LocalStatementImportRecord {

@@ -7,12 +7,14 @@ public enum LocalStorageError: Error, Equatable, LocalizedError {
     case invalidSnapshot(String)
     case destinationExists
     case recordNotFound(String)
+    case staleObservation
 
     public var errorDescription: String? {
         switch self {
         case let .openFailed(message), let .operationFailed(message), let .invalidSnapshot(message): message
         case .destinationExists: "The local storage destination already exists."
         case let .recordNotFound(record): "Local \(record) was not found."
+        case .staleObservation: "Local data changed. Refresh before trying again."
         }
     }
 }
@@ -106,10 +108,15 @@ public actor LocalDatabase {
         return Int64(sqlite3_changes(database))
     }
 
-    public func transaction(_ statements: [LocalSQLStatement]) throws {
+    public func transaction(_ statements: [LocalSQLStatement], requiringRow precondition: LocalSQLStatement? = nil) throws {
         let database = try requireHandle()
         try Self.execute("BEGIN IMMEDIATE", on: database)
         do {
+            if let precondition {
+                guard try Self.rows(precondition.sql, values: precondition.values, on: database).count == 1 else {
+                    throw LocalStorageError.staleObservation
+                }
+            }
             for statement in statements {
                 try Self.execute(statement.sql, values: statement.values, on: database)
             }

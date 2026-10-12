@@ -112,6 +112,24 @@ final class LocalDatabaseTests: XCTestCase {
         try await upgraded.integrityCheck()
     }
 
+    func testTransactionPreconditionRejectsStaleStateBeforeAnyWrite() async throws {
+        let database = try LocalDatabase(fileURL: try temporaryDirectory().appendingPathComponent("conditional.sqlite"))
+        try await database.execute(.init("CREATE TABLE review_version(id TEXT PRIMARY KEY, version INTEGER NOT NULL)"))
+        try await database.execute(.init("INSERT INTO review_version VALUES ('review',1)"))
+        let writes: [LocalSQLStatement] = [.init("UPDATE review_version SET version=2 WHERE id='review'")]
+        let condition = LocalSQLStatement("SELECT id FROM review_version WHERE id='review' AND version=1")
+        try await database.transaction(writes, requiringRow: condition)
+        do {
+            try await database.transaction([.init("UPDATE review_version SET version=999")], requiringRow: condition)
+            XCTFail("Stale precondition must reject before writes")
+        } catch { }
+        let rows = try await database.rows(.init("SELECT version FROM review_version"))
+        XCTAssertEqual(rows.first?["version"], .integer(2))
+        try await database.execute(.init("UPDATE review_version SET version=3"))
+        let finalRows = try await database.rows(.init("SELECT version FROM review_version"))
+        XCTAssertEqual(finalRows.first?["version"], .integer(3), "Rejection must release its SQLite transaction")
+    }
+
     func testFailedTransactionRollsBackEveryStatement() async throws {
         let database = try LocalDatabase(fileURL: try temporaryDirectory().appendingPathComponent("rollback.sqlite"))
         do {

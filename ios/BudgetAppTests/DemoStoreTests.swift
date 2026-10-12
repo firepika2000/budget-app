@@ -5365,6 +5365,9 @@ final class DemoStoreTests: XCTestCase {
             items: approvalBatch.candidates.map { .init(sourceRow: $0.sourceRow, action: "post") })
         let beforeRows = afterMutationRelaunch.demo.transactions
         let beforeAccounts = afterMutationRelaunch.demo.accounts
+        let staleSource = DemoWorkspaceDataSource(fresh: true, budgetOverride: budget,
+            localAuthority: authority, localIdentity: identity)
+        _ = try await staleSource.statementImport(accountID: account.id, batchID: approvalBatch.id)
         let database = try LocalDatabase(fileURL: root.appendingPathComponent("authority.sqlite3"))
         try await database.execute(.init("CREATE TRIGGER reject_import_approval BEFORE INSERT ON statement_imports WHEN NEW.status='approved' BEGIN SELECT RAISE(ABORT,'simulated approval publication failure'); END"))
         do {
@@ -5380,6 +5383,22 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertEqual(failedReview.version, approvalBatch.version)
         try await database.execute(.init("DROP TRIGGER reject_import_approval"))
         let approved = try await afterMutationRelaunch.approveStatementImport(accountID: account.id, batchID: approvalBatch.id, approval: approval)
+        do {
+            _ = try await staleSource.approveStatementImport(accountID: account.id, batchID: approvalBatch.id, approval: approval)
+            XCTFail("Stale repository must not approve an already accepted review")
+        } catch { }
+        XCTAssertEqual(staleSource.demo.transactions, beforeRows)
+        XCTAssertEqual(staleSource.demo.accounts, beforeAccounts)
+        let afterStaleApproval = try await authority.snapshot(budgetID: identity.budgetID)
+        XCTAssertEqual(afterStaleApproval.transactions.filter { $0.payeeName == "Atomic deposit" }.count, 1)
+        do {
+            _ = try await staleSource.cancelStatementImport(accountID: account.id, batchID: approvalBatch.id, expectedVersion: approvalBatch.version)
+            XCTFail("Stale cancellation must not overwrite an approved review")
+        } catch { }
+        let refreshedStaleReview = try await staleSource.statementImport(accountID: account.id, batchID: approvalBatch.id)
+        XCTAssertEqual(refreshedStaleReview.status, "approved")
+        XCTAssertEqual(refreshedStaleReview.version, approved.version)
+        XCTAssertEqual(staleSource.demo.accounts.first { $0.id == account.id }?.balance, 1025)
         let finalSource = DemoWorkspaceDataSource(fresh: true, budgetOverride: budget,
             localAuthority: authority, localIdentity: identity)
         let recovered = try await finalSource.statementImport(accountID: account.id, batchID: approvalBatch.id)
