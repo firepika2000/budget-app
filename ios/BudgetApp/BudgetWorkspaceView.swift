@@ -2000,9 +2000,9 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
                                        status: "review", version: 1, sourceFormat: mapping.sourceFormat,
                                        candidateCount: candidates.count, candidates: candidates,
                                        createdAt: ISO8601DateFormatter().string(from: now()))
+        try await persistStatementImportIfNeeded(batch)
         statementImportBatches[batch.id] = batch
         statementImportOwners[batch.id] = statementActorID
-        try await persistStatementImportIfNeeded(batch)
         return batch
     }
     func approveStatementImport(accountID: String, batchID: String, approval: APIStatementImportApprove) async throws -> APIStatementImport { try requireActiveMembership();
@@ -2067,6 +2067,9 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         guard sources.allSatisfy({ $0.status == "posted" && $0.transferID == nil && !$0.reconciled }) else {
             throw APIClientError.server(status: 409, message: "Every imported transaction must remain posted and unreconciled before the import can be undone.")
         }
+        let rollback = demo.financialRollback()
+        var published = false
+        defer { if !published { rollback() } }
         var reversals: [String: String] = [:]
         for id in ids {
             let before = Set(demo.transactions.map(\.id))
@@ -2084,8 +2087,9 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         let result = APIStatementImport(id: batch.id, budgetID: batch.budgetID, accountID: batch.accountID,
             status: batch.status, version: batch.version + 1, sourceFormat: batch.sourceFormat,
             candidateCount: batch.candidateCount, candidates: rows, createdAt: batch.createdAt)
+        try await synchronizeLocalAuthority(committingStatementImport: statementImportRecord(result))
+        published = true
         statementImportBatches[batch.id] = result
-        try await persistStatementImportIfNeeded(result)
         return result
     }
     func cancelStatementImport(accountID: String, batchID: String, expectedVersion: Int) async throws -> APIStatementImport { try requireActiveMembership()
@@ -2094,8 +2098,8 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         let cancelled = APIStatementImport(id: batch.id, budgetID: batch.budgetID, accountID: batch.accountID,
             status: "cancelled", version: batch.version + 1, sourceFormat: batch.sourceFormat,
             candidateCount: batch.candidateCount, candidates: batch.candidates, createdAt: batch.createdAt)
-        statementImportBatches[batch.id] = cancelled
         try await persistStatementImportIfNeeded(cancelled)
+        statementImportBatches[batch.id] = cancelled
         return cancelled
     }
 

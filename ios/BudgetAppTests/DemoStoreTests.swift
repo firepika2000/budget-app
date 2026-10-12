@@ -5392,6 +5392,34 @@ final class DemoStoreTests: XCTestCase {
             _ = try await finalSource.approveStatementImport(accountID: account.id, batchID: approvalBatch.id, approval: approval)
             XCTFail("Recovered approval must reject replay")
         } catch let APIClientError.server(status, _) { XCTAssertEqual(status, 409) }
+        let acceptedTransactions = finalSource.demo.transactions
+        let acceptedAccounts = finalSource.demo.accounts
+        try await database.execute(.init("CREATE TRIGGER reject_import_undo BEFORE INSERT ON statement_imports WHEN NEW.version=\(approved.version + 1) BEGIN SELECT RAISE(ABORT,'simulated undo publication failure'); END"))
+        do {
+            _ = try await finalSource.undoStatementImport(accountID: account.id, batchID: approvalBatch.id, expectedVersion: approved.version)
+            XCTFail("Failed undo marker publication must not retain reversals")
+        } catch { }
+        XCTAssertEqual(finalSource.demo.transactions, acceptedTransactions)
+        XCTAssertEqual(finalSource.demo.accounts, acceptedAccounts)
+        let failedUndoSnapshot = try await authority.snapshot(budgetID: identity.budgetID)
+        XCTAssertTrue(failedUndoSnapshot.transactions.allSatisfy { $0.status != "reversal" })
+        let unchangedReview = try await finalSource.statementImport(accountID: account.id, batchID: approvalBatch.id)
+        XCTAssertEqual(unchangedReview.version, approved.version)
+        XCTAssertNil(unchangedReview.candidates.first?.reversalTransactionID)
+        try await database.execute(.init("DROP TRIGGER reject_import_undo"))
+        let undone = try await finalSource.undoStatementImport(accountID: account.id, batchID: approvalBatch.id, expectedVersion: approved.version)
+        let undoRelaunch = DemoWorkspaceDataSource(fresh: true, budgetOverride: budget,
+            localAuthority: authority, localIdentity: identity)
+        let recoveredUndo = try await undoRelaunch.statementImport(accountID: account.id, batchID: approvalBatch.id)
+        XCTAssertEqual(recoveredUndo.version, undone.version)
+        XCTAssertEqual(recoveredUndo.candidates.first?.reversalTransactionID, undone.candidates.first?.reversalTransactionID)
+        XCTAssertNotNil(recoveredUndo.candidates.first?.reversalTransactionID)
+        XCTAssertEqual(undoRelaunch.demo.transactions.filter { $0.status == "reversal" }.count, 1)
+        XCTAssertEqual(undoRelaunch.demo.accounts.first { $0.id == account.id }?.balance, 0)
+        do {
+            _ = try await undoRelaunch.undoStatementImport(accountID: account.id, batchID: approvalBatch.id, expectedVersion: undone.version)
+            XCTFail("Recovered undo must reject another reversal")
+        } catch let APIClientError.server(status, _) { XCTAssertEqual(status, 409) }
         await database.close()
     }
 
