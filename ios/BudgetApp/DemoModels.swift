@@ -120,6 +120,7 @@ struct DemoTransaction: Identifiable, Hashable {
     var voidReason: String? = nil
     var reversalOfTransactionID: String? = nil
     var reversalTransactionID: String? = nil
+    var payeeID: String? = nil
 }
 
 struct DemoPayee: Identifiable, Hashable {
@@ -129,6 +130,33 @@ struct DemoPayee: Identifiable, Hashable {
     var defaultCategoryID: String? = nil
     var aliases: [String] = []
     var mergedIntoPayeeID: String? = nil
+}
+
+enum LocalPayeeIdentity {
+    enum ResolutionError: LocalizedError {
+        case invalid, unavailable
+        var errorDescription: String? { self == .invalid ? "Choose a valid active payee." : "This payee is archived or merged. Choose an active payee." }
+    }
+    static func displayName(_ name: String) -> String {
+        name.precomposedStringWithCompatibilityMapping.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+    }
+    static func key(_ name: String) -> String {
+        displayName(name).folding(options: .caseInsensitive, locale: Locale(identifier: "en_US_POSIX"))
+    }
+    static func resolve(id: String?, name: String, in payees: [DemoPayee]) throws -> DemoPayee? {
+        if let id {
+            guard let payee = payees.first(where: { $0.id == id && !$0.isArchived && $0.mergedIntoPayeeID == nil }) else { throw ResolutionError.invalid }
+            return payee
+        }
+        let name = displayName(name)
+        guard !name.isEmpty else { return nil }
+        guard name.count <= 150 else { throw ResolutionError.invalid }
+        let normalized = key(name)
+        let matches = payees.filter { key($0.name) == normalized || $0.aliases.contains { key($0) == normalized } }
+        if let active = matches.first(where: { !$0.isArchived && $0.mergedIntoPayeeID == nil }) { return active }
+        guard matches.isEmpty else { throw ResolutionError.unavailable }
+        return DemoPayee(id: UUID().uuidString, name: name)
+    }
 }
 
 struct DemoSchedule: Identifiable, Hashable {

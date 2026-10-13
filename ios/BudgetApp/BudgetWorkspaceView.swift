@@ -1690,7 +1690,9 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
             let splitBase = ids.isEmpty ? 0 : item.amount / Int64(ids.count)
             var remainder = ids.isEmpty ? 0 : item.amount % Int64(ids.count)
             let splits: [[String: Any]] = ids.count > 1 ? ids.enumerated().map { index, id in let extra: Int64 = remainder == 0 ? 0 : (remainder > 0 ? 1 : -1); if remainder != 0 { remainder -= extra }; return ["id": "\(item.id)-\(index)", "category_id": id, "amount_minor": item.categoryAmounts[id] ?? splitBase + extra, "memo": "", "financial_classification": item.splitFinancialClassifications[id] ?? NSNull()] } : []
-            return ["id": item.id, "account_id": item.accountID, "category_id": ids.count == 1 ? ids[0] : NSNull(), "payee_id": demo.payees.first(where: { $0.name == item.payee })?.id ?? NSNull(), "amount_minor": item.amount, "occurred_on": dateFormatter.string(from: item.date), "payee_name": item.payee, "memo": item.memo, "financial_classification": item.financialClassification ?? NSNull(), "is_cleared": item.cleared, "is_reconciled": item.reconciled, "created_by_user_id": item.member == .rey ? "demo-owner" : item.member.rawValue.lowercased(), "transfer_id": item.transferID.map { $0 as Any } ?? NSNull(), "scheduled_transaction_id": item.scheduledTransactionID.map { $0 as Any } ?? NSNull(), "flag": item.flag.map { $0 as Any } ?? NSNull(), "tags": item.tags, "attachment_metadata": item.attachmentName.map { [["name": $0]] } ?? [], "status": item.status, "void_reason": item.voidReason ?? NSNull(), "reversal_of_transaction_id": item.reversalOfTransactionID ?? NSNull(), "reversal_transaction_id": item.reversalTransactionID ?? NSNull(), "splits": splits]
+            let resolvedPayeeID = item.payeeID ?? demo.payees.first(where: { $0.name == item.payee })?.id
+            let payeeValue: Any = resolvedPayeeID.map { $0 as Any } ?? NSNull()
+            return ["id": item.id, "account_id": item.accountID, "category_id": ids.count == 1 ? ids[0] : NSNull(), "payee_id": payeeValue, "amount_minor": item.amount, "occurred_on": dateFormatter.string(from: item.date), "payee_name": item.payee, "memo": item.memo, "financial_classification": item.financialClassification ?? NSNull(), "is_cleared": item.cleared, "is_reconciled": item.reconciled, "created_by_user_id": item.member == .rey ? "demo-owner" : item.member.rawValue.lowercased(), "transfer_id": item.transferID.map { $0 as Any } ?? NSNull(), "scheduled_transaction_id": item.scheduledTransactionID.map { $0 as Any } ?? NSNull(), "flag": item.flag.map { $0 as Any } ?? NSNull(), "tags": item.tags, "attachment_metadata": item.attachmentName.map { [["name": $0]] } ?? [], "status": item.status, "void_reason": item.voidReason ?? NSNull(), "reversal_of_transaction_id": item.reversalOfTransactionID ?? NSNull(), "reversal_transaction_id": item.reversalTransactionID ?? NSNull(), "splits": splits]
         })
     }
 
@@ -2028,6 +2030,7 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
             try validateTransactionTarget(operation)
             return operation
         }
+        let previousPayeeIDs = Set(demo.payees.map(\.id))
         let rollback = demo.financialRollback()
         var published = false
         defer { if !published { rollback() } }
@@ -2058,6 +2061,7 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         try await synchronizeLocalAuthority(committingStatementImport: statementImportRecord(completed), requiringStatementImport: statementImportRecord(batch))
         published = true
         statementImportBatches[batch.id] = completed
+        appendNewPayeeHistory(previousIDs: previousPayeeIDs)
         return completed
     }
     func undoStatementImport(accountID: String, batchID: String, expectedVersion: Int) async throws -> APIStatementImport { try requireActiveMembership();
@@ -2517,11 +2521,14 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
     private func payeeObservations(includeArchived: Bool) throws -> [APIPayee] {
         guard actorCapabilities.contains("view_transactions") else { return [] }
         let scoped = actorHasResourceScope, categories = actorCategoryScope
-        let histories = Dictionary(grouping: resourceVisibleTransactions, by: \.payee)
+        let IDsByName = Dictionary(demo.payees.map { (LocalPayeeIdentity.key($0.name), $0.id) }, uniquingKeysWith: { first, _ in first })
+        let histories = Dictionary(grouping: resourceVisibleTransactions, by: {
+            $0.payeeID ?? IDsByName[LocalPayeeIdentity.key($0.payee)] ?? ""
+        })
         return try decode(demo.payees.filter { item in
-            item.mergedIntoPayeeID == nil && (includeArchived || !item.isArchived) && (!scoped || histories[item.name] != nil)
+            item.mergedIntoPayeeID == nil && (includeArchived || !item.isArchived) && (!scoped || histories[item.id] != nil)
         }.map { item in
-            let history = histories[item.name] ?? []
+            let history = histories[item.id] ?? []
             let defaultID = item.defaultCategoryID.flatMap { id in (categories.map { $0.contains(id) } ?? true) ? id : nil }
             return ["id": item.id, "household_id": budget.householdID, "display_name": item.name, "is_archived": item.isArchived,
                     "merged_into_payee_id": item.mergedIntoPayeeID.map { $0 as Any } ?? NSNull(), "default_category_id": defaultID ?? NSNull(),
@@ -2548,17 +2555,23 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         return APIPayeePage(items: start < end ? Array(values[start..<end]) : [], nextCursor: end < values.count ? String(end) : nil)
     }
     func createPayee(_ operation: CreatePayeeOperation) async throws { try requireActiveMembership();
-        let name = operation.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !demo.payees.contains(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) else { throw workspaceRepositoryError("A payee with this name already exists.") }
-        demo.payees.append(.init(id: DemoStore.payeeID(name), name: name, defaultCategoryID: operation.defaultCategoryID))
+        let name = LocalPayeeIdentity.displayName(operation.displayName)
+        guard !name.isEmpty, name.count <= 150 else { throw workspaceRepositoryError("Enter a payee name of at most 150 characters.") }
+        let key = LocalPayeeIdentity.key(name)
+        guard !demo.payees.contains(where: { LocalPayeeIdentity.key($0.name) == key || $0.aliases.contains { LocalPayeeIdentity.key($0) == key } }) else { throw workspaceRepositoryError("A payee with this name or alias already exists.") }
+        demo.payees.append(.init(id: UUID().uuidString, name: name, defaultCategoryID: operation.defaultCategoryID))
         if let after = demo.payees.last { appendDemoPayeeChange(before: nil, after: after, action: "created") }
     }
     func updatePayee(_ operation: UpdatePayeeOperation) async throws { try requireActiveMembership();
         guard let index = demo.payees.firstIndex(where: { $0.id == operation.payeeID }) else { throw workspaceRepositoryError("Payee not found.") }
+        let name = LocalPayeeIdentity.displayName(operation.displayName)
+        guard !name.isEmpty, name.count <= 150 else { throw workspaceRepositoryError("Enter a payee name of at most 150 characters.") }
+        let key = LocalPayeeIdentity.key(name)
+        guard !demo.payees.contains(where: { $0.id != operation.payeeID && (LocalPayeeIdentity.key($0.name) == key || $0.aliases.contains { LocalPayeeIdentity.key($0) == key }) }) else { throw workspaceRepositoryError("A payee with this name or alias already exists.") }
         let before = demo.payees[index]
-        let old = demo.payees[index].name; demo.payees[index].name = operation.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let old = demo.payees[index].name; demo.payees[index].name = name
         demo.payees[index].isArchived = operation.isArchived; demo.payees[index].defaultCategoryID = operation.defaultCategoryID
-        for transactionIndex in demo.transactions.indices where demo.transactions[transactionIndex].payee == old { demo.transactions[transactionIndex].payee = demo.payees[index].name }
+        for transactionIndex in demo.transactions.indices where demo.transactions[transactionIndex].payeeID == operation.payeeID || demo.transactions[transactionIndex].payee == old { demo.transactions[transactionIndex].payee = demo.payees[index].name }
         appendDemoPayeeChange(before: before, after: demo.payees[index], action: "updated")
     }
     func mergePayee(sourceID: String, destinationID: String) async throws { try requireActiveMembership();
@@ -2570,7 +2583,10 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
               demo.payees[destinationIndex].mergedIntoPayeeID == nil else { throw workspaceRepositoryError("Choose two active payees.") }
         let source = demo.payees[sourceIndex]
         let destination = demo.payees[destinationIndex]
-        for index in demo.transactions.indices where demo.transactions[index].payee == source.name { demo.transactions[index].payee = destination.name }
+        for index in demo.transactions.indices where demo.transactions[index].payeeID == sourceID || demo.transactions[index].payee == source.name {
+            demo.transactions[index].payee = destination.name
+            demo.transactions[index].payeeID = destinationID
+        }
         for index in demo.schedules.indices where demo.schedules[index].name == source.name { demo.schedules[index].name = destination.name }
         let sourceNames = [source.name] + source.aliases
         for name in sourceNames where !demo.payees[destinationIndex].aliases.contains(where: { $0.caseInsensitiveCompare(name) == .orderedSame }) {
@@ -2642,7 +2658,9 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
     func recordTransaction(_ operation: RecordTransactionOperation) async throws { try requireActiveMembership();
         try requireTransactionCapability("create_transaction")
         try validateTransactionTarget(operation)
+        let previousPayeeIDs = Set(demo.payees.map(\.id))
         guard demo.recordCanonicalTransaction(operation) else { throw workspaceRepositoryError(demo.errorMessage) }
+        appendNewPayeeHistory(previousIDs: previousPayeeIDs)
     }
     func updateTransaction(id: String, operation: RecordTransactionOperation) async throws { try requireActiveMembership();
         let original = try transactionCommandSource(id: id, capability: "edit_transaction", requiresCreator: true)
@@ -2650,7 +2668,15 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
             throw APIClientError.server(status: 409, message: "This transaction cannot be edited")
         }
         try validateTransactionTarget(operation)
+        let previousPayeeIDs = Set(demo.payees.map(\.id))
         guard demo.updateCanonicalTransaction(id: id, operation: operation) else { throw workspaceRepositoryError(demo.errorMessage) }
+        appendNewPayeeHistory(previousIDs: previousPayeeIDs)
+    }
+
+    private func appendNewPayeeHistory(previousIDs: Set<String>) {
+        for payee in demo.payees where !previousIDs.contains(payee.id) {
+            appendDemoPayeeChange(before: nil, after: payee, action: "created")
+        }
     }
 
     private func requireTransactionCapability(_ capability: String) throws {
@@ -2698,7 +2724,9 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         let splits = amounts.count > 1 ? amounts.keys.sorted().map { TransactionSplitOperation(categoryID: $0, amountMinor: amounts[$0]!, memo: "", financialClassification: source.splitFinancialClassifications[$0]) } : []
         let operation = RecordTransactionOperation(accountID: source.accountID, categoryID: singleCategory, amountMinor: source.amount, occurredOn: occurredOn, payeeName: source.payee, payeeID: demo.payees.first(where: { $0.name == source.payee })?.id, memo: source.memo, financialClassification: source.financialClassification, isCleared: false, splits: splits, flag: source.flag, tags: source.tags, attachmentMetadata: [])
         try validateTransactionTarget(operation)
+        let previousPayeeIDs = Set(demo.payees.map(\.id))
         guard demo.recordCanonicalTransaction(operation) else { throw workspaceRepositoryError(demo.errorMessage) }
+        appendNewPayeeHistory(previousIDs: previousPayeeIDs)
     }
     func voidTransaction(id: String, reason: String) async throws { try requireActiveMembership();
         let source = try transactionCommandSource(id: id, capability: "delete_transaction", requiresCreator: true)
@@ -2712,7 +2740,7 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         let splits = amounts.count > 1 ? try amounts.keys.sorted().map { TransactionSplitOperation(categoryID: $0, amountMinor: try reversed(amounts[$0]!), memo: "", financialClassification: source.splitFinancialClassifications[$0]) } : []
         let operation = RecordTransactionOperation(accountID: source.accountID, categoryID: amounts.count == 1 ? amounts.keys.first : nil, amountMinor: try reversed(source.amount), occurredOn: BudgetWorkspaceStore.dateString(now()), payeeName: "Reversal: \(source.payee)", memo: reason.isEmpty ? "Void reversal." : "Void reversal. \(reason)", financialClassification: source.financialClassification, isCleared: false, splits: splits, flag: source.flag, tags: source.tags, attachmentMetadata: [])
         let reversalID = UUID().uuidString
-        guard demo.recordCanonicalTransaction(operation, id: reversalID),
+        guard demo.recordCanonicalTransaction(operation, id: reversalID, resolvesPayee: false),
               let reversalIndex = demo.transactions.firstIndex(where: { $0.id == reversalID }),
               let originalIndex = demo.transactions.firstIndex(where: { $0.id == id }) else { throw workspaceRepositoryError(demo.errorMessage) }
         demo.transactions[reversalIndex].status = "reversal"
@@ -3530,6 +3558,7 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         try validateScheduleResources(accountID: item.accountID, destinationID: item.destinationAccountID, categoryID: item.categoryID)
         guard Calendar.current.startOfDay(for: due) <= Calendar.current.startOfDay(for: now()) else { throw workspaceRepositoryError("This scheduled transaction is not due yet") }
         let before = Set(demo.transactions.map(\.id))
+        let previousPayeeIDs = Set(demo.payees.map(\.id))
         if let destination = item.destinationAccountID { guard demo.transfer(amount: item.amount, from: item.accountID, to: destination, memo: item.memo, cleared: false, date: due) else { throw workspaceRepositoryError(demo.errorMessage) } }
         else {
             let operation = RecordTransactionOperation(accountID: item.accountID, categoryID: item.categoryID, amountMinor: item.amount, occurredOn: item.nextDate, payeeName: item.name, memo: item.memo, financialClassification: item.financialClassification, isCleared: false, splits: [], flag: nil, tags: [], attachmentMetadata: [])
@@ -3551,6 +3580,7 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         demo.schedules[index].remainingOccurrences = remaining; demo.schedules[index].lastRealizedOn = item.nextDate; demo.schedules[index].isActive = next != nil; if let next { demo.schedules[index].nextDate = BudgetWorkspaceStore.dateString(next) }
         appendDemoScheduleRevision(scheduleID: id, action: "realized", before: beforeSnapshot, after: scheduleSnapshot(demo.schedules[index]), transactionIDs: transactionIDs)
         try await synchronizeLocalAuthority()
+        appendNewPayeeHistory(previousIDs: previousPayeeIDs)
         return ScheduledRealizationObservation(scheduleID: id, transactionIDs: transactionIDs, realizedOn: item.nextDate, nextDate: next.map(BudgetWorkspaceStore.dateString), isActive: next != nil, lastRealizedOn: item.nextDate)
     }
     func scheduleHistory(limit: Int, offset: Int) async throws -> [APIScheduledTransactionRevision] {

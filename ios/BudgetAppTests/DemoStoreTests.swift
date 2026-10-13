@@ -5106,6 +5106,56 @@ final class DemoStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testCanonicalLocalTransactionCreatesSearchablePayeeIdentity() async throws {
+        let source = DemoWorkspaceDataSource(fresh: true)
+        try await source.createAccount(.init(name: "Checking", kind: "checking", isOnBudget: true, openingBalanceMinor: 0))
+        let account = try XCTUnwrap(source.demo.accounts.first { $0.kind == .checking })
+        let name = "Fresh local merchant"
+        let initial = try await source.searchPayees(query: name, includeArchived: true, limit: 20, cursor: nil)
+        XCTAssertTrue(initial.items.isEmpty)
+        try await source.recordTransaction(.init(accountID: account.id, categoryID: nil, amountMinor: 123,
+            occurredOn: "2026-09-15", payeeName: name, memo: "Identity regression", isCleared: false,
+            splits: [], flag: nil, tags: [], attachmentMetadata: []))
+        let page = try await source.searchPayees(query: name, includeArchived: false, limit: 20, cursor: nil)
+        XCTAssertEqual(page.items.count, 1, "A posted merchant must exist in the canonical payee registry")
+        let payee = try XCTUnwrap(page.items.first)
+        let transactions = try await source.browseTransactions(query: .init(payeeIDs: [payee.id], limit: 20))
+        XCTAssertEqual(transactions.items.filter { $0.payeeName == name }.count, 1)
+        XCTAssertEqual(transactions.items.first?.payeeID, payee.id)
+        try await source.createPayeeAlias(payeeID: payee.id, displayName: "BANK MERCHANT")
+        try await source.recordTransaction(.init(accountID: account.id, categoryID: nil, amountMinor: 77,
+            occurredOn: "2026-09-15", payeeName: " bank\tmerchant ", memo: "Alias", isCleared: false,
+            splits: [], flag: nil, tags: [], attachmentMetadata: []))
+        let aliasPage = try await source.searchPayees(query: "BANK MERCHANT", includeArchived: false, limit: 20, cursor: nil)
+        XCTAssertEqual(aliasPage.items.map(\.id), [payee.id])
+        XCTAssertEqual(aliasPage.items.first?.transactionCount, 2)
+        let history = try await source.payeeHistory(payeeID: payee.id, limit: 20, offset: 0)
+        XCTAssertTrue(history.contains { $0.action == "created" })
+        let identity = LocalAuthorityIdentity(householdID: "h", householdName: "Household", ownerUserID: "owner",
+            ownerDisplayName: "Owner", budgetID: "b", budgetName: "Budget", currencyCode: "USD")
+        let snapshot = try source.demo.localAuthoritySnapshot(identity: identity)
+        XCTAssertTrue(snapshot.transactions.allSatisfy { $0.payeeID == payee.id })
+        let reopened = DemoStore(fresh: true)
+        try reopened.loadLocalAuthority(snapshot)
+        XCTAssertEqual(reopened.payees.map(\.id), [payee.id])
+        XCTAssertTrue(reopened.transactions.allSatisfy { $0.payeeID == payee.id })
+        try await source.updatePayee(.init(payeeID: payee.id, displayName: "Renamed merchant", isArchived: false, defaultCategoryID: nil))
+        let renamedRows = try await source.browseTransactions(query: .init(payeeIDs: [payee.id], limit: 20))
+        XCTAssertEqual(renamedRows.items.count, 2)
+        XCTAssertTrue(renamedRows.items.allSatisfy { $0.payeeID == payee.id && $0.payeeName == "Renamed merchant" })
+        try await source.updatePayee(.init(payeeID: payee.id, displayName: "Renamed merchant", isArchived: true, defaultCategoryID: nil))
+        let beforeBalance = source.demo.accounts.first?.balance
+        do {
+            try await source.recordTransaction(.init(accountID: account.id, categoryID: nil, amountMinor: 100,
+                occurredOn: "2026-09-15", payeeName: "Renamed merchant", memo: "", isCleared: false,
+                splits: [], flag: nil, tags: [], attachmentMetadata: []))
+            XCTFail("Archived identity must not be recreated by free-text entry")
+        } catch { }
+        XCTAssertEqual(source.demo.accounts.first?.balance, beforeBalance)
+        XCTAssertEqual(source.demo.payees.count, 1)
+    }
+
+    @MainActor
     func testLocalStatementExplicitRefundPreservesCategoryAndIncomeSemantics() async throws {
         let source = DemoWorkspaceDataSource()
         let account = try XCTUnwrap(source.demo.accounts.first { $0.kind == .checking })

@@ -448,13 +448,15 @@ final class DemoStore: ObservableObject {
 
     private struct FinancialCheckpoint {
         let accounts: [DemoAccount]; let categories: [DemoCategory]; let transactions: [DemoTransaction]
+        let payees: [DemoPayee]
         let reserve: [String: [String: Int64]]; let unassigned: Int64
     }
     private func checkpoint() -> FinancialCheckpoint {
-        .init(accounts: accounts, categories: categories, transactions: transactions, reserve: reserveAttribution, unassigned: unassignedMinor)
+        .init(accounts: accounts, categories: categories, transactions: transactions, payees: payees, reserve: reserveAttribution, unassigned: unassignedMinor)
     }
     private func restore(_ value: FinancialCheckpoint) {
         accounts = value.accounts; categories = value.categories; transactions = value.transactions
+        payees = value.payees
         reserveAttribution = value.reserve; unassignedMinor = value.unassigned
     }
 
@@ -724,7 +726,7 @@ final class DemoStore: ObservableObject {
         guard difference == 0 || createAdjustment else { return failMessage("Cleared balance does not match statement. Confirm an adjustment before continuing.") }
         var adjustmentTransactionID: String?
         if difference != 0 {
-            guard recordCanonicalTransaction(.init(accountID: accountID, categoryID: nil, amountMinor: difference, occurredOn: cutoff.iso, payeeName: "Reconciliation adjustment", memo: reason.trimmingCharacters(in: .whitespacesAndNewlines), isCleared: true, splits: [], flag: nil, tags: [], attachmentMetadata: [])) else { return false }
+            guard recordCanonicalTransaction(.init(accountID: accountID, categoryID: nil, amountMinor: difference, occurredOn: cutoff.iso, payeeName: "Reconciliation adjustment", memo: reason.trimmingCharacters(in: .whitespacesAndNewlines), isCleared: true, splits: [], flag: nil, tags: [], attachmentMetadata: []), resolvesPayee: false) else { return false }
             adjustmentTransactionID = transactions[0].id
             transactions[0].reconciled = true
         }
@@ -924,7 +926,7 @@ final class DemoStore: ObservableObject {
     }
 
     @discardableResult
-    func recordCanonicalTransaction(_ operation: RecordTransactionOperation, id: String = UUID().uuidString) -> Bool {
+    func recordCanonicalTransaction(_ operation: RecordTransactionOperation, id: String = UUID().uuidString, resolvesPayee: Bool = true) -> Bool {
         guard operation.amountMinor != 0,
               let account = accounts.first(where: { $0.id == operation.accountID }) else { return fail(.invalidAmount) }
         let occurredOn = BudgetWorkspaceStore.parseDate(operation.occurredOn)
@@ -935,15 +937,18 @@ final class DemoStore: ObservableObject {
         guard (try? Money.sumMinorUnits(amounts.values)) == (amounts.isEmpty ? 0 : operation.amountMinor),
               amounts.keys.allSatisfy({ id in categories.contains { $0.id == id } }),
               account.isOnBudget || amounts.isEmpty else { return fail(.invalidAmount) }
+        let payee: DemoPayee?
+        do { payee = resolvesPayee ? try LocalPayeeIdentity.resolve(id: operation.payeeID, name: operation.payeeName, in: payees) : nil }
+        catch { return failMessage(error.localizedDescription) }
         let transaction = DemoTransaction(
-            id: id, date: occurredOn, payee: operation.payeeName, memo: operation.memo,
+            id: id, date: occurredOn, payee: resolvesPayee ? (payee?.name ?? "") : operation.payeeName, memo: operation.memo,
             accountID: operation.accountID, categoryIDs: operation.categoryID.map { [$0] } ?? operation.splits.map(\.categoryID), categoryAmounts: amounts,
             amount: operation.amountMinor, member: persona, cleared: operation.isCleared, flag: operation.flag,
             attachmentName: operation.attachmentMetadata.first?["name"], tags: operation.tags,
             financialClassification: operation.financialClassification,
             splitFinancialClassifications: Dictionary(uniqueKeysWithValues: operation.splits.compactMap { split in
                 split.financialClassification.map { (split.categoryID, $0) }
-            })
+            }), payeeID: payee?.id
         )
         let before = checkpoint()
         do {
@@ -951,6 +956,7 @@ final class DemoStore: ObservableObject {
             transactions.insert(transaction, at: 0)
             publishPlanning(try planningSnapshot(month: currentPlanningMonth))
         } catch { restore(before); return failMessage(error.localizedDescription) }
+        if let payee, !payees.contains(where: { $0.id == payee.id }) { payees.append(payee) }
         errorMessage = nil
         return true
     }
@@ -970,6 +976,9 @@ final class DemoStore: ObservableObject {
             && old.financialClassification == operation.financialClassification
             && old.splitFinancialClassifications == classifications
         if metadataOnly {
+            let payee: DemoPayee?
+            do { payee = try LocalPayeeIdentity.resolve(id: operation.payeeID, name: operation.payeeName, in: payees) }
+            catch { return failMessage(error.localizedDescription) }
             guard Set(operation.splits.map(\.categoryID)).count == operation.splits.count,
                   let accountIndex = accounts.firstIndex(where: { $0.id == old.accountID }) else { return fail(.invalidAmount) }
             if old.cleared != operation.isCleared {
@@ -978,12 +987,14 @@ final class DemoStore: ObservableObject {
                 guard !result.overflow else { return fail(.invalidAmount) }
                 accounts[accountIndex].cleared = result.partialValue
             }
-            transactions[index].payee = operation.payeeName
+            transactions[index].payee = payee?.name ?? ""
+            transactions[index].payeeID = payee?.id
             transactions[index].memo = operation.memo
             transactions[index].cleared = operation.isCleared
             transactions[index].flag = operation.flag
             transactions[index].tags = operation.tags
             transactions[index].attachmentName = operation.attachmentMetadata.first?["name"]
+            if let payee, !payees.contains(where: { $0.id == payee.id }) { payees.append(payee) }
             errorMessage = nil
             return true
         }
@@ -1282,6 +1293,7 @@ extension DemoStore {
             let date = BudgetWorkspaceStore.parseDate(item.occurredOn)
             let categoryAmounts = Dictionary(uniqueKeysWithValues: item.splits.map { ($0.categoryID, $0.amountMinor) })
             var transaction = DemoTransaction(id: item.id, date: date, payee: item.payeeName, memo: item.memo, accountID: item.accountID, categoryIDs: item.splits.map(\.categoryID), categoryAmounts: categoryAmounts, amount: item.amountMinor, member: .rey, cleared: item.isCleared, flag: item.flag, attachmentName: value.attachments.first(where: { $0.transactionID == item.id })?.filename, tags: item.tags, financialClassification: item.financialClassification, splitFinancialClassifications: Dictionary(uniqueKeysWithValues: item.splits.compactMap { split in split.financialClassification.map { (split.categoryID, $0) } }), reconciled: item.isReconciled, transferID: item.transferID, scheduledTransactionID: item.scheduledTransactionID, status: item.status, voidReason: item.voidReason, reversalOfTransactionID: item.reversalOfTransactionID, reversalTransactionID: item.reversalTransactionID)
+            transaction.payeeID = item.payeeID
             if transaction.payee.isEmpty, let payeeID = item.payeeID {
                 transaction.payee = payees.first(where: { $0.id == payeeID })?.name ?? ""
             }
@@ -1329,14 +1341,14 @@ extension DemoStore {
             LocalCategoryRecord(id: item.id, budgetID: identity.budgetID, groupID: groupIDs[item.group]!, name: item.name, iconName: item.icon, note: item.note, delegatedUserID: nil, isArchived: item.isHidden, sortOrder: Int64(index), isFavorite: item.pinned, favoriteSortOrder: Int64(index), isEssential: item.isEssential, isEmergencyFund: item.isEmergencyFund)
         }
         let payeeRows = payees.map { item in
-            LocalPayeeRecord(id: item.id, budgetID: identity.budgetID, name: item.name, normalizedName: item.name.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current).lowercased(), defaultCategoryID: item.defaultCategoryID, isArchived: item.isArchived, mergedIntoPayeeID: item.mergedIntoPayeeID)
+            LocalPayeeRecord(id: item.id, budgetID: identity.budgetID, name: item.name, normalizedName: LocalPayeeIdentity.key(item.name), defaultCategoryID: item.defaultCategoryID, isArchived: item.isArchived, mergedIntoPayeeID: item.mergedIntoPayeeID)
         }
         let aliases = payees.flatMap { payee in payee.aliases.enumerated().map { offset, name in
-            LocalPayeeAliasRecord(id: "\(payee.id)-alias-\(offset)", payeeID: payee.id, displayName: name, normalizedName: name.lowercased())
+            LocalPayeeAliasRecord(id: "\(payee.id)-alias-\(offset)", payeeID: payee.id, displayName: name, normalizedName: LocalPayeeIdentity.key(name))
         } }
         let transactionRows = transactions.map { item in
             let amounts = canonicalCategoryAmounts(for: item)
-            return LocalTransactionRecord(id: item.id, budgetID: identity.budgetID, accountID: item.accountID, payeeID: payees.first(where: { $0.name == item.payee })?.id, payeeName: item.payee, amountMinor: item.amount, occurredOn: BudgetWorkspaceStore.dateString(item.date), memo: item.memo, isCleared: item.cleared, isReconciled: item.reconciled, status: item.status, transferID: item.transferID, scheduledTransactionID: item.scheduledTransactionID, flag: item.flag, tags: item.tags, financialClassification: item.financialClassification, voidReason: item.voidReason, reversalOfTransactionID: item.reversalOfTransactionID, reversalTransactionID: item.reversalTransactionID, createdByUserID: identity.ownerUserID, createdAt: stamp, splits: amounts.keys.sorted().map { LocalTransactionSplitRecord(id: "\(item.id)-\($0)", categoryID: $0, amountMinor: amounts[$0]!, financialClassification: item.splitFinancialClassifications[$0]) })
+            return LocalTransactionRecord(id: item.id, budgetID: identity.budgetID, accountID: item.accountID, payeeID: item.payeeID ?? payees.first(where: { $0.name == item.payee })?.id, payeeName: item.payee, amountMinor: item.amount, occurredOn: BudgetWorkspaceStore.dateString(item.date), memo: item.memo, isCleared: item.cleared, isReconciled: item.reconciled, status: item.status, transferID: item.transferID, scheduledTransactionID: item.scheduledTransactionID, flag: item.flag, tags: item.tags, financialClassification: item.financialClassification, voidReason: item.voidReason, reversalOfTransactionID: item.reversalOfTransactionID, reversalTransactionID: item.reversalTransactionID, createdByUserID: identity.ownerUserID, createdAt: stamp, splits: amounts.keys.sorted().map { LocalTransactionSplitRecord(id: "\(item.id)-\($0)", categoryID: $0, amountMinor: amounts[$0]!, financialClassification: item.splitFinancialClassifications[$0]) })
         }
         let allocationRows = allocationEvents.map { item in
             LocalAllocationRecord(id: item.id, operationID: item.operationID, budgetID: identity.budgetID, sourceCategoryID: item.sourceCategoryID, categoryID: item.destinationCategoryID, amountMinor: item.amountMinor, occurredOn: item.occurredOn, kind: item.kind, actorUserID: identity.ownerUserID, note: item.note, createdAt: stamp)
