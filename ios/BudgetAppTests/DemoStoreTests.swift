@@ -5106,6 +5106,38 @@ final class DemoStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testLocalStatementExplicitRefundPreservesCategoryAndIncomeSemantics() async throws {
+        let source = DemoWorkspaceDataSource()
+        let account = try XCTUnwrap(source.demo.accounts.first { $0.kind == .checking })
+        let category = try XCTUnwrap(source.demo.categories.first)
+        let beforeBalance = account.balance, beforeRTA = source.demo.unassignedMinor
+        let beforeActivity = category.activity, beforeAvailable = category.available
+        let batch = try await source.stageStatementImport(accountID: account.id,
+            data: Data("Date,Amount,Payee\n2026-09-15,5.00,Merchant refund\n2026-09-15,7.50,New income\n".utf8),
+            mapping: .init(sourceFormat: "csv", currencyCode: "USD", dateColumn: "Date",
+                amountColumn: "Amount", payeeColumn: "Payee", dateOrder: "ymd"))
+        XCTAssertTrue(batch.candidates.allSatisfy { $0.suggestedCategoryID == nil }, "Positive amounts must not be automatically classified as refunds")
+        let approved = try await source.approveStatementImport(accountID: account.id, batchID: batch.id,
+            approval: .init(expectedVersion: batch.version, items: [
+                .init(sourceRow: 2, action: "post", categoryID: category.id),
+                .init(sourceRow: 3, action: "post"),
+            ]))
+        let refund = try XCTUnwrap(source.demo.transactions.first { $0.id == approved.candidates[0].postedTransactionID })
+        let income = try XCTUnwrap(source.demo.transactions.first { $0.id == approved.candidates[1].postedTransactionID })
+        XCTAssertEqual(refund.amount, 500)
+        XCTAssertEqual(refund.categoryIDs, [category.id])
+        XCTAssertEqual(income.amount, 750)
+        XCTAssertTrue(income.categoryIDs.isEmpty)
+        XCTAssertEqual(source.demo.accounts.first { $0.id == account.id }?.balance, beforeBalance + 1250)
+        XCTAssertEqual(source.demo.categories.first { $0.id == category.id }?.activity, beforeActivity + 500)
+        XCTAssertEqual(source.demo.categories.first { $0.id == category.id }?.available, beforeAvailable + 500)
+        XCTAssertEqual(source.demo.unassignedMinor, beforeRTA + 750)
+        let view = try String(contentsOf: URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("BudgetApp/BudgetWorkspaceView.swift"))
+        XCTAssertTrue(view.contains("Picker(row.amountMinor > 0 ? \"Income or Refund\" : \"Category\""))
+        XCTAssertTrue(view.contains("if reviewable && postRows.contains(row.sourceRow) && account.isOnBudget"))
+    }
+
+    @MainActor
     func testLocalStatementLaterPostingFailureRollsBackEarlierRows() async throws {
         let source = DemoWorkspaceDataSource(fresh: true)
         try await source.createAccount(.init(name: "Checking", kind: "checking", isOnBudget: true, openingBalanceMinor: 0))

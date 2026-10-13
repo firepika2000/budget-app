@@ -2022,7 +2022,7 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         let operations = try batch.candidates.compactMap { row -> RecordTransactionOperation? in
             guard let choice = choices[row.sourceRow] else { throw workspaceRepositoryError("Review every imported row before posting.") }
             guard choice.action == "post" else { return nil }
-            let operation = RecordTransactionOperation(accountID: accountID, categoryID: row.amountMinor < 0 ? choice.categoryID : nil,
+            let operation = RecordTransactionOperation(accountID: accountID, categoryID: choice.categoryID,
                 amountMinor: row.amountMinor, occurredOn: row.occurredOn, payeeName: row.payee, memo: row.memo,
                 isCleared: true, splits: [], flag: nil, tags: [], attachmentMetadata: [])
             try validateTransactionTarget(operation)
@@ -12662,10 +12662,15 @@ private struct StatementImportFlowView: View {
                     }
                 }
                 .disabled(!reviewable)
-                if reviewable && postRows.contains(row.sourceRow) && row.amountMinor < 0 {
-                    Picker("Category", selection: Binding(get: { categoryByRow[row.sourceRow] ?? "" }, set: { categoryByRow[row.sourceRow] = $0 })) {
-                        Text("Uncategorized").tag("")
+                if reviewable && postRows.contains(row.sourceRow) && account.isOnBudget {
+                    Picker(row.amountMinor > 0 ? "Income or Refund" : "Category", selection: Binding(get: { categoryByRow[row.sourceRow] ?? "" }, set: { categoryByRow[row.sourceRow] = $0 })) {
+                        Text(row.amountMinor > 0 ? "Income — Available to Assign" : "Uncategorized").tag("")
                         ForEach(workspace.categories.filter { !$0.isArchived }) { Text(workspace.categoryDisplayName($0)).tag($0.id) }
+                    }
+                    .accessibilityIdentifier("statement-category-\(row.sourceRow)")
+                    if row.amountMinor > 0 {
+                        Text("For a refund, choose the original spending category. Leave income selected for new money to assign.")
+                            .font(.footnote).foregroundStyle(.secondary)
                     }
                 }
                 if !row.exactTransactionIDs.isEmpty || !row.possibleTransactionIDs.isEmpty || row.duplicateSourceRow != nil {

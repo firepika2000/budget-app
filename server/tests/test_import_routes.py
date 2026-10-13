@@ -49,6 +49,28 @@ def test_review_excludes_impossible_amount_matches_before_history_limit(client, 
         assert db.query(ImportBatch).filter_by(budget_id=budget["id"]).count() == 1
 
 
+def test_statement_approval_distinguishes_explicit_refund_from_income(client, owner_token, session_factory):
+    budget = create_budget(client, owner_token, session_factory)
+    account, category = create_budget_structure(client, owner_token, budget["id"])
+    staged = _stage(client, owner_token, budget["id"], account["id"],
+                    b"Date,Amount,Payee,Memo\n2026-09-15,5.00,Merchant refund,returned purchase\n2026-09-15,7.50,New income,deposit\n")
+    assert staged.status_code == 201, staged.text
+    batch = staged.json()
+    assert all(row["suggested_category_id"] is None for row in batch["candidates"])
+    response = client.post(
+        f"/api/v1/budgets/{budget['id']}/accounts/{account['id']}/statement-imports/{batch['id']}/approve",
+        headers=auth(owner_token), json={"expected_version": batch["version"], "items": [
+            {"source_row": 2, "action": "post", "category_id": category["id"]},
+            {"source_row": 3, "action": "post"},
+        ]})
+    assert response.status_code == 200, response.text
+    with session_factory() as db:
+        rows = {row.payee_name: row for row in db.query(Transaction).filter_by(budget_id=budget["id"])}
+        assert (rows["Merchant refund"].amount_minor, rows["Merchant refund"].category_id) == (500, category["id"])
+        assert (rows["New income"].amount_minor, rows["New income"].category_id) == (750, None)
+    assert all(row["posted_transaction_id"] for row in response.json()["candidates"])
+
+
 def test_csv_import_is_money_neutral_and_returns_duplicate_review(client, owner_token, session_factory):
     budget = create_budget(client, owner_token, session_factory)
     account, category = create_budget_structure(client, owner_token, budget["id"])
