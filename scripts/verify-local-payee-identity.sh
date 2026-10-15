@@ -33,6 +33,10 @@ let letters = try LocalPayeeIdentity.resolve(id: nil, name: "AB", in: [punctuati
 precondition(punctuation.id != letters.id)
 let blank = try LocalPayeeIdentity.resolve(id: nil, name: "\n\t", in: [])
 precondition(blank == nil)
+let planned = try LocalPayeeIdentity.resolve(id: nil, name: "Future merchant", in: [], create: false)
+precondition(planned == nil)
+let plannedAlias = try LocalPayeeIdentity.resolve(id: nil, name: "bank coffee", in: [existing], create: false)
+precondition(plannedAlias?.id == "stable")
 for invalid in [DemoPayee(id: "old", name: "Old Merchant", isArchived: true),
                 DemoPayee(id: "merged", name: "Old Merchant", mergedIntoPayeeID: "stable")] {
     do { _ = try LocalPayeeIdentity.resolve(id: nil, name: "old merchant", in: [invalid]); fatalError("Unavailable payee resurrected") }

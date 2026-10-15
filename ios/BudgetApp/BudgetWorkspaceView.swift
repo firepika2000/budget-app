@@ -2572,6 +2572,7 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         let old = demo.payees[index].name; demo.payees[index].name = name
         demo.payees[index].isArchived = operation.isArchived; demo.payees[index].defaultCategoryID = operation.defaultCategoryID
         for transactionIndex in demo.transactions.indices where demo.transactions[transactionIndex].payeeID == operation.payeeID || demo.transactions[transactionIndex].payee == old { demo.transactions[transactionIndex].payee = demo.payees[index].name }
+        for scheduleIndex in demo.schedules.indices where demo.schedules[scheduleIndex].destinationAccountID == nil && demo.schedules[scheduleIndex].name == old { demo.schedules[scheduleIndex].name = name }
         appendDemoPayeeChange(before: before, after: demo.payees[index], action: "updated")
     }
     func mergePayee(sourceID: String, destinationID: String) async throws { try requireActiveMembership();
@@ -3529,17 +3530,23 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
             throw APIClientError.server(status: 422, message: "A new occurrence limit must be at least one")
         }
         try validateScheduleResources(accountID: operation.accountID, destinationID: operation.destinationAccountID, categoryID: operation.categoryID)
+        let payee = operation.destinationAccountID == nil ? try LocalPayeeIdentity.resolve(id: operation.payeeID, name: operation.name, in: demo.payees, create: false) : nil
+        let name = operation.destinationAccountID == nil ? (payee?.name ?? LocalPayeeIdentity.displayName(operation.name)) : operation.name
         let id = UUID().uuidString
         demo.schedules.append(.init(id: id, accountID: operation.accountID, destinationAccountID: operation.destinationAccountID, categoryID: operation.categoryID, name: operation.name, amount: operation.amountMinor, nextDate: operation.nextDate, recurrenceUnit: operation.recurrenceUnit, intervalCount: operation.intervalCount, endDate: operation.endDate, remainingOccurrences: operation.remainingOccurrences, memo: operation.memo, financialClassification: operation.financialClassification, isActive: operation.isActive))
-        appendDemoScheduleRevision(scheduleID: id, action: "created", before: nil, after: scheduleSnapshot(operation))
+        demo.schedules[demo.schedules.count - 1].name = name
+        appendDemoScheduleRevision(scheduleID: id, action: "created", before: nil, after: scheduleSnapshot(demo.schedules[demo.schedules.count - 1]))
         try await synchronizeLocalAuthority()
     }
     func updateSchedule(id: String, operation: ScheduleOperation) async throws { try requireActiveMembership();
         let index = try scheduleCommandSource(id: id, capability: "manage_planning")
         try validateScheduleShape(operation)
         try validateScheduleResources(accountID: operation.accountID, destinationID: operation.destinationAccountID, categoryID: operation.categoryID)
+        let payee = operation.destinationAccountID == nil ? try LocalPayeeIdentity.resolve(id: operation.payeeID, name: operation.name, in: demo.payees, create: false) : nil
+        let name = operation.destinationAccountID == nil ? (payee?.name ?? LocalPayeeIdentity.displayName(operation.name)) : operation.name
         let before = scheduleSnapshot(demo.schedules[index])
         demo.schedules[index].accountID = operation.accountID; demo.schedules[index].destinationAccountID = operation.destinationAccountID; demo.schedules[index].categoryID = operation.categoryID; demo.schedules[index].name = operation.name; demo.schedules[index].amount = operation.amountMinor; demo.schedules[index].nextDate = operation.nextDate; demo.schedules[index].recurrenceUnit = operation.recurrenceUnit; demo.schedules[index].intervalCount = operation.intervalCount; demo.schedules[index].endDate = operation.endDate; demo.schedules[index].remainingOccurrences = operation.remainingOccurrences; demo.schedules[index].memo = operation.memo; demo.schedules[index].financialClassification = operation.financialClassification; demo.schedules[index].isActive = operation.isActive
+        demo.schedules[index].name = name
         let after = scheduleSnapshot(demo.schedules[index])
         if before != after { appendDemoScheduleRevision(scheduleID: id, action: before.isActive == after.isActive ? "updated" : after.isActive ? "resumed" : "paused", before: before, after: after) }
         try await synchronizeLocalAuthority()

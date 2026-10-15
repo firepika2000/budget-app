@@ -5106,6 +5106,38 @@ final class DemoStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testLocalSchedulePayeeResolutionIsNonCreatingUntilRealization() async throws {
+        var clock = BudgetWorkspaceStore.parseDate("2026-09-14")
+        let source = DemoWorkspaceDataSource(fresh: true, now: { clock })
+        try await source.createAccount(.init(name: "Checking", kind: "checking", isOnBudget: true, openingBalanceMinor: 0))
+        let account = try XCTUnwrap(source.demo.accounts.first)
+        try await source.createPayee(.init(displayName: "Known merchant", defaultCategoryID: nil))
+        let payee = try XCTUnwrap(source.demo.payees.first)
+        try await source.createPayeeAlias(payeeID: payee.id, displayName: "BANK NAME")
+        let beforeAccounts = source.demo.accounts, beforeTransactions = source.demo.transactions
+        try await source.createSchedule(.init(accountID: account.id, name: " bank name ", amountMinor: 100,
+            nextDate: "2026-09-15", recurrenceUnit: "once", intervalCount: 1, memo: "", isActive: true))
+        XCTAssertEqual(source.demo.schedules.first?.name, "Known merchant")
+        try await source.createSchedule(.init(accountID: account.id, name: "Future merchant", amountMinor: 200,
+            nextDate: "2026-09-15", recurrenceUnit: "once", intervalCount: 1, memo: "", isActive: true))
+        XCTAssertEqual(source.demo.payees.count, 1, "Planning must not create a new payee")
+        XCTAssertEqual(source.demo.accounts, beforeAccounts)
+        XCTAssertEqual(source.demo.transactions, beforeTransactions)
+        XCTAssertEqual(source.demo.unassignedMinor, 0)
+        try await source.updatePayee(.init(payeeID: payee.id, displayName: "Renamed merchant", isArchived: false, defaultCategoryID: nil))
+        XCTAssertEqual(source.demo.schedules.first?.name, "Renamed merchant")
+        let future = try XCTUnwrap(source.demo.schedules.first { $0.name == "Future merchant" })
+        clock = BudgetWorkspaceStore.parseDate("2026-09-15")
+        _ = try await source.realizeSchedule(id: future.id)
+        let posted = try XCTUnwrap(source.demo.transactions.first)
+        let createdPayee = try XCTUnwrap(source.demo.payees.first { $0.name == "Future merchant" })
+        XCTAssertEqual(posted.payeeID, createdPayee.id)
+        XCTAssertEqual(source.demo.accounts.first?.balance, 200)
+        XCTAssertEqual(source.demo.unassignedMinor, 200)
+        XCTAssertFalse(source.demo.schedules.first { $0.id == future.id }?.isActive ?? true)
+    }
+
+    @MainActor
     func testCanonicalLocalTransactionCreatesSearchablePayeeIdentity() async throws {
         let source = DemoWorkspaceDataSource(fresh: true)
         try await source.createAccount(.init(name: "Checking", kind: "checking", isOnBudget: true, openingBalanceMinor: 0))

@@ -143,7 +143,7 @@ enum LocalPayeeIdentity {
     static func key(_ name: String) -> String {
         displayName(name).folding(options: .caseInsensitive, locale: Locale(identifier: "en_US_POSIX"))
     }
-    static func resolve(id: String?, name: String, in payees: [DemoPayee]) throws -> DemoPayee? {
+    static func resolve(id: String?, name: String, in payees: [DemoPayee], create: Bool = true) throws -> DemoPayee? {
         if let id {
             guard let payee = payees.first(where: { $0.id == id && !$0.isArchived && $0.mergedIntoPayeeID == nil }) else { throw ResolutionError.invalid }
             return payee
@@ -155,6 +155,7 @@ enum LocalPayeeIdentity {
         let matches = payees.filter { key($0.name) == normalized || $0.aliases.contains { key($0) == normalized } }
         if let active = matches.first(where: { !$0.isArchived && $0.mergedIntoPayeeID == nil }) { return active }
         guard matches.isEmpty else { throw ResolutionError.unavailable }
+        guard create else { return nil }
         return DemoPayee(id: UUID().uuidString, name: name)
     }
 }
