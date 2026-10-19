@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import CryptoKit
 
 enum DemoPersona: String, CaseIterable, Identifiable {
     case rey = "Rey"
@@ -130,9 +131,18 @@ struct DemoPayee: Identifiable, Hashable {
     var defaultCategoryID: String? = nil
     var aliases: [String] = []
     var mergedIntoPayeeID: String? = nil
+    var aliasIDs: [String: String] = [:]
 }
 
 enum LocalPayeeIdentity {
+    static func aliasID(_ name: String, for payee: DemoPayee) -> String {
+        if let stored = payee.aliasIDs[name] { return stored }
+        // Stable UUIDv8 fallback for seed/legacy in-memory aliases; persisted IDs always win.
+        var bytes = Array(SHA256.hash(data: Data((payee.id + "\u{0}" + key(name)).utf8)).prefix(16))
+        bytes[6] = (bytes[6] & 0x0f) | 0x80
+        bytes[8] = (bytes[8] & 0x3f) | 0x80
+        return bytes.enumerated().map { ([4, 6, 8, 10].contains($0.offset) ? "-" : "") + String(format: "%02x", $0.element) }.joined()
+    }
     enum ResolutionError: LocalizedError {
         case invalid, unavailable
         var errorDescription: String? { self == .invalid ? "Choose a valid active payee." : "This payee is archived or merged. Choose an active payee." }

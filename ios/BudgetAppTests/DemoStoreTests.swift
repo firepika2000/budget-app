@@ -5106,6 +5106,51 @@ final class DemoStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testLocalAliasIDsSurviveDeletionReorderingAndReopen() async throws {
+        let source = DemoWorkspaceDataSource(fresh: true)
+        try await source.createPayee(.init(displayName: "Alias owner", defaultCategoryID: nil))
+        let payee = try XCTUnwrap(source.demo.payees.first)
+        for name in ["First alias", "Second alias", "Third alias"] {
+            try await source.createPayeeAlias(payeeID: payee.id, displayName: name)
+        }
+        let page = try await source.searchPayees(query: "Alias owner", includeArchived: false, limit: 20, cursor: nil)
+        let aliases = try XCTUnwrap(page.items.first).aliases
+        let firstID = try XCTUnwrap(aliases.first { $0.displayName == "First alias" }).id
+        let secondID = try XCTUnwrap(aliases.first { $0.displayName == "Second alias" }).id
+        let thirdID = try XCTUnwrap(aliases.first { $0.displayName == "Third alias" }).id
+        try await source.deletePayeeAlias(payeeID: payee.id, aliasID: firstID)
+        do { try await source.deletePayeeAlias(payeeID: payee.id, aliasID: firstID); XCTFail("Stale alias ID must not remove a shifted row") }
+        catch { }
+        let shifted = try await source.searchPayees(query: "Alias owner", includeArchived: false, limit: 20, cursor: nil)
+        XCTAssertEqual(Set(shifted.items.first?.aliases.map(\.id) ?? []), Set([secondID, thirdID]))
+        try await source.deletePayeeAlias(payeeID: payee.id, aliasID: secondID)
+        try await source.createPayeeAlias(payeeID: payee.id, displayName: "First alias")
+        let recreated = try await source.searchPayees(query: "Alias owner", includeArchived: false, limit: 20, cursor: nil)
+        XCTAssertNotEqual(recreated.items.first?.aliases.first { $0.displayName == "First alias" }?.id, firstID)
+        let identity = LocalAuthorityIdentity(householdID: "h", householdName: "Household", ownerUserID: "owner",
+            ownerDisplayName: "Owner", budgetID: "b", budgetName: "Budget", currencyCode: "USD")
+        let snapshot = try source.demo.localAuthoritySnapshot(identity: identity)
+        let reopened = DemoStore(fresh: true)
+        try reopened.loadLocalAuthority(snapshot)
+        let restored = try XCTUnwrap(reopened.payees.first)
+        XCTAssertEqual(LocalPayeeIdentity.aliasID("Third alias", for: restored), thirdID)
+        XCTAssertEqual(Set(restored.aliasIDs.values), Set(snapshot.payeeAliases.map(\.id)))
+        let duplicate = try XCTUnwrap(snapshot.payeeAliases.first)
+        let malformed = LocalAuthoritySnapshot(identity: identity, accounts: [], groups: [], categories: [],
+            payees: snapshot.payees, payeeAliases: snapshot.payeeAliases + [.init(id: "duplicate-alias",
+                payeeID: duplicate.payeeID, displayName: duplicate.displayName, normalizedName: "inconsistent-key")],
+            transactions: [], allocations: [], reconciliations: [], targets: [], schedules: [], attachments: [])
+        XCTAssertThrowsError(try DemoStore(fresh: true).loadLocalAuthority(malformed))
+        try await source.createPayee(.init(displayName: "Merge destination", defaultCategoryID: nil))
+        let destination = try XCTUnwrap(source.demo.payees.first { $0.name == "Merge destination" })
+        try await source.mergePayee(sourceID: payee.id, destinationID: destination.id)
+        let merged = try XCTUnwrap(source.demo.payees.first { $0.id == destination.id })
+        XCTAssertEqual(LocalPayeeIdentity.aliasID("Third alias", for: merged), thirdID)
+        let mergedSnapshot = try source.demo.localAuthoritySnapshot(identity: identity)
+        XCTAssertEqual(Set(mergedSnapshot.payeeAliases.map(\.id)).count, mergedSnapshot.payeeAliases.count)
+    }
+
+    @MainActor
     func testLocalSchedulePayeeResolutionIsNonCreatingUntilRealization() async throws {
         var clock = BudgetWorkspaceStore.parseDate("2026-09-14")
         let source = DemoWorkspaceDataSource(fresh: true, now: { clock })

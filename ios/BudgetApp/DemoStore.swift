@@ -1264,8 +1264,12 @@ extension DemoStore {
             let target = value.targets.first { $0.categoryID == item.id }
             return DemoCategory(id: item.id, group: groupNames[item.groupID] ?? "Categories", name: item.name, icon: item.iconName ?? "folder.fill", assigned: 0, activity: 0, available: 0, target: target?.amountMinor, targetDate: target?.targetDate, targetType: target?.targetType ?? "savings_balance", targetRecurrenceMonths: target?.recurrenceMonths.map(Int.init), targetMinimumContribution: target?.minimumContributionMinor ?? 0, targetPriority: target.map { Int($0.priority) } ?? 50, targetIsActive: target?.isActive ?? true, targetSnoozedMonths: Set(target?.snoozedMonths ?? [target?.snoozedMonth].compactMap { $0 }), note: item.note, pinned: item.isFavorite, isHidden: item.isArchived, isEssential: item.isEssential, isEmergencyFund: item.isEmergencyFund)
         }
-        payees = value.payees.map { item in
-            DemoPayee(id: item.id, name: item.name, isArchived: item.isArchived, defaultCategoryID: item.defaultCategoryID, aliases: value.payeeAliases.filter { $0.payeeID == item.id }.map(\.displayName), mergedIntoPayeeID: item.mergedIntoPayeeID)
+        payees = try value.payees.map { item in
+            let aliases = value.payeeAliases.filter { $0.payeeID == item.id }
+            guard Set(aliases.map(\.displayName)).count == aliases.count else {
+                throw LocalStorageError.invalidSnapshot("Payee alias names are duplicated")
+            }
+            return DemoPayee(id: item.id, name: item.name, isArchived: item.isArchived, defaultCategoryID: item.defaultCategoryID, aliases: aliases.map(\.displayName), mergedIntoPayeeID: item.mergedIntoPayeeID, aliasIDs: Dictionary(uniqueKeysWithValues: aliases.map { ($0.displayName, $0.id) }))
         }
         schedules = value.schedules.map { item in
             DemoSchedule(id: item.id, accountID: item.accountID, destinationAccountID: item.destinationAccountID, categoryID: item.categoryID, name: item.name, amount: item.amountMinor, nextDate: item.nextDate, recurrenceUnit: item.recurrenceUnit, intervalCount: Int(item.intervalCount), endDate: item.endDate, remainingOccurrences: item.remainingOccurrences.map(Int.init), memo: item.memo, financialClassification: item.financialClassification, isActive: item.isActive, lastRealizedOn: item.lastRealizedOn)
@@ -1343,8 +1347,8 @@ extension DemoStore {
         let payeeRows = payees.map { item in
             LocalPayeeRecord(id: item.id, budgetID: identity.budgetID, name: item.name, normalizedName: LocalPayeeIdentity.key(item.name), defaultCategoryID: item.defaultCategoryID, isArchived: item.isArchived, mergedIntoPayeeID: item.mergedIntoPayeeID)
         }
-        let aliases = payees.flatMap { payee in payee.aliases.enumerated().map { offset, name in
-            LocalPayeeAliasRecord(id: "\(payee.id)-alias-\(offset)", payeeID: payee.id, displayName: name, normalizedName: LocalPayeeIdentity.key(name))
+        let aliases = payees.flatMap { payee in payee.aliases.map { name in
+            LocalPayeeAliasRecord(id: LocalPayeeIdentity.aliasID(name, for: payee), payeeID: payee.id, displayName: name, normalizedName: LocalPayeeIdentity.key(name))
         } }
         let transactionRows = transactions.map { item in
             let amounts = canonicalCategoryAmounts(for: item)

@@ -2533,7 +2533,7 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
             return ["id": item.id, "household_id": budget.householdID, "display_name": item.name, "is_archived": item.isArchived,
                     "merged_into_payee_id": item.mergedIntoPayeeID.map { $0 as Any } ?? NSNull(), "default_category_id": defaultID ?? NSNull(),
                     "transaction_count": history.count, "net_amount_minor": try Money.sumMinorUnits(history.map(\.amount)),
-                    "aliases": (scoped ? [] : item.aliases).enumerated().map { ["id": "\(item.id)-alias-\($0.offset)", "display_name": $0.element] }] as [String: Any]
+                    "aliases": (scoped ? [] : item.aliases).map { ["id": LocalPayeeIdentity.aliasID($0, for: item), "display_name": $0] }] as [String: Any]
         })
     }
     func searchPayees(query: String, includeArchived: Bool, limit: Int, cursor: String?) async throws -> APIPayeePage { try requireActiveMembership();
@@ -2592,7 +2592,11 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         let sourceNames = [source.name] + source.aliases
         for name in sourceNames where !demo.payees[destinationIndex].aliases.contains(where: { $0.caseInsensitiveCompare(name) == .orderedSame }) {
             demo.payees[destinationIndex].aliases.append(name)
+            demo.payees[destinationIndex].aliasIDs[name] = source.aliases.contains(name)
+                ? LocalPayeeIdentity.aliasID(name, for: source) : UUID().uuidString
         }
+        demo.payees[sourceIndex].aliases = []
+        demo.payees[sourceIndex].aliasIDs = [:]
         demo.payees[sourceIndex].isArchived = true
         demo.payees[sourceIndex].mergedIntoPayeeID = destinationID
         appendDemoPayeeChange(before: source, after: demo.payees[sourceIndex], action: "merged")
@@ -2601,16 +2605,19 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
     func createPayeeAlias(payeeID: String, displayName: String) async throws { try requireActiveMembership();
         guard let index = demo.payees.firstIndex(where: { $0.id == payeeID }) else { throw workspaceRepositoryError("Payee not found.") }
         let before = demo.payees[index]
-        let alias = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let alias = LocalPayeeIdentity.displayName(displayName)
+        guard !alias.isEmpty, alias.unicodeScalars.count <= 150 else { throw workspaceRepositoryError("Enter an alias of at most 150 characters.") }
         guard !demo.payees.flatMap(\.aliases).contains(where: { $0.caseInsensitiveCompare(alias) == .orderedSame }) else { throw workspaceRepositoryError("This alias is already in use.") }
         demo.payees[index].aliases.append(alias)
+        demo.payees[index].aliasIDs[alias] = UUID().uuidString
         appendDemoPayeeChange(before: before, after: demo.payees[index], action: "alias_added")
     }
     func deletePayeeAlias(payeeID: String, aliasID: String) async throws { try requireActiveMembership();
-        guard let index = demo.payees.firstIndex(where: { $0.id == payeeID }), let offset = Int(aliasID.split(separator: "-").last ?? "") else { throw workspaceRepositoryError("Alias not found.") }
-        guard demo.payees[index].aliases.indices.contains(offset) else { throw workspaceRepositoryError("Alias not found.") }
+        guard let index = demo.payees.firstIndex(where: { $0.id == payeeID }),
+              let offset = demo.payees[index].aliases.firstIndex(where: { LocalPayeeIdentity.aliasID($0, for: demo.payees[index]) == aliasID }) else { throw workspaceRepositoryError("Alias not found.") }
         let before = demo.payees[index]
-        demo.payees[index].aliases.remove(at: offset)
+        let removed = demo.payees[index].aliases.remove(at: offset)
+        demo.payees[index].aliasIDs.removeValue(forKey: removed)
         appendDemoPayeeChange(before: before, after: demo.payees[index], action: "alias_removed")
     }
     func payeeHistory(payeeID: String, limit: Int, offset: Int) async throws -> [APIPayeeRevision] {

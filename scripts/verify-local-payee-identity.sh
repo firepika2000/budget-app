@@ -17,9 +17,18 @@ workspace = File.read("ios/BudgetApp/BudgetWorkspaceView.swift")
 abort "Production browser loses explicit identity" unless workspace.include?('let resolvedPayeeID = item.payeeID ??')
 abort "System reversals create merchant identities" unless workspace.include?('id: reversalID, resolvesPayee: false')
 puts "import Foundation"
+puts "import CryptoKit"
 puts source[first...last]
 puts <<'SWIFT'
 let existing = DemoPayee(id: "stable", name: "Coffee Shop", aliases: ["BANK COFFEE"])
+let firstAliasID = LocalPayeeIdentity.aliasID("BANK COFFEE", for: existing)
+precondition(UUID(uuidString: firstAliasID) != nil)
+precondition(firstAliasID == LocalPayeeIdentity.aliasID("BANK COFFEE", for: existing))
+var reordered = existing
+reordered.aliases.insert("OTHER ALIAS", at: 0)
+precondition(LocalPayeeIdentity.aliasID("BANK COFFEE", for: reordered) == firstAliasID)
+reordered.aliasIDs["BANK COFFEE"] = "retained-imported-ID"
+precondition(LocalPayeeIdentity.aliasID("BANK COFFEE", for: reordered) == "retained-imported-ID")
 let resolved = try LocalPayeeIdentity.resolve(id: nil, name: "  bank\tcoffee  ", in: [existing])
 precondition(resolved?.id == "stable" && resolved?.name == "Coffee Shop")
 let byID = try LocalPayeeIdentity.resolve(id: "stable", name: "ignored", in: [existing])
