@@ -1,5 +1,30 @@
 # Production readiness mission ledger
 
+## Current import and payee checkpoint
+
+Implementation checkpoint `f1ae5c6` includes Local Device import ownership checks, exact financial
+batch rollback, atomic approval/undo publication, conditional stale-review rejection, explicit
+income/refund review, first-class payee creation and stable alias identities. See
+`V0.10-CLOSURE-AUDIT.md` and the later-provider section of `V0.5-CLOSURE-AUDIT.md` for scoped
+verification and the minimized human flows. Historical baseline sections below are not a claim
+that their subsequently resolved gaps remain unimplemented.
+
+The current app/widget identity is `0.11.0` build `7`, on `codex/development`; TestFlight remains
+held. Regular Xcode 27.1 (`27A9275`) at `/Applications/Xcode.app/Contents/Developer` compiled the
+app and native tests. The final two alias/payee tests executed successfully on preserved simulator
+`3ABD861E-D38D-4AFD-A356-959266051564`, iOS 27.0 build `24A434`. CoreSimulator's stale service
+was replaced by the authorized tool's normal version-change handling; no device erase was used.
+
+Next engineering audits remain substantive: older Local Device authorities may retain unlinked
+merchant text from before the identity correction, and Live core hydration still materializes
+the complete authorized transaction history. Neither gap is closed by searchable new payees or
+bounded network pages. Any repair must preserve stored identities, archived/merged semantics and
+exact money; any performance redesign must keep complete authoritative balances without truncation.
+
+Live Dropbox acceptance, deployment-specific recovery, Windows runtime/signing, broader accessibility
+and human platform acceptance remain separate gates. StoreKit still requires the documented
+commercial product decision. The milestone goal is active; no merge, tag or release is implied.
+
 ## Portable recovery and Dropbox reliability
 
 Portable recovery checkpoints `213caaf` and `1a80225` preserve decision histories, reconciliation
