@@ -8666,7 +8666,7 @@ private struct LiveForecastView: View {
                 }
                 Section("What if?") {
                     NavigationLink {
-                        ForecastScenarioView(forecast: forecast, horizonDays: horizonDays)
+                        ForecastScenarioView(horizonDays: horizonDays)
                     } label: {
                         Label("Explore a scenario", systemImage: "slider.horizontal.3")
                     }
@@ -8709,20 +8709,29 @@ private struct LiveForecastView: View {
 
 private struct ForecastScenarioView: View {
     @EnvironmentObject private var store: BudgetWorkspaceStore
-    let forecast: APIForecast
     let horizonDays: Int
+    @StateObject private var observation = ForecastObservation()
     @State private var incomeReduction = ""
     @State private var recurringCostIncrease = ""
     @State private var majorPurchase = ""
     @State private var activeMonths = 1
+    private var forecastScope: String { "\(store.authorityRevision)|\(store.budget.id)|\(horizonDays)" }
+    private var forecastContext: String { "\(forecastScope)|\(store.reportRevision)|\(store.liveCredentialRevision)" }
+    private var displayedForecast: APIForecast? { observation.currentValue(scope: forecastScope) }
 
-    private var maximumMonths: Int {
-        switch horizonDays { case ...30: 1; case ...60: 2; case ...90: 3; case ...180: 6; default: 12 }
+    init(horizonDays: Int) {
+        self.horizonDays = horizonDays
+        _activeMonths = State(initialValue: Self.months(for: horizonDays))
+    }
+
+    private var maximumMonths: Int { Self.months(for: horizonDays) }
+    private static func months(for days: Int) -> Int {
+        switch days { case ...30: 1; case ...60: 2; case ...90: 3; case ...180: 6; default: 12 }
     }
     private func amount(_ text: String) -> Int64? {
         text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0 : CurrencyText.parseMinorUnits(text, currencyCode: store.budget.currencyCode)
     }
-    private var projection: Result<ForecastScenarioProjection, Error> {
+    private func projection(for forecast: APIForecast) -> Result<ForecastScenarioProjection, Error> {
         Result {
             guard let income = amount(incomeReduction), income >= 0,
                   let costs = amount(recurringCostIncrease), costs >= 0,
@@ -8747,14 +8756,23 @@ private struct ForecastScenarioView: View {
                 CurrencyAmountField("One-time major purchase", text: $majorPurchase, currencyCode: store.budget.currencyCode, allowsZero: true)
             }
             Section("Comparison") {
+                if observation.loading { ProgressView("Updating scenario baseline…") }
+                if let message = observation.currentError(scope: forecastScope) {
+                    if displayedForecast != nil { Text("Showing the last loaded baseline").font(.subheadline.weight(.semibold)) }
+                    Text(message).font(.caption).foregroundStyle(.secondary)
+                    Button("Retry Baseline") { Task { await loadBaseline() } }.disabled(observation.loading)
+                }
+                if let forecast = displayedForecast {
                 LabeledContent("Known schedule forecast", value: store.format(forecast.projectedTotalOnBudgetMinor))
-                switch projection {
+                LabeledContent("Forecast through", value: forecast.through)
+                switch projection(for: forecast) {
                 case .success(let value):
                     LabeledContent("With this scenario", value: store.format(value.scenarioProjectedMinor))
                     LabeledContent("Scenario difference", value: store.format(value.differenceMinor))
                         .foregroundStyle(value.differenceMinor < 0 ? Theme.danger : Theme.healthy)
                 case .failure:
                     Text("Enter valid amounts that fit the budget currency.").foregroundStyle(Theme.danger)
+                }
                 }
             }
             Section {
@@ -8764,7 +8782,16 @@ private struct ForecastScenarioView: View {
         }
         .navigationTitle("What-if Scenario")
         .navigationBarTitleDisplayMode(.inline)
-        .onAppear { activeMonths = maximumMonths }
+        .task(id: forecastContext) { observation.prepare(scope: forecastScope); await loadBaseline() }
+        .refreshable { await loadBaseline() }
+        .onDisappear { observation.invalidate() }
+        .onChange(of: store.authorityRevision) { _, _ in
+            observation.prepare(scope: forecastScope)
+            incomeReduction = ""; recurringCostIncrease = ""; majorPurchase = ""; activeMonths = maximumMonths
+        }
+    }
+    private func loadBaseline() async {
+        await observation.load { try await store.forecastObservation(days: horizonDays) }
     }
 }
 

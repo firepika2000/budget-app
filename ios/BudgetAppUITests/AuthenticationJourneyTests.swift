@@ -25,6 +25,20 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertTrue(picker.waitForExistence(timeout: 5)); picker.tap()
         app.buttons["1 year"].tap()
         XCTAssertTrue(app.staticTexts["At 2027-09-05"].waitForExistence(timeout: 5), app.debugDescription)
+        app.buttons["forecast-scenario-link"].tap()
+        XCTAssertTrue(app.navigationBars["What-if Scenario"].waitForExistence(timeout: 5))
+        let through = app.descendants(matching: .any).matching(NSPredicate(
+            format: "label CONTAINS %@ AND (value == %@ OR label CONTAINS %@)",
+            "Forecast through", "2027-09-05", "2027-09-05")).firstMatch
+        XCTAssertTrue(through.waitForExistence(timeout: 5), app.debugDescription)
+        let purchase = app.textFields["One-time major purchase"]
+        XCTAssertTrue(purchase.waitForExistence(timeout: 5)); purchase.tap(); purchase.typeText("100")
+        XCUIDevice.shared.press(.home)
+        app.activate()
+        XCTAssertTrue(app.navigationBars["What-if Scenario"].waitForExistence(timeout: 5))
+        XCTAssertEqual(purchase.value as? String, "100", "Foreground refresh must preserve scenario assumptions")
+        app.navigationBars.buttons.firstMatch.tap()
+        XCTAssertTrue(app.navigationBars["Forecast"].waitForExistence(timeout: 5))
         app.navigationBars.buttons.firstMatch.tap()
         for _ in 0..<8 where !open.exists || !open.isHittable { app.swipeUp() }
         XCTAssertTrue(open.waitForExistence(timeout: 5)); open.tap()

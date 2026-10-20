@@ -12,6 +12,48 @@ import UserNotifications
 
 final class DemoStoreTests: XCTestCase {
     @MainActor
+    func testWhatIfScenarioRebasesAfterScheduleRefreshWithoutChangingMoney() async throws {
+        let store = BudgetWorkspaceStore.demo()
+        await store.refresh()
+        let account = try XCTUnwrap(store.accounts.first { $0.id == "checking" })
+        let balances = store.accountBalances, transactions = store.transactions, ready = store.summary?.readyToAssignMinor
+        let assumptions = ForecastScenarioAssumptions(monthlyIncomeChangeMinor: -1_000,
+            monthlyCostChangeMinor: 200, activeMonths: 12, majorPurchaseMinor: 300)
+        let observation = ForecastObservation()
+        observation.prepare(scope: "owner|budget|365")
+        await observation.load { try await store.forecastObservation(days: 365) }
+        let before = try ForecastScenarioCalculator.project(
+            baselineProjectedMinor: XCTUnwrap(observation.value).projectedTotalOnBudgetMinor,
+            currencyCode: "USD", assumptions: assumptions)
+        try await store.createSchedule(.init(accountID: account.id, categoryID: nil, name: "Future-only scenario income",
+            amountMinor: 5_000, nextDate: "2027-03-15", recurrenceUnit: "once", memo: ""))
+        observation.prepare(scope: "owner|budget|365")
+        await observation.load { try await store.forecastObservation(days: 365) }
+        let after = try ForecastScenarioCalculator.project(
+            baselineProjectedMinor: XCTUnwrap(observation.value).projectedTotalOnBudgetMinor,
+            currencyCode: "USD", assumptions: assumptions)
+        XCTAssertEqual(after.scenarioProjectedMinor - before.scenarioProjectedMinor, 5_000)
+        XCTAssertEqual(after.differenceMinor, before.differenceMinor)
+        XCTAssertEqual(store.accountBalances, balances); XCTAssertEqual(store.transactions, transactions)
+        XCTAssertEqual(store.summary?.readyToAssignMinor, ready)
+    }
+
+    func testProductionWhatIfScenarioObservesBaselineAndPreservesOrdinaryDrafts() throws {
+        let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("BudgetApp/BudgetWorkspaceView.swift")
+        let source = try String(contentsOf: file)
+        let start = try XCTUnwrap(source.range(of: "private struct ForecastScenarioView: View"))
+        let end = try XCTUnwrap(source.range(of: "private struct LiveRequestsView: View"))
+        let view = source[start.lowerBound..<end.lowerBound]
+        XCTAssertFalse(view.contains("let forecast: APIForecast"))
+        XCTAssertFalse(view.contains(".onAppear { activeMonths"))
+        XCTAssertTrue(view.contains("_activeMonths = State(initialValue:"))
+        XCTAssertTrue(view.contains(".task(id: forecastContext)")); XCTAssertTrue(view.contains("store.reportRevision"))
+        XCTAssertTrue(view.contains("observation.currentValue(scope: forecastScope)"))
+        XCTAssertTrue(view.contains(".onChange(of: store.authorityRevision)"))
+        XCTAssertTrue(view.contains("Retry Baseline"))
+    }
+
+    @MainActor
     func testForecastObservationKeepsOnlyCurrentPeriodAndRejectsSupersededResponses() async throws {
         let store = BudgetWorkspaceStore.demo()
         await store.refresh()
