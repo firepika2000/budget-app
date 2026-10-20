@@ -10129,6 +10129,7 @@ private struct LiveActivityView: View {
     @State private var totalCount = 0
     @State private var loading = false
     @State private var errorMessage: String?
+    @State private var retryIntent: HistoryRetryIntent = .refresh
     @State private var showFilters = false
     @State private var showAdd = false
     @State private var entryDraft: QuickEntryDraft?
@@ -10275,7 +10276,7 @@ private struct LiveActivityView: View {
                         bulkRow(transaction)
                     } else { LiveTransactionLink(transaction: transaction, allowsQuickClearing: true) { await load(reset: true) } }
                 }
-                if let errorMessage { VStack(alignment: .leading, spacing: 8) { Text(errorMessage).foregroundStyle(.secondary); Button("Retry") { Task { await load(reset: true) } } } }
+                if let errorMessage { VStack(alignment: .leading, spacing: 8) { Text(errorMessage).foregroundStyle(.secondary); Button("Retry") { Task { await load(reset: retryIntent.shouldReset(hasLoadedRows: !rows.isEmpty)) } }; Button("Refresh List") { Task { await load(reset: true) } } } }
                 else if nextCursor != nil { Button { Task { await load(reset: false) } } label: { HStack { Spacer(); if loading { ProgressView() } else { Text("Load more") }; Spacer() } }.disabled(loading) }
                 else if !rows.isEmpty { Text("Showing \(rows.count) of \(totalCount)").font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity) }
             }
@@ -10539,10 +10540,12 @@ private struct LiveActivityView: View {
         do {
             let page = try await store.browseTransactions(filter.query(search: search, currencyCode: store.budget.currencyCode, cursor: reset ? nil : nextCursor))
             guard requestedKey == queryKey, !Task.isCancelled else { return }
-            rows = reset ? page.items : rows + page.items; nextCursor = page.nextCursor; totalCount = page.totalCount; errorMessage = nil
+            rows = try page.validatedRows(after: reset ? [] : rows, previousTotal: reset ? nil : totalCount, requestedCursor: reset ? nil : nextCursor)
+            nextCursor = page.nextCursor; totalCount = page.totalCount; errorMessage = nil
         } catch is CancellationError { return }
         catch {
             guard requestedKey == queryKey else { return }
+            retryIntent = reset ? .refresh : .older
             if HistoryObservationPolicy.mustDiscard(after: error) {
                 rows = []; nextCursor = nil; totalCount = 0
                 transactionSelection.removeAll(); selecting = false; showTagPrompt = false
@@ -10573,6 +10576,7 @@ private struct ScopedTransactionHistoryView: View {
     @State private var totalCount = 0
     @State private var loading = false
     @State private var errorMessage: String?
+    @State private var retryIntent: HistoryRetryIntent = .refresh
 
     var body: some View {
         List {
@@ -10597,9 +10601,10 @@ private struct ScopedTransactionHistoryView: View {
                 }
                 if let errorMessage {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("More transactions could not be loaded.").font(.subheadline.weight(.semibold))
+                        Text(retryIntent == .older ? "More transactions could not be loaded." : "Transactions could not be refreshed.").font(.subheadline.weight(.semibold))
                         Text(errorMessage).font(.caption).foregroundStyle(.secondary)
-                        Button("Try Loading More Again") { Task { await load(reset: false) } }
+                        Button("Try Again") { Task { await load(reset: retryIntent.shouldReset(hasLoadedRows: !rows.isEmpty)) } }
+                        Button("Refresh List") { Task { await load(reset: true) } }
                     }
                     .accessibilityIdentifier("scoped-transaction-history-page-error")
                 } else if nextCursor != nil {
@@ -10627,18 +10632,21 @@ private struct ScopedTransactionHistoryView: View {
 
     private func load(reset: Bool) async {
         guard !loading else { return }
+        guard reset || nextCursor != nil else { return }
         loading = true
         defer { loading = false }
         do {
             let page = try await store.browseTransactions(
                 filter.query(search: "", currencyCode: store.budget.currencyCode, cursor: reset ? nil : nextCursor)
             )
-            rows = reset ? page.items : rows + page.items
+            try Task.checkCancellation()
+            rows = try page.validatedRows(after: reset ? [] : rows, previousTotal: reset ? nil : totalCount, requestedCursor: reset ? nil : nextCursor)
             nextCursor = page.nextCursor
             totalCount = page.totalCount
             errorMessage = nil
         } catch where Task.isCancelled {
         } catch {
+            retryIntent = reset ? .refresh : .older
             if HistoryObservationPolicy.mustDiscard(after: error) { rows = []; nextCursor = nil; totalCount = 0 }
             errorMessage = error.localizedDescription
         }

@@ -321,7 +321,7 @@ final class DemoStoreTests: XCTestCase {
         let activity = String(source[activityStart.lowerBound..<activityEnd.lowerBound])
         XCTAssertEqual(activity.components(separatedBy: "HistoryObservationPolicy.mustDiscard(after: error)").count - 1, 3)
         XCTAssertTrue(activity.contains("rows = []; nextCursor = nil; totalCount = 0"))
-        XCTAssertTrue(activity.contains("selectedIDs.removeAll(); selecting = false; showTagPrompt = false"))
+        XCTAssertTrue(activity.contains("transactionSelection.removeAll(); selecting = false; showTagPrompt = false"))
         XCTAssertTrue(activity.contains("recentTransactionChanges = []"))
         XCTAssertTrue(activity.contains("recentReconciliations = []; reconciliationAccount = nil"))
         let scopedStart = try XCTUnwrap(source.range(of: "private struct ScopedTransactionHistoryView: View"))
@@ -329,6 +329,12 @@ final class DemoStoreTests: XCTestCase {
         let scoped = String(source[scopedStart.lowerBound..<scopedEnd.lowerBound])
         XCTAssertTrue(scoped.contains("if HistoryObservationPolicy.mustDiscard(after: error) { rows = []; nextCursor = nil; totalCount = 0 }"))
         XCTAssertTrue(scoped.contains("guard !loading else { return }"))
+        for view in [activity, scoped] {
+            XCTAssertTrue(view.contains("retryIntent = reset ? .refresh : .older"))
+            XCTAssertTrue(view.contains("retryIntent.shouldReset(hasLoadedRows: !rows.isEmpty)"))
+            XCTAssertTrue(view.contains("page.validatedRows(after:"))
+        }
+        XCTAssertTrue(scoped.contains("try Task.checkCancellation()"))
     }
     func testReportHistoryRefreshPublishesReplacementOnlyAfterCurrentResponse() throws {
         let source = try String(contentsOf: URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("BudgetApp/BudgetWorkspaceView.swift"))

@@ -1402,6 +1402,20 @@ public struct APITransactionPage: Decodable, Equatable, Sendable {
     public init(items: [APITransaction], nextCursor: String?, totalCount: Int) {
         self.items = items; self.nextCursor = nextCursor; self.totalCount = totalCount
     }
+    /// Validate before replacing visible rows; a failed page must leave the prior observation intact.
+    public func validatedRows(after existing: [APITransaction], previousTotal: Int?, requestedCursor: String?, limit: Int = 50) throws -> [APITransaction] {
+        guard totalCount >= 0, items.count <= limit,
+              previousTotal == nil || previousTotal == totalCount else {
+            throw APIClientError.server(status: 409, message: "Transaction history changed. Refresh the list.")
+        }
+        let combined = existing + items
+        guard Set(combined.map(\.id)).count == combined.count,
+              combined.count <= totalCount,
+              nextCursor.map({ !$0.isEmpty && $0 != requestedCursor && !items.isEmpty && combined.count < totalCount }) ?? (combined.count == totalCount) else {
+            throw APIClientError.server(status: 409, message: "Transaction history did not advance. Refresh the list.")
+        }
+        return combined
+    }
     enum CodingKeys: String, CodingKey {
         case items
         case nextCursor = "next_cursor"
