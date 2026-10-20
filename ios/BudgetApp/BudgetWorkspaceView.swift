@@ -12208,23 +12208,29 @@ final class StatementHeaderObservation: ObservableObject {
     @Published private(set) var headers: [String] = []
     @Published private(set) var loading = false
     private var requestID = UUID()
+    private var loadedScope: String?
 
-    func invalidate() { requestID = UUID(); headers = []; loading = false }
+    func cancel() { requestID = UUID(); loading = false }
+    func invalidate() { cancel(); headers = []; loadedScope = nil }
 
-    func load(read: () async throws -> [String]) async {
+    @discardableResult
+    func load(scope: String, read: () async throws -> [String]) async -> Bool {
+        guard loadedScope != scope else { return false }
         let request = UUID(); requestID = request
-        headers = []; loading = true
+        headers = []; loadedScope = nil; loading = true
         defer { if requestID == request { loading = false } }
         do {
             let next = try await read()
             try Task.checkCancellation()
-            guard requestID == request else { return }
-            headers = next
+            guard requestID == request else { return false }
+            headers = next; loadedScope = scope
+            return true
         } catch {
             // Invalid or canceled discovery never manufactures mapping choices. Preview still
             // applies complete file validation before staging any recognized transactions.
-            guard requestID == request else { return }
+            guard requestID == request else { return false }
             headers = []
+            return false
         }
     }
 }
@@ -12862,6 +12868,7 @@ private struct StatementImportFlowView: View {
     init(workspace: BudgetWorkspaceStore, budget: APIBudget, account: APIAccount, file: StatementImportFile) {
         self.workspace = workspace; self.budget = budget; self.account = account; self.file = file
         _staged = State(initialValue: nil)
+        _delimiter = State(initialValue: file.suggestedDelimiter)
     }
     init(workspace: BudgetWorkspaceStore, budget: APIBudget, account: APIAccount, existingBatch: APIStatementImport) {
         self.workspace = workspace; self.budget = budget; self.account = account; self.file = nil
@@ -12875,6 +12882,7 @@ private struct StatementImportFlowView: View {
         }))
     }
     private var headers: [String] { headerObservation.headers }
+    private var headerContext: String { "\(file?.id.uuidString ?? "existing")|\(delimiter)" }
     private var reviewable: Bool { staged?.status == "review" }
     var body: some View {
         Group {
@@ -12906,9 +12914,8 @@ private struct StatementImportFlowView: View {
             Button("Undo Import", role: .destructive) { if let staged { Task { await undo(staged) } } }
             Button("Keep Transactions", role: .cancel) {}
         } message: { Text("Every unreconciled transaction posted by this import will be voided with an auditable reversal. If any row cannot be reversed, nothing changes.") }
-        .onAppear { if let file { delimiter = file.suggestedDelimiter } }
-        .task(id: delimiter) { await loadHeaders() }
-        .onDisappear { headerObservation.invalidate() }
+        .task(id: headerContext) { await loadHeaders() }
+        .onDisappear { headerObservation.cancel() }
     } }
     @ViewBuilder private var setup: some View {
         if let file {
@@ -13039,12 +13046,12 @@ private struct StatementImportFlowView: View {
     }
     private func loadHeaders() async {
         guard canUseCurrentAccess, let file, file.sourceFormat == "csv", let separator = delimiter.first else { return }
-        let observedDelimiter = delimiter
+        let context = headerContext
         let data = file.data
-        await headerObservation.load {
+        let changed = await headerObservation.load(scope: context) {
             try await NativeStatementParsing.run { LocalDelimitedStatementParser.headers(data: data, delimiter: separator) }
         }
-        guard !Task.isCancelled, canUseCurrentAccess, observedDelimiter == delimiter else { return }
+        guard changed, !Task.isCancelled, canUseCurrentAccess, context == headerContext else { return }
         configureDefaults(reset: true)
     }
     private func configureDefaults(reset: Bool = false) {

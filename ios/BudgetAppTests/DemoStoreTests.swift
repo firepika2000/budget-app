@@ -11,6 +11,30 @@ import UserNotifications
 @testable import Budget_App
 
 final class DemoStoreTests: XCTestCase {
+    @MainActor
+    func testStatementHeaderCacheSurvivesNavigationWithoutResettingUserMapping() async {
+        let observation = StatementHeaderObservation()
+        var reads = 0, mapping = ""
+        let initial = await observation.load(scope: "file-a|;") { reads += 1; return ["Posted", "Amount", "Merchant"] }
+        if initial { mapping = "Automatic selection" }
+        mapping = "User-selected date column"
+        observation.cancel() // A column-selection destination temporarily hides the form.
+        let rediscovered = await observation.load(scope: "file-a|;") {
+            XCTFail("Returning to unchanged input must reuse its completed header read")
+            return []
+        }
+        if rediscovered { mapping = "Automatic selection" }
+        XCTAssertEqual(mapping, "User-selected date column")
+        XCTAssertEqual(observation.headers, ["Posted", "Amount", "Merchant"])
+        XCTAssertEqual(reads, 1); XCTAssertFalse(observation.loading)
+        let newFile = await observation.load(scope: "file-b|;") { reads += 1; return ["New date"] }
+        XCTAssertTrue(newFile); XCTAssertEqual(observation.headers, ["New date"])
+        observation.invalidate() // Revocation must still discard the completed observation.
+        XCTAssertTrue(observation.headers.isEmpty)
+        let afterInvalidation = await observation.load(scope: "file-b|;") { reads += 1; return ["Authorized date"] }
+        XCTAssertTrue(afterInvalidation); XCTAssertEqual(reads, 3)
+    }
+
     func testStatementHeaderDiscoveryStopsAtFirstRecordButPreviewStillRejectsInvalidTail() throws {
         let rows = (0..<10_000).map { "2026-09-15,-1.23,Merchant \($0)" }
         let data = Data((["Date,Amount,Payee"] + rows + ["\"unfinished private value"]).joined(separator: "\n").utf8)
@@ -25,17 +49,17 @@ final class DemoStoreTests: XCTestCase {
     @MainActor
     func testStatementHeaderObservationRejectsSupersededAndInvalidatedResults() async {
         let observation = StatementHeaderObservation()
-        await observation.load { ["Old"] }
+        await observation.load(scope: "old") { ["Old"] }
         XCTAssertEqual(observation.headers, ["Old"])
-        await observation.load {
+        await observation.load(scope: "pending") {
             XCTAssertTrue(observation.headers.isEmpty); XCTAssertTrue(observation.loading)
-            await observation.load { ["New"] }
+            await observation.load(scope: "new") { ["New"] }
             return ["Stale"]
         }
         XCTAssertEqual(observation.headers, ["New"]); XCTAssertFalse(observation.loading)
-        await observation.load { observation.invalidate(); return ["Revoked"] }
+        await observation.load(scope: "invalidated") { observation.invalidate(); return ["Revoked"] }
         XCTAssertTrue(observation.headers.isEmpty); XCTAssertFalse(observation.loading)
-        await observation.load { throw URLError(.cancelled) }
+        await observation.load(scope: "cancelled") { throw URLError(.cancelled) }
         XCTAssertTrue(observation.headers.isEmpty); XCTAssertFalse(observation.loading)
     }
 
@@ -46,7 +70,11 @@ final class DemoStoreTests: XCTestCase {
         let end = try XCTUnwrap(source.range(of: "private struct ReportLoadModifier:"))
         let view = source[start.lowerBound..<end.lowerBound]
         XCTAssertTrue(view.contains("private var headers: [String] { headerObservation.headers }"))
-        XCTAssertTrue(view.contains(".task(id: delimiter) { await loadHeaders() }"))
+        XCTAssertTrue(view.contains(".task(id: headerContext) { await loadHeaders() }"))
+        XCTAssertTrue(view.contains("_delimiter = State(initialValue: file.suggestedDelimiter)"))
+        XCTAssertTrue(view.contains(".onDisappear { headerObservation.cancel() }"))
+        XCTAssertTrue(view.contains("guard changed, !Task.isCancelled"))
+        XCTAssertFalse(view.contains(".onAppear { if let file { delimiter ="))
         XCTAssertTrue(view.contains("NativeStatementParsing.run { LocalDelimitedStatementParser.headers"))
         XCTAssertTrue(view.contains("headerObservation.invalidate()"))
         XCTAssertTrue(view.contains("Reading statement columns…"))
