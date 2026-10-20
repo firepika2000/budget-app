@@ -2,6 +2,30 @@ import XCTest
 @testable import BudgetAPI
 
 final class APIClientTests: XCTestCase {
+    func testTransferIdentitySearchEncodesFilterAndRejectsIgnoredSelection() async throws {
+        let configuration = URLSessionConfiguration.ephemeral; configuration.protocolClasses = [MockURLProtocol.self]
+        var matches = true
+        MockURLProtocol.handler = { request in
+            let query = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!.queryItems!
+            XCTAssertEqual(query.first { $0.name == "transfer_id" }?.value, "pair")
+            XCTAssertEqual(query.first { $0.name == "limit" }?.value, "2")
+            let transfer = matches ? "pair" : "other"
+            let data = Data("""
+            {"items":[{"id":"t","account_id":"a","transfer_id":"\(transfer)","amount_minor":-1,"occurred_on":"2026-09-04","payee_name":"Transfer","memo":"","is_cleared":false,"is_reconciled":false,"splits":[]}],"next_cursor":null,"total_count":1}
+            """.utf8)
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, data)
+        }
+        let client = try APIClient(baseURL: URL(string: "https://example.com")!, session: URLSession(configuration: configuration))
+        let page = try await client.searchTransactions(budgetID: "b", query: .init(transferIDs: ["pair"], limit: 2), token: "current")
+        XCTAssertEqual(page.items.first?.transferID, "pair")
+        matches = false
+        do {
+            _ = try await client.searchTransactions(budgetID: "b", query: .init(transferIDs: ["pair"], limit: 2), token: "current")
+            XCTFail("Ignored transfer selection must fail closed")
+        } catch let error as APIClientError {
+            guard case .server(status: 502, message: _) = error else { return XCTFail("Unexpected: \(error)") }
+        }
+    }
     func testCompleteTransactionHistoryUsesBoundedPagesWithoutDroppingRows() async throws {
         actor RotatingCredential {
             var reads = 0

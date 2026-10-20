@@ -164,6 +164,28 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertTrue(detail.contains("LiveTransactionEditView(budget: store.budget, transaction: transaction"))
     }
 
+    @MainActor
+    func testSparseTransferLookupHydratesOnlyAuthorizedPairWithoutMoneyMutation() async throws {
+        let store = BudgetWorkspaceStore.demo()
+        await store.refresh()
+        try await store.createTransfer(.init(sourceAccountID: "checking", destinationAccountID: "savings", amountMinor: 123,
+            occurredOn: "2026-09-05", memo: "Sparse pair", isCleared: false))
+        let row = try XCTUnwrap(store.transactions.first { $0.memo == "Sparse pair" })
+        let pair = try XCTUnwrap(row.transferID)
+        let balances = store.accountBalances, summary = store.summary
+        store.transactions = [row]
+        let page = try await store.browseTransactions(.init(transferIDs: [pair], limit: 2))
+        XCTAssertEqual(page.items.count, 2)
+        XCTAssertTrue(page.items.allSatisfy { $0.transferID == pair })
+        XCTAssertEqual(page.items.reduce(Int64(0)) { $0 + $1.amountMinor }, 0)
+        XCTAssertEqual(store.transactions.count, 2)
+        XCTAssertEqual(store.accountBalances, balances)
+        XCTAssertEqual(store.summary, summary)
+        let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("BudgetApp/BudgetWorkspaceView.swift")
+        let source = try String(contentsOf: file)
+        XCTAssertTrue(source.contains("transferIDs: [transferID], limit: 2"))
+    }
+
     func testStatementReviewSearchCombinesFocusWithoutChangingDecisions() {
         func includes(_ filter: StatementImportReviewFilter, selected: Bool = true, duplicate: Bool = false, query: String = "") -> Bool {
             filter.includes(selected: selected, duplicate: duplicate, query: query, payee: "Café Market", memo: "Receipt", date: "2026-09-15")

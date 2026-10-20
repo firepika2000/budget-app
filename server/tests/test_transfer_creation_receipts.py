@@ -6,6 +6,38 @@ from .conftest import auth
 from .test_budgeting_api import add_member, create_budget, create_budget_structure
 
 
+def test_transfer_identity_search_keeps_budget_and_account_scope(client, owner_token, session_factory):
+    budget = create_budget(client, owner_token, session_factory)
+    checking, _ = create_budget_structure(client, owner_token, budget["id"])
+    root = f"/api/v1/budgets/{budget['id']}"
+    savings = client.post(f"{root}/accounts", headers=auth(owner_token), json={"name": "Savings", "account_type": "savings"}).json()
+    response = client.post(f"{root}/transfers", headers=auth(owner_token), json={
+        "source_account_id": checking["id"], "destination_account_id": savings["id"],
+        "amount_minor": 123, "occurred_on": "2026-09-04"})
+    assert response.status_code == 201, response.text
+    pair = response.json()["transfer_id"]
+    query = f"/transactions/search?transfer_id={pair}&limit=2"
+    owner = client.get(root + query, headers=auth(owner_token)).json()
+    assert owner["total_count"] == len(owner["items"]) == 2
+    assert {row["transfer_id"] for row in owner["items"]} == {pair}
+    assert sum(row["amount_minor"] for row in owner["items"]) == 0
+    token = add_member(session_factory, client, "contribute", budget["id"])
+    with session_factory() as db:
+        member = db.query(User).filter_by(email="contribute@example.com").one().id
+    access = {"capabilities": ["view_budget", "view_transactions"], "restrict_accounts": True,
+              "account_ids": [checking["id"]], "restrict_categories": False, "category_ids": []}
+    assert client.put(f"{root}/access/{member}", headers=auth(owner_token), json=access).status_code == 200
+    scoped = client.get(root + query, headers=auth(token)).json()
+    assert scoped["total_count"] == len(scoped["items"]) == 1
+    assert scoped["items"][0]["account_id"] == checking["id"]
+    other = create_budget(client, owner_token, session_factory, name="Other")
+    hidden = client.get(f"/api/v1/budgets/{other['id']}" + query, headers=auth(owner_token)).json()
+    assert hidden == {"items": [], "next_cursor": None, "total_count": 0}
+    for values in [[""], ["x" * 129], ["missing"] * 501]:
+        invalid = client.get(root + "/transactions/search", headers=auth(owner_token), params=[("transfer_id", value) for value in values])
+        assert invalid.status_code == 422
+
+
 @pytest.mark.parametrize("account_type", ["savings", "credit"])
 def test_transfer_creation_retry_preserves_both_legs_and_later_state(client, owner_token, session_factory, account_type):
     budget = create_budget(client, owner_token, session_factory)

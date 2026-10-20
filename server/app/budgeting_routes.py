@@ -1840,6 +1840,7 @@ def search_transactions(
     category_id: list[str] = Query(default=[]),
     payee_id: list[str] = Query(default=[]),
     transaction_id: list[str] = Query(default=[], max_length=500),
+    transfer_id: list[str] = Query(default=[], max_length=500),
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
     minimum_amount_minor: Optional[int] = None,
@@ -1860,7 +1861,7 @@ def search_transactions(
     db: Session = Depends(get_db),
 ) -> TransactionPageResponse:
     budget = require_budget_capability(db, user, budget_id, "view_transactions")
-    if any(not value or len(value) > 128 for value in transaction_id):
+    if any(not value or len(value) > 128 for value in transaction_id + transfer_id):
         raise HTTPException(status_code=422, detail="Invalid transaction identifier")
     if start_date is not None and end_date is not None and start_date > end_date:
         raise HTTPException(status_code=422, detail="start_date must be on or before end_date")
@@ -1872,6 +1873,8 @@ def search_transactions(
     conditions = transaction_visibility_conditions(db, user, budget)
     if transaction_id:
         conditions.append(Transaction.id.in_(transaction_id))
+    if transfer_id:
+        conditions.append(Transaction.transfer_id.in_(transfer_id))
     if search_text:
         pattern = f"%{search_text}%"
         conditions.append(or_(

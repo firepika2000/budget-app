@@ -364,6 +364,7 @@ public struct APIClient {
     public func searchTransactions(budgetID: String, query: APITransactionQuery, token: String) async throws -> APITransactionPage {
         var items = [URLQueryItem(name: "sort", value: query.sort), URLQueryItem(name: "limit", value: String(query.limit))]
         items += query.transactionIDs.map { URLQueryItem(name: "transaction_id", value: $0) }
+        items += query.transferIDs.map { URLQueryItem(name: "transfer_id", value: $0) }
         if !query.search.isEmpty { items.append(URLQueryItem(name: "q", value: query.search)) }
         items += query.accountIDs.map { URLQueryItem(name: "account_id", value: $0) }
         items += query.categoryIDs.map { URLQueryItem(name: "category_id", value: $0) }
@@ -387,6 +388,12 @@ public struct APIClient {
             let selected = Set(query.transactionIDs)
             guard page.items.allSatisfy({ selected.contains($0.id) }) else {
                 throw APIClientError.server(status: 502, message: "The server did not honor the transaction selection. Update the server and retry.")
+            }
+        }
+        if !query.transferIDs.isEmpty {
+            let selected = Set(query.transferIDs)
+            guard page.items.allSatisfy({ $0.transferID.map(selected.contains) == true }) else {
+                throw APIClientError.server(status: 502, message: "The server did not honor the transfer selection. Update the server and retry.")
             }
         }
         return page

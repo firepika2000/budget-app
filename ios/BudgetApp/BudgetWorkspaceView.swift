@@ -2447,7 +2447,8 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         guard actorCapabilities.contains("view_transactions") else { throw APIClientError.server(status: 403, message: "Insufficient permission") }
         guard (1...200).contains(query.limit), query.search.count <= 150,
               query.transactionIDs.count <= 500,
-              query.transactionIDs.allSatisfy({ !$0.isEmpty && $0.count <= 128 }) else {
+              query.transferIDs.count <= 500,
+              (query.transactionIDs + query.transferIDs).allSatisfy({ !$0.isEmpty && $0.count <= 128 }) else {
             throw APIClientError.server(status: 422, message: "Invalid transaction search or page limit")
         }
         var rows = try transactionRows(categoryIDs: Set(demo.visibleCategories.map(\.id)))
@@ -2456,6 +2457,7 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
             let categoryIDs = Set(([item.categoryID].compactMap { $0 }) + item.splits.map(\.categoryID))
             return (text.isEmpty || item.payeeName.localizedCaseInsensitiveContains(text) || item.memo.localizedCaseInsensitiveContains(text) || (item.flag ?? "").localizedCaseInsensitiveContains(text) || (item.tags ?? []).contains(where: { $0.localizedCaseInsensitiveContains(text) }))
                 && (query.transactionIDs.isEmpty || query.transactionIDs.contains(item.id))
+                && (query.transferIDs.isEmpty || item.transferID.map(query.transferIDs.contains) == true)
                 && (query.accountIDs.isEmpty || query.accountIDs.contains(item.accountID))
                 && (query.categoryIDs.isEmpty || !categoryIDs.isDisjoint(with: query.categoryIDs))
                 && (query.payeeIDs.isEmpty || item.payeeID.map(query.payeeIDs.contains) == true)
@@ -11045,6 +11047,10 @@ private struct LiveTransactionDetailView: View {
     @State private var transactionLoadError: String?
     @State private var transactionRequestID = UUID()
     var transaction: APITransaction? { store.transactions.first(where: { $0.id == transactionID }) }
+    private var missingTransferCounterpart: Bool {
+        guard let id = transaction?.transferID else { return false }
+        return !store.transactions.contains { $0.transferID == id && $0.id != transactionID }
+    }
     var body: some View {
         List {
             if let transaction {
@@ -11067,6 +11073,12 @@ private struct LiveTransactionDetailView: View {
                     TransactionAttachmentsView(transaction: transaction)
                 }
                 if transaction.transferID != nil && transaction.isReconciled { Section { Label("This transfer includes reconciled history and cannot be edited or deleted.", systemImage: "lock.fill").font(.footnote).foregroundStyle(.secondary) } }
+                if let transactionLoadError {
+                    Section {
+                        Text(transactionLoadError).font(.footnote).foregroundStyle(.secondary)
+                        Button("Retry linked transaction") { Task { await loadMissingTransaction() } }
+                    }
+                }
             } else if loadingTransaction {
                 ProgressView("Loading transaction…")
                     .accessibilityIdentifier("transaction-detail-loading")
@@ -11105,18 +11117,22 @@ private struct LiveTransactionDetailView: View {
             .confirmationDialog(transaction?.transferID == nil ? "Delete this transaction?" : "Delete this transfer?", isPresented: $confirmDelete, titleVisibility: .visible) { Button(transaction?.transferID == nil ? "Delete Transaction" : "Delete Transfer", role: .destructive) { Task { await deleteTransaction() } }; Button("Cancel", role: .cancel) {} } message: { Text(transaction?.transferID == nil ? "Accepted deletion cannot be undone. When offline, the request is saved and posted values remain unchanged until the server accepts it." : "Both linked entries will be removed together after server approval. Offline requests are saved; posted balances remain unchanged until accepted. Accepted deletion cannot be undone.") }
     }
     private func loadMissingTransaction() async {
-        guard transaction == nil else { return }
+        guard transaction == nil || missingTransferCounterpart else { return }
         let requestID = UUID()
         transactionRequestID = requestID
         loadingTransaction = true
         transactionLoadError = nil
         defer { if requestID == transactionRequestID { loadingTransaction = false } }
         do {
-            let page = try await store.browseTransactions(.init(transactionIDs: [transactionID], limit: 1))
+            if transaction == nil {
+                _ = try await store.browseTransactions(.init(transactionIDs: [transactionID], limit: 1))
+            }
             try Task.checkCancellation()
             guard requestID == transactionRequestID else { return }
-            if page.items.isEmpty {
+            if transaction == nil {
                 transactionLoadError = "This transaction may have been removed or is no longer accessible."
+            } else if missingTransferCounterpart, let transferID = transaction?.transferID {
+                _ = try await store.browseTransactions(.init(transferIDs: [transferID], limit: 2))
             }
         } catch is CancellationError {
         } catch {
