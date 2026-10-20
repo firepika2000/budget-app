@@ -11,6 +11,57 @@ import UserNotifications
 @testable import Budget_App
 
 final class DemoStoreTests: XCTestCase {
+    @MainActor
+    func testCanonicalClearingAndReconciliationRefreshSharedAuditHistories() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("audit-refresh-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let keys = LocalDeviceKeyManager(store: InMemorySecretDataStore())
+        let store = BudgetWorkspaceStore.localDevice(applicationSupportDirectory: root, keyManager: keys)
+        await store.refresh()
+        try await store.createAccount(.init(name: "Audit Checking", kind: "checking", isOnBudget: true, openingBalanceMinor: 10_000))
+        let account = try XCTUnwrap(store.accounts.first)
+        try await store.createTransaction(.init(accountID: account.id, categoryID: nil, amountMinor: 200,
+            occurredOn: "2026-09-30", payeeName: "Audit income", memo: "", isCleared: false,
+            splits: [], flag: nil, tags: [], attachmentMetadata: []))
+        let transaction = try XCTUnwrap(store.transactions.first { $0.payeeName == "Audit income" })
+        let working = store.balance(for: account), ready = store.summary?.readyToAssignMinor
+        let changes = DecisionHistoryPager<APITransactionChange>()
+        let reconciliations = DecisionHistoryPager<APIReconciliationHistory>()
+        changes.prepare(scope: "transaction|\(transaction.id)")
+        reconciliations.prepare(scope: "account|\(account.id)")
+        await changes.load(reset: true) { limit, offset in
+            try await store.transactionHistory(id: transaction.id, limit: limit, offset: offset)
+        }
+        let oldChanges = changes.rows.count, revision = store.reportRevision
+        try await store.setTransactionCleared(id: transaction.id, cleared: !transaction.isCleared)
+        XCTAssertGreaterThan(store.reportRevision, revision)
+        await changes.load(reset: true) { limit, offset in
+            try await store.transactionHistory(id: transaction.id, limit: limit, offset: offset)
+        }
+        XCTAssertGreaterThan(changes.rows.count, oldChanges)
+        // Reconciliation includes cleared rows, independent of the fixture's initial state.
+        try await store.setTransactionCleared(id: transaction.id, cleared: true)
+        await reconciliations.load(reset: true) { limit, offset in
+            try await store.reconciliationHistory(accountID: account.id, limit: limit, offset: offset)
+        }
+        let oldReconciliations = reconciliations.rows.count
+        try await store.reconcile(accountID: account.id, statementBalance: store.clearedBalance(for: account),
+            throughDate: "2099-12-31", createAdjustment: false, reason: "")
+        await reconciliations.load(reset: true) { limit, offset in
+            try await store.reconciliationHistory(accountID: account.id, limit: limit, offset: offset)
+        }
+        XCTAssertEqual(reconciliations.rows.count, oldReconciliations + 1)
+        XCTAssertNil(changes.errorMessage); XCTAssertNil(reconciliations.errorMessage)
+        XCTAssertEqual(store.balance(for: account), working)
+        XCTAssertEqual(store.summary?.readyToAssignMinor, ready)
+        let reopened = BudgetWorkspaceStore.localDevice(applicationSupportDirectory: root, keyManager: keys)
+        await reopened.refresh()
+        let persisted = try await reopened.transactionHistory(id: transaction.id)
+        XCTAssertGreaterThan(persisted.count, oldChanges)
+        let persistedReconciliations = try await reopened.reconciliationHistory(accountID: account.id)
+        XCTAssertEqual(persistedReconciliations.count, reconciliations.rows.count)
+    }
+
     func testProductionAttachmentReadFailuresAreInlineAndObserveWorkspaceRefresh() throws {
         let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("BudgetApp/BudgetWorkspaceView.swift")
         let source = try String(contentsOf: file)
@@ -153,13 +204,14 @@ final class DemoStoreTests: XCTestCase {
         let start = try XCTUnwrap(source.range(of: "private struct ReconciliationHistoryView: View"))
         let end = try XCTUnwrap(source.range(of: "private struct TransferPresentation:"))
         let view = String(source[start.lowerBound..<end.lowerBound])
-        XCTAssertTrue(view.contains("@State private var loading = false"))
+        XCTAssertTrue(view.contains("DecisionHistoryPager<APIReconciliationHistory>()"))
         XCTAssertTrue(view.contains("if loading && rows.isEmpty"))
         XCTAssertTrue(view.contains("rows.isEmpty && errorMessage == nil"))
         XCTAssertTrue(view.contains("retryIntent.shouldReset(hasLoadedRows: !rows.isEmpty)"))
-        XCTAssertTrue(view.contains(".task(id: context)"))
-        XCTAssertTrue(view.contains("requestID == id, observedContext == context"))
-        XCTAssertTrue(view.contains("Set(ids).count == ids.count"))
+        XCTAssertTrue(view.contains(".task(id: historyContext)"))
+        XCTAssertTrue(view.contains("history.prepare(scope: historyScope)"))
+        XCTAssertTrue(view.contains("history.invalidate()"))
+        XCTAssertTrue(view.contains("store.authorityRevision")); XCTAssertTrue(view.contains("store.reportRevision"))
         XCTAssertTrue(view.contains("reconciliation-history-row-"))
     }
 
@@ -1198,7 +1250,10 @@ final class DemoStoreTests: XCTestCase {
         let end = source.range(of: "\nprivate struct ", range: start.upperBound..<source.endIndex)?.lowerBound ?? source.endIndex
         let transactionHistory = source[start.lowerBound..<end]
         XCTAssertTrue(transactionHistory.contains("if loading && changes.isEmpty"))
-        XCTAssertTrue(transactionHistory.contains("retryIntent = append ? .older : .refresh"))
+        XCTAssertTrue(transactionHistory.contains("DecisionHistoryPager<APITransactionChange>()"))
+        XCTAssertTrue(transactionHistory.contains(".task(id: historyContext)"))
+        XCTAssertTrue(transactionHistory.contains("history.prepare(scope: historyScope)"))
+        XCTAssertTrue(transactionHistory.contains("history.invalidate()"))
         XCTAssertTrue(transactionHistory.contains("load(append: !retryIntent.shouldReset(hasLoadedRows: !changes.isEmpty))"))
         XCTAssertTrue(transactionHistory.contains("History could not be refreshed."))
     }
@@ -1225,7 +1280,8 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertTrue(account.contains("workspace.authorityRevision"))
         XCTAssertTrue(account.contains("history.retryIntent.shouldReset(hasLoadedRows: !items.isEmpty)"))
         XCTAssertTrue(account.contains("history.invalidate()"))
-        XCTAssertTrue(transaction.contains("if HistoryObservationPolicy.mustDiscard(after: error) { changes = []; hasMore = false }"))
+        XCTAssertTrue(transaction.contains("DecisionHistoryPager<APITransactionChange>()"))
+        XCTAssertTrue(transaction.contains("history.load(reset: !append)"))
     }
     func testIndependentDecisionHistoriesDiscardDeniedObservations() throws {
         let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("BudgetApp/BudgetWorkspaceView.swift")
