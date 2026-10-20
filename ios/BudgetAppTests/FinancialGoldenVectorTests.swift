@@ -4,6 +4,26 @@ import BudgetAPI
 
 final class FinancialGoldenVectorTests: XCTestCase {
     @MainActor
+    func testPendingRequestCancellationPreservesIdentityAndRejectsReplacement() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("queue.json"), id = UUID().uuidString.lowercased()
+        let intent = RequestCancellationIntent(requestID: "r1", expectedVersion: 7, note: "Not needed")
+        let queue = LiveTransactionOutbox(fileURL: file)
+        try queue.enqueueRequestCancellation(id: id, intent: intent)
+        try queue.enqueueRequestCancellation(id: id, intent: intent)
+        let reopened = LiveTransactionOutbox(fileURL: file)
+        XCTAssertEqual(reopened.entries.first?.requestCancellation, intent); XCTAssertEqual(reopened.count, 1)
+        XCTAssertThrowsError(try reopened.enqueueRequestCancellation(id: id, intent: .init(requestID: "r1", expectedVersion: 8, note: "Changed")))
+        XCTAssertThrowsError(try reopened.enqueueRequestCancellation(id: UUID().uuidString, intent: intent))
+        XCTAssertThrowsError(try reopened.enqueueRequestCancellation(id: UUID().uuidString, intent: .init(requestID: "", expectedVersion: -1, note: "")))
+        do { try await reopened.replayCommands { _ in throw URLError(.networkConnectionLost) }; XCTFail("Expected lost response") }
+        catch { XCTAssertEqual((error as? URLError)?.code, .networkConnectionLost) }
+        XCTAssertEqual(LiveTransactionOutbox(fileURL: file).entries.first?.id, id)
+        try await reopened.replayCommands { entry in XCTAssertEqual(entry.id, id); XCTAssertEqual(entry.requestCancellation, intent) }
+        XCTAssertEqual(LiveTransactionOutbox(fileURL: file).count, 0)
+    }
+    @MainActor
     func testPendingFundingRequestRetainsExactIdentityAndRejectsChangedPayload() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }

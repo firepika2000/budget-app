@@ -2,6 +2,30 @@ import XCTest
 @testable import BudgetAPI
 
 final class APIClientTests: XCTestCase {
+    func testFundingCancellationIdentityAndCapabilityAreAdditive() async throws {
+        let identity = UUID().uuidString.lowercased()
+        let configuration = URLSessionConfiguration.ephemeral; configuration.protocolClasses = [MockURLProtocol.self]
+        var posts = 0
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer current")
+            XCTAssertEqual(request.url?.path, "/api/v1/budgets/b/requests/r/cancel")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "X-Request-Operation-ID"), posts == 0 ? nil : identity)
+            posts += 1
+            let body = try XCTUnwrap(JSONSerialization.jsonObject(with: requestBody(request)) as? [String: Any])
+            XCTAssertEqual(Set(body.keys), ["expected_request_version", "note"])
+            XCTAssertEqual(body["expected_request_version"] as? Int, 7); XCTAssertEqual(body["note"] as? String, "Reviewed")
+            let response = #"{"id":"r","requester_user_id":"member","request_type":"additional_allocation","destination_category_id":"c","requested_amount_minor":100,"reason":"","status":"cancelled","version":8,"actions":[]}"#
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, Data(response.utf8))
+        }
+        let client = try APIClient(baseURL: URL(string: "https://example.com")!, session: URLSession(configuration: configuration))
+        for id in [nil, identity] {
+            let result = try await client.cancelFinancialRequest(budgetID: "b", requestID: "r", expectedVersion: 7, note: "Reviewed", operationID: id, token: "current")
+            XCTAssertEqual(result.status, "cancelled")
+        }
+        XCTAssertEqual(posts, 2)
+        XCTAssertNil(try JSONDecoder().decode(APIFinancialRequestCapabilities.self, from: Data(#"{"creation_replay_version":1}"#.utf8)).cancellationReplayVersion)
+        XCTAssertEqual(try JSONDecoder().decode(APIFinancialRequestCapabilities.self, from: Data(#"{"creation_replay_version":1,"cancellation_replay_version":1}"#.utf8)).cancellationReplayVersion, 1)
+    }
     func testFundingRequestReplayCapabilityAndOptionalIdentityPreserveExactBody() async throws {
         let identity = UUID().uuidString.lowercased()
         var posts = 0

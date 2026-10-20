@@ -20,8 +20,8 @@ edits, observed bulk metadata/clearing actions, Assign, category Move Money and 
 creation/observed edits, observed Void with Reversal, reconciliation against a captured server-reviewed transaction set,
 integrity-bound attachment uploads with protected staged bytes, and ordinary scheduled-transaction creation.
 Funding-request creation also persists exact intent and a stable replay identity before network
-work. Request approval, revision and cancellation, and other administrative commands, still send
-directly through their authenticated APIs.
+work. Request cancellation also retains the reviewed version and note for safe replay. Request
+approval, revision and other administrative commands still send directly through authenticated APIs.
 The following defines the complete milestone, not a claim of human-accepted offline editing. Local Device
 already owns its local writes; its storage must not be replaced by a hosted replay queue.
 
@@ -60,6 +60,29 @@ Minimized human acceptance on the updated app and server:
    erasing data; the intent and budget observations must remain available.
 3. Reconnect and refresh. Confirm exactly one server request appears, pending sync clears, and ordinary
    refresh/relaunch does not create another request. Balances, RTA and category Available stay unchanged.
+
+### Offline funding request cancellation
+
+Confirmed cancellation now saves request identity, reviewed version and note before network work.
+The accepted request stays in its last confirmed state while Pending Sync and request detail identify
+the outstanding cancellation. Reappearance/relaunch retains the same immutable operation UUID;
+another local decision is disabled until the cancellation is acknowledged or explicitly discarded.
+Queueing cancellation never moves money or fabricates a cancelled request/action locally.
+
+Replay requires `cancellation_replay_version: 1` from the authorized capabilities endpoint before
+POST. Servers without that support receive no cancellation POST and retain intent for review.
+The server contract from `5e1f209` binds actor, budget, request, original version and note atomically
+to one receipt and cancellation history action. Replays recheck current permissions/category scope;
+changed intent, a newer conflicting decision, missing request or revoked access cannot silently
+overwrite server state. Rejected intent pauses for explicit attention rather than repeated automatic
+submission. Current credentials and the bound server are resolved again before sending.
+
+Human acceptance uses one disposable pending request: load it online, disconnect, confirm Cancel
+Request, and verify the pending label without a confirmed status change. Relaunch without erasing
+data, reconnect, and confirm one cancellation history action, no pending entry, and unchanged money.
+Deploy/restart a server containing `5e1f209` and rebuild the app first; no new schema revision is added.
+
+### Offline reconciliation
 
 Live reconciliation now persists its exact statement balance, cutoff, adjustment consent/reason,
 cleared-balance observation, opaque reviewed-set token and mutation UUID before sending. An

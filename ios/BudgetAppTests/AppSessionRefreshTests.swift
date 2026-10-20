@@ -14,6 +14,69 @@ import CryptoKit
 /// recovered the session. These tests lock in the single-flight fix and the clean sign-in transition.
 final class AppSessionRefreshTests: XCTestCase {
     @MainActor
+    func testLiveRequestCancellationSurvivesRelaunchAndSafelyHandlesServerOutcomes() async throws {
+        for outcome in ["success", "unsupported", "conflict", "denied"] {
+            let phase = Counter(), posts = FundingRequestPostRecorder()
+            let pending = #"{"id":"r1","requester_user_id":"member","request_type":"additional_allocation","destination_category_id":"c1","requested_amount_minor":9007199254740993,"reason":"Reviewed","status":"pending","version":7,"actions":[]}"#
+            let cancelled = pending.replacingOccurrences(of: #""status":"pending","version":7"#, with: #""status":"cancelled","version":8"#)
+            FundingRequestMockURLProtocol.handler = { request in
+                if phase.value == 1 { throw URLError(.notConnectedToInternet) }
+                if request.url!.path.hasSuffix("/requests/capabilities") {
+                    return Self.json(200, outcome == "unsupported" ? #"{"creation_replay_version":1}"# : #"{"creation_replay_version":1,"cancellation_replay_version":1}"#)
+                }
+                if request.httpMethod == "POST", request.url!.path.hasSuffix("/cancel") {
+                    posts.append(request)
+                    let body = try XCTUnwrap(JSONSerialization.jsonObject(with: Self.requestBody(request)) as? [String: Any])
+                    XCTAssertEqual(body["expected_request_version"] as? Int, 7)
+                    XCTAssertEqual(body["note"] as? String, "Not needed")
+                    if outcome == "conflict" { return Self.json(409, #"{"detail":"Request has already changed"}"#) }
+                    if outcome == "denied" { return Self.json(403, #"{"detail":"Insufficient capability"}"#) }
+                    if phase.value == 2 { throw URLError(.networkConnectionLost) }
+                    return Self.json(200, cancelled)
+                }
+                if request.url!.path.hasSuffix("/categories") {
+                    return Self.json(200, #"[{"id":"c1","budget_id":"b1","group_id":"g1","name":"Food","note":"","sort_order":0,"is_archived":false,"is_favorite":false}]"#)
+                }
+                if request.url!.path.hasSuffix("/requests") {
+                    return Self.json(200, "[\(outcome == "success" && phase.value >= 3 ? cancelled : pending)]")
+                }
+                return Self.workspaceResponse(request.url!.path)
+            }
+            let configuration = URLSessionConfiguration.ephemeral; configuration.protocolClasses = [FundingRequestMockURLProtocol.self]
+            let transport = URLSession(configuration: configuration)
+            let url = URL(string: "https://cancel-\(UUID().uuidString.lowercased()).example.com")!
+            let budget = APIBudget(id: "b1", householdID: "h1", name: "Home", currencyCode: "USD")
+            func workspace() -> BudgetWorkspaceStore {
+                BudgetWorkspaceStore.production(context: .live(budget: budget, serverURL: url, token: "A1"), clientFactory: { try APIClient(baseURL: $0, session: transport) })
+            }
+            let original = workspace(); await original.refresh()
+            let summary = original.summary, balances = original.accountBalances
+            XCTAssertEqual(original.requests.first?.status, "pending")
+            _ = phase.increment()
+            try await original.cancelRequest(id: "r1", version: 7, note: "Not needed")
+            XCTAssertTrue(posts.values.isEmpty); XCTAssertEqual(original.pendingSyncCount, 1)
+            XCTAssertEqual(original.requests.first?.status, "pending", "Saving cancellation must not synthesize acceptance")
+            let identity = try XCTUnwrap(original.pendingLiveTransactions.first?.id)
+            let reopened = workspace(); _ = phase.increment(); await reopened.refresh()
+            XCTAssertEqual(reopened.pendingLiveTransactions.first?.id, identity)
+            XCTAssertEqual(reopened.pendingLiveTransactions.first?.requestCancellation?.expectedVersion, 7)
+            reopened.updateLiveCredentials(serverURL: url, token: "A2")
+            _ = phase.increment(); await reopened.refresh()
+            XCTAssertEqual(reopened.summary, summary); XCTAssertEqual(reopened.accountBalances, balances)
+            if outcome == "success" {
+                XCTAssertEqual(reopened.pendingSyncCount, 0); XCTAssertEqual(reopened.requests.first?.status, "cancelled")
+                XCTAssertEqual(posts.values.count, 2); XCTAssertEqual(posts.values.last?.1, "Bearer A2")
+                XCTAssertEqual(Set(posts.values.map { $0.0 }), [identity])
+            } else {
+                XCTAssertEqual(reopened.pendingSyncCount, 1)
+                XCTAssertEqual(reopened.pendingLiveTransactions.first?.requiresReview, true)
+                XCTAssertEqual(reopened.requests.first?.status, "pending")
+                XCTAssertEqual(posts.values.count, outcome == "unsupported" ? 0 : 1, "Rejected intent must not automatically repeat")
+                try reopened.discardPendingLiveTransaction(id: identity)
+            }
+        }
+    }
+    @MainActor
     func testAuthorizedRequestCachePreservesHistoryAndLegacyCompatibility() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("request-cache-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: directory) }

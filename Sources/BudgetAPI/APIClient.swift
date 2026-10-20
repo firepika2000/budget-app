@@ -758,8 +758,10 @@ public struct APIClient {
         try await send(path: "api/v1/budgets/\(budgetID)/requests/\(requestID)/decision", method: "POST", token: token, body: decision)
     }
 
-    public func cancelFinancialRequest(budgetID: String, requestID: String, expectedVersion: Int, note: String = "", token: String) async throws -> APIFinancialRequest {
-        try await send(path: "api/v1/budgets/\(budgetID)/requests/\(requestID)/cancel", method: "POST", token: token, body: APIFinancialRequestCancel(expectedRequestVersion: expectedVersion, note: note))
+    public func cancelFinancialRequest(budgetID: String, requestID: String, expectedVersion: Int, note: String = "", operationID: String? = nil, token: String) async throws -> APIFinancialRequest {
+        try await send(url: baseURL.appending(path: "api/v1/budgets/\(budgetID)/requests/\(requestID)/cancel"), method: "POST", token: token,
+            bodyData: JSONEncoder().encode(APIFinancialRequestCancel(expectedRequestVersion: expectedVersion, note: note)),
+            headers: operationID.map { ["X-Request-Operation-ID": $0] } ?? [:])
     }
 
     public func reviseFinancialRequest(budgetID: String, requestID: String, value: APIFinancialRequestCreate, expectedVersion: Int, token: String) async throws -> APIFinancialRequest {

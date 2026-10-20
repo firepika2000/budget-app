@@ -619,6 +619,15 @@ struct ReportFilterSelection: Equatable {
     var isActive: Bool { self != Self() }
 }
 
+struct RequestCancellationIntent: Codable, Equatable {
+    let requestID: String
+    let expectedVersion: Int
+    let note: String
+    var isValidPending: Bool {
+        !requestID.isEmpty && requestID.count <= 128 && expectedVersion >= 0 && note.unicodeScalars.count <= 500
+    }
+}
+
 struct FundingRequestDecisionDraft {
     var amount = ""
     var sourceCategoryID = ""
@@ -1168,6 +1177,7 @@ final class LiveTransactionOutbox {
         var scheduleRealization: RealizeScheduleOperation? = nil
         var attachmentRemoval: DetachAttachmentOperation? = nil
         var requestCreation: APIFinancialRequestCreate? = nil
+        var requestCancellation: RequestCancellationIntent? = nil
         var referencedTransactionIDs: Set<String> {
             var ids = Set([transactionID, attachmentUpload?.transactionID, attachmentRemoval?.transactionID,
                 voidCommand?.transactionID, duplicateCommand?.transactionID, deletionCommand?.transactionID].compactMap { $0 })
@@ -1382,6 +1392,7 @@ final class LiveTransactionOutbox {
                   existing.scheduleRealization == entry.scheduleRealization,
                   existing.attachmentRemoval == entry.attachmentRemoval,
                   existing.requestCreation == entry.requestCreation,
+                  existing.requestCancellation == entry.requestCancellation,
                   existing.operation == nil && existing.bulkUpdate == nil else {
                 throw BudgetApplicationError.invalidOperation("A pending command identity cannot be reused for different details.")
             }
@@ -1417,6 +1428,16 @@ final class LiveTransactionOutbox {
             throw BudgetApplicationError.invalidOperation("Enter a valid category, positive amount and request reason before saving.")
         }
         try enqueuePlanning(Entry(id: id, queuedAt: Date(), operation: nil, requestCreation: request))
+    }
+
+    func enqueueRequestCancellation(id: String, intent: RequestCancellationIntent) throws {
+        guard UUID(uuidString: id) != nil, intent.isValidPending else {
+            throw BudgetApplicationError.invalidOperation("Reopen this request to review its details before cancelling.")
+        }
+        if let existing = entries.first(where: { $0.requestCancellation?.requestID == intent.requestID }), existing.id != id {
+            throw BudgetApplicationError.invalidOperation("A cancellation for this request is already saved in Pending Sync.")
+        }
+        try enqueuePlanning(Entry(id: id, queuedAt: Date(), operation: nil, requestCancellation: intent))
     }
 
     func enqueueMakeRecurring(transactionID: String, operation: MakeRecurringOperation) throws {
@@ -1643,8 +1664,11 @@ final class LiveTransactionOutbox {
         guard Set(values.map(\.id)).count == values.count,
               values.allSatisfy({ entry in
                   guard UUID(uuidString: entry.id) != nil else { return false }
-                  let payloadCount = [entry.operation != nil, entry.bulkUpdate != nil, entry.assignment != nil, entry.moneyMove != nil, entry.accountTransfer != nil, entry.reconciliation != nil, entry.voidCommand != nil, entry.duplicateCommand != nil, entry.deletionCommand != nil, entry.transferDeletionCommand != nil, entry.attachmentUpload != nil, entry.scheduleCreation != nil, entry.makeRecurring != nil, entry.scheduleEdit != nil, entry.scheduleDeletion != nil, entry.scheduleRealization != nil, entry.attachmentRemoval != nil, entry.requestCreation != nil].filter { $0 }.count
+                  let payloadCount = [entry.operation != nil, entry.bulkUpdate != nil, entry.assignment != nil, entry.moneyMove != nil, entry.accountTransfer != nil, entry.reconciliation != nil, entry.voidCommand != nil, entry.duplicateCommand != nil, entry.deletionCommand != nil, entry.transferDeletionCommand != nil, entry.attachmentUpload != nil, entry.scheduleCreation != nil, entry.makeRecurring != nil, entry.scheduleEdit != nil, entry.scheduleDeletion != nil, entry.scheduleRealization != nil, entry.attachmentRemoval != nil, entry.requestCreation != nil, entry.requestCancellation != nil].filter { $0 }.count
                   guard payloadCount == 1 else { return false }
+                  if let cancellation = entry.requestCancellation {
+                      return entry.scheduleID == nil && entry.transactionID == nil && entry.transferID == nil && cancellation.isValidPending
+                  }
                   if let request = entry.requestCreation {
                       return entry.scheduleID == nil && entry.transactionID == nil && entry.transferID == nil && request.isValidPending
                   }

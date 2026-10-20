@@ -49,10 +49,10 @@ final class DemoStoreTests: XCTestCase {
         for signature in ["private func cancel() async {", "private func decide(_ decision: String) async {"] {
             let handler = try XCTUnwrap(view.range(of: signature))
             let prefix = String(view[handler.upperBound...].prefix(250))
-            XCTAssertTrue(prefix.hasPrefix(" guard !isSaving, draft.matches(request), let request, let version = draft.expectedVersion else { return }; isSaving = true; defer { isSaving = false }"))
+            XCTAssertTrue(prefix.hasPrefix(" guard !isSaving, !cancellationPending, draft.matches(request), let request, let version = draft.expectedVersion else { return }; isSaving = true; defer { isSaving = false }"))
         }
         XCTAssertFalse(view.contains("version: request.version"))
-        XCTAssertTrue(view.contains(".disabled(isSaving || !draft.matches(request))"))
+        XCTAssertTrue(view.contains(".disabled(isSaving || cancellationPending || !draft.matches(request))"))
     }
     func testEditingSaveHandlersClaimSubmissionBeforeFirstSuspension() throws {
         let directory = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("BudgetApp")

@@ -2,7 +2,7 @@
 
 ## Current workspace checkpoint
 
-Inspected implementation: `0f6bf2c` on `codex/development`, plus the reviewed request-version correction below. App and widget remain `0.11.0`
+Inspected implementation: `5e1f209` on `codex/development`, plus the offline cancellation integration below. App and widget remain `0.11.0`
 build `7`; TestFlight is held. Regular Xcode 27.1 (`27A9275`) builds and executes focused tests
 on preserved iPhone 17 Pro Max `3ABD861E-D38D-4AFD-A356-959266051564`, iOS 27.0 (`24A434`).
 No Simulator or Live data reset, merge, tag, or release is part of these checkpoints.
@@ -21,7 +21,8 @@ and cancellation handlers claim submission before suspension. The follow-through
 the draft to the request ID and version actually reviewed rather than silently adopting a newer
 version from background refresh. Changed requests disable actions until Reload Latest Request
 explicitly discards the old draft. Submitted commands still pass through the canonical application
-service and server version/permission checks; approval, revision and cancellation remain online.
+service and server version/permission checks. Cancellation now also has durable replay as described
+below; approval and revision remain online.
 
 The reviewed-version checkpoint passed four native tests and the production delegated-cancellation
 UI test in `Test-BudgetApp-2026.10.20_09-24-12--0400.xcresult`, plus the backend single-winner
@@ -43,10 +44,34 @@ Funding-request creation now uses the protected Live outbox and the server recei
 Replay checks current credentials, bound server and advertised replay support before POST. An old
 server receives no creation POST; saved intent remains for review. Requests and Pending Sync label
 unconfirmed intent separately from accepted server data. A transient outbox failure no longer blocks
-normal workspace reads or the existing cache fallback. Approval, revision and cancellation are not
-new offline commands. See `DATA-OWNERSHIP.md` for the consolidated human acceptance flow.
+normal workspace reads or the existing cache fallback. Approval and revision are not new offline
+commands. See `DATA-OWNERSHIP.md` for the consolidated human acceptance flows.
 
-Four focused native tests passed in `Test-BudgetApp-2026.10.20_08-52-02--0400.xcresult`; the API
+### Offline request cancellation
+
+The protected Live outbox now persists the reviewed request/version/note before attempting
+cancellation, preserving one operation identity after connection loss or relaunch. Request detail,
+request rows and Pending Sync identify cancellation awaiting server confirmation without changing
+the accepted status locally. Existing pending intent prevents overlapping local decisions; changed
+payload cannot reuse its identity. Definitive rejection pauses for review.
+
+Capability discovery requires the new server cancellation contract (`5e1f209`), so a server that
+only supports request creation receives no unsafe cancellation POST. Replay uses current credentials
+and revalidates the bound server. Server receipts preserve one cancellation action and current
+authorization; the preceding focused backend request/auth/golden-vector run passed 58 tests.
+This integration needs an app rebuild and updated server deployment/restart, not a new migration.
+The minimized disconnect/relaunch/reconnect human flow is in `DATA-OWNERSHIP.md`.
+
+Four focused native tests and the production delegated-cancellation UI flow passed in
+`Test-BudgetApp-2026.10.20_09-32-27--0400.xcresult`. The Live-shaped test executes offline save,
+reopen, lost response and token rotation, plus unsupported-server, conflict and denial outcomes;
+accepted request status and money remain unchanged until authoritative confirmation. Queue tests
+cover identity/payload immutability, one pending cancellation per request and durable replay. Two
+Swift API tests, the regular-Xcode simulator build and diff check passed. The production UI test
+covers the shared confirmation/history path, not a human offline/multi-device acceptance pass.
+
+At the preceding request-creation checkpoint, four focused native tests passed in
+`Test-BudgetApp-2026.10.20_08-52-02--0400.xcresult`; the API
 contract test also executed and passed. The simulator build and diff check passed. Healthy-read
 fixtures now include required authoritative account balances and isolated durable cache namespaces;
 the existing transient/denial regression reaches its intended error phase. No human pass is claimed.
