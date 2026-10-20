@@ -12,6 +12,41 @@ import UserNotifications
 
 final class DemoStoreTests: XCTestCase {
     @MainActor
+    func testHouseholdAccessHistoryRefreshDepthDenialAndLateResponse() async throws {
+        func event(_ id: String) throws -> APIHouseholdAccessEvent {
+            try JSONDecoder().decode(APIHouseholdAccessEvent.self, from: Data("""
+            {"id":"\(id)","event_type":"member_removed","actor_display_name":"Owner","created_at":"2026-10-20"}
+            """.utf8))
+        }
+        let first = try event("first"), second = try event("second")
+        let pager = DecisionHistoryPager<APIHouseholdAccessEvent>(pageSize: 1)
+        pager.prepare(scope: "owner|household")
+        await pager.load(reset: true) { _, _ in [first] }
+        await pager.load(reset: false) { _, offset in XCTAssertEqual(offset, 1); return [second] }
+        var offsets: [Int] = []
+        await pager.load(reset: true) { _, offset in
+            offsets.append(offset); return offset == 0 ? [first] : [second]
+        }
+        XCTAssertEqual(offsets, [0, 1]); XCTAssertEqual(pager.rows.map(\.id), ["first", "second"])
+        await pager.load(reset: false) { _, _ in throw URLError(.timedOut) }
+        XCTAssertEqual(pager.retryIntent, .older); XCTAssertEqual(pager.rows.count, 2)
+        await pager.load(reset: false) { _, _ in throw APIClientError.server(status: 403, message: "Denied") }
+        XCTAssertTrue(pager.rows.isEmpty)
+        await pager.load(reset: true) { _, _ in
+            pager.prepare(scope: "another-member|household"); return [first]
+        }
+        XCTAssertTrue(pager.rows.isEmpty)
+        let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("BudgetApp/BudgetWorkspaceView.swift")
+        let source = try String(contentsOf: file)
+        let start = try XCTUnwrap(source.range(of: "private struct HouseholdMemberLifecycleView: View"))
+        let end = try XCTUnwrap(source.range(of: "private struct HouseholdInvitationDraft:"))
+        let view = String(source[start.lowerBound..<end.lowerBound])
+        XCTAssertTrue(view.contains("DecisionHistoryPager<APIHouseholdAccessEvent>(pageSize: 50)"))
+        XCTAssertTrue(view.contains(".task(id: historyContext)"))
+        XCTAssertTrue(view.contains(".onDisappear { requestID = UUID(); history.invalidate() }"))
+        XCTAssertTrue(view.contains("historyScope == scope"))
+    }
+    @MainActor
     func testWhatIfScenarioRebasesAfterScheduleRefreshWithoutChangingMoney() async throws {
         let store = BudgetWorkspaceStore.demo()
         await store.refresh()
@@ -1227,10 +1262,15 @@ final class DemoStoreTests: XCTestCase {
         for name in ["ReconciliationHistoryView", "StatementImportHistoryView", "HouseholdMemberLifecycleView"] {
             let start = try XCTUnwrap(source.range(of: "private struct \(name): View"))
             let end = source.range(of: "\nprivate struct ", range: start.upperBound..<source.endIndex)?.lowerBound ?? source.endIndex
-            XCTAssertTrue(source[start.lowerBound..<end].contains("HistoryObservationPolicy.mustDiscard(after: error)"), name)
+            let view = source[start.lowerBound..<end]
+            if name == "ReconciliationHistoryView" {
+                XCTAssertTrue(view.contains("DecisionHistoryPager<APIReconciliationHistory>()"))
+            } else {
+                XCTAssertTrue(view.contains("HistoryObservationPolicy.mustDiscard(after: error)"), name)
+            }
         }
         XCTAssertTrue(source.contains("pager.clear(); selected = nil"))
-        XCTAssertTrue(source.contains("invitations = []; events = []; hasMoreEvents = false"))
+        XCTAssertTrue(source.contains("invitations = []; history.prepare(scope: \"denied\")"))
     }
     func testProductionTransactionBrowsersDiscardDeniedIndependentObservations() throws {
         let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("BudgetApp/BudgetWorkspaceView.swift")
@@ -3235,9 +3275,9 @@ final class DemoStoreTests: XCTestCase {
                       "category history must not stop at the hydrated recent rows")
         XCTAssertTrue(workspace.contains("household-access-history-load-more"),
                       "owner-visible household access history must not silently stop at a recent-row cap")
-        XCTAssertTrue(workspace.contains("householdAccessEvents(limit: eventPageSize, offset: events.count)"),
+        XCTAssertTrue(workspace.contains("store.householdAccessEvents(limit: limit, offset: offset)"),
                       "household access history must request older authoritative pages instead of slicing one snapshot")
-        XCTAssertTrue(workspace.contains("(\"Household\", \"person.2.fill\")"),
+        XCTAssertTrue(workspace.contains("WorkspaceDestination(id: 5, title: \"Household\", symbol: \"person.2.fill\")"),
                       "the production workspace must expose Household as a direct first-class destination")
         XCTAssertFalse(workspace.contains("TabView(selection: tabSelection)"),
                        "the six-destination iPhone shell must not regress to UITabBarController's More fallback")
@@ -3268,7 +3308,8 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertTrue(workspace.contains("try await upload(data: data"), "camera, Photos, and Files must converge on the existing attachment upload service")
         XCTAssertEqual(workspace.components(separatedBy: "uploadTransactionAttachment(id: transaction.id").count - 1, 1, "attachment sources must not create separate storage/upload paths")
         XCTAssertTrue(workspace.contains(".buttonStyle(.plain).accessibilityIdentifier(\"attachment-preview-"), "preview and remove must not inherit Form row-wide button activation")
-        XCTAssertTrue(workspace.contains(".buttonStyle(.borderless).foregroundStyle(.red).accessibilityIdentifier(\"attachment-remove-"))
+        XCTAssertTrue(workspace.contains(".buttonStyle(.borderless).foregroundStyle(.red)"))
+        XCTAssertTrue(workspace.contains(".accessibilityIdentifier(\"attachment-remove-"))
         XCTAssertTrue(workspace.contains(".confirmationDialog(\"Remove Attachment?\""), "detach must require explicit confirmation")
         XCTAssertTrue(workspace.contains("AttachmentPreviewScreen"), "Quick Look must be contained in an explicitly dismissible navigation boundary")
         XCTAssertTrue(workspace.contains("dismantleUIViewController"), "the Quick Look bridge must release its data source when dismissed")

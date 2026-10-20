@@ -15116,18 +15116,20 @@ private struct AllowanceCreateView: View {
 private struct HouseholdMemberLifecycleView: View {
     @ObservedObject var store: BudgetWorkspaceStore
     @State private var invitations: [APIInvitationSummary] = []
-    @State private var events: [APIHouseholdAccessEvent] = []
+    @StateObject private var history = DecisionHistoryPager<APIHouseholdAccessEvent>(pageSize: 50)
+    private var events: [APIHouseholdAccessEvent] { history.rows }
     @State private var invitationDraft: HouseholdInvitationDraft?
     @State private var secret: APIInvitationSecret?
     @State private var pendingInvitationSecret: APIInvitationSecret?
     @State private var removing: APIHouseholdMember?
     @State private var isLoading = true
-    @State private var loadingMoreEvents = false
-    @State private var hasMoreEvents = false
-    @State private var eventPageError: String?
+    private var loadingMoreEvents: Bool { history.loadingOlder }
+    private var hasMoreEvents: Bool { history.canLoadOlder }
+    private var eventPageError: String? { history.errorMessage }
     @State private var errorMessage: String?
-
-    private let eventPageSize = 50
+    @State private var requestID = UUID()
+    private var historyScope: String { "\(store.authorityRevision)|\(store.budget.id)|\(store.budget.householdID)" }
+    private var historyContext: String { "\(historyScope)|\(store.reportRevision)" }
 
     var body: some View {
         List {
@@ -15182,9 +15184,12 @@ private struct HouseholdMemberLifecycleView: View {
                     }
                     if let eventPageError {
                         VStack(alignment: .leading, spacing: 6) {
-                            Text("Older access activity could not be loaded.").font(.subheadline.weight(.semibold))
+                            Text("Access activity could not be updated.").font(.subheadline.weight(.semibold))
                             Text(eventPageError).font(.caption).foregroundStyle(.secondary)
-                            Button("Try Again") { Task { await loadMoreEvents() } }
+                            Button("Try Again") { Task {
+                                if history.retryIntent.shouldReset(hasLoadedRows: !events.isEmpty) { await load() }
+                                else { await loadMoreEvents() }
+                            } }
                         }
                         .accessibilityIdentifier("household-access-history-page-error")
                     } else if hasMoreEvents {
@@ -15203,7 +15208,15 @@ private struct HouseholdMemberLifecycleView: View {
         }
         .navigationTitle("Members")
         .toolbar { Button("Invite", systemImage: "person.badge.plus") { invitationDraft = .init(email: "", role: "adult") }.accessibilityIdentifier("invite-household-member") }
-        .task { await load() }
+        .task(id: historyContext) {
+            history.prepare(scope: historyScope)
+            await load()
+        }
+        .onDisappear { requestID = UUID(); history.invalidate() }
+        .onChange(of: historyScope) { _, _ in
+            invitations = []; secret = nil; pendingInvitationSecret = nil
+        }
+        .refreshable { await load() }
         .sheet(item: $invitationDraft, onDismiss: {
             // Present the one-time code only after the creation sheet has actually dismissed.
             // Completing an async reload is not a presentation-completion signal.
@@ -15233,41 +15246,46 @@ private struct HouseholdMemberLifecycleView: View {
         }
     }
     private func load() async {
+        let observed = UUID(); requestID = observed
+        let scope = historyScope
         isLoading = true
-        defer { isLoading = false }
+        defer { if requestID == observed { isLoading = false } }
         do {
-            async let invitationRows = store.householdInvitations()
-            async let eventRows = store.householdAccessEvents(limit: eventPageSize, offset: 0)
-            invitations = try await invitationRows
-            events = try await eventRows
-            hasMoreEvents = events.count == eventPageSize
-            eventPageError = nil
-            errorMessage = nil
+            let invitationRows = try await store.householdInvitations()
+            try Task.checkCancellation()
+            guard requestID == observed, historyScope == scope else { return }
+            await history.load(reset: true) { limit, offset in
+                try await store.householdAccessEvents(limit: limit, offset: offset)
+            }
+            guard requestID == observed, historyScope == scope, !Task.isCancelled else { return }
+            if history.errorMessage == nil { invitations = invitationRows; errorMessage = nil }
+            else {
+                if history.rows.isEmpty {
+                    invitations = []; secret = nil; pendingInvitationSecret = nil
+                    errorMessage = history.errorMessage
+                }
+            }
         } catch {
+            guard requestID == observed, historyScope == scope, !(error is CancellationError) else { return }
             discardDeniedHouseholdHistory(error)
             errorMessage = error.localizedDescription
         }
     }
 
     private func loadMoreEvents() async {
-        guard hasMoreEvents, !loadingMoreEvents else { return }
-        loadingMoreEvents = true
-        defer { loadingMoreEvents = false }
-        do {
-            let older = try await store.householdAccessEvents(limit: eventPageSize, offset: events.count)
-            let knownIDs = Set(events.map(\.id))
-            events.append(contentsOf: older.filter { !knownIDs.contains($0.id) })
-            hasMoreEvents = older.count == eventPageSize
-            eventPageError = nil
-        } catch {
-            discardDeniedHouseholdHistory(error)
-            eventPageError = error.localizedDescription
-            if events.isEmpty { errorMessage = error.localizedDescription }
+        guard !isLoading else { return }
+        let observed = requestID, scope = historyScope
+        await history.load(reset: false) { limit, offset in
+            try await store.householdAccessEvents(limit: limit, offset: offset)
+        }
+        guard requestID == observed, historyScope == scope, !Task.isCancelled else { return }
+        if events.isEmpty, let error = history.errorMessage {
+            invitations = []; secret = nil; pendingInvitationSecret = nil; errorMessage = error
         }
     }
     private func discardDeniedHouseholdHistory(_ error: Error) {
         if HistoryObservationPolicy.mustDiscard(after: error) {
-            invitations = []; events = []; hasMoreEvents = false
+            invitations = []; history.prepare(scope: "denied")
             secret = nil; pendingInvitationSecret = nil
         }
     }
