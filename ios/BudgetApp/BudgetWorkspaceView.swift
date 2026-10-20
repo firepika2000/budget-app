@@ -3926,6 +3926,22 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
     }
 
     private func sendPendingTransaction(_ entry: LiveTransactionOutbox.Entry) async throws {
+        if let request = entry.requestCreation {
+            try await credentials.prepare()
+            try transactionOutbox.requireServer(budgetID: budget.id, serverURL: credentials.serverURL, token: credentials.token)
+            do {
+                let support = try await client.financialRequestCapabilities(budgetID: budget.id, token: token)
+                guard support.creationReplayVersion == 1 else {
+                    throw APIClientError.server(status: 409, message: "Update ClearPocket Server before retrying this saved funding request.")
+                }
+            } catch APIClientError.server(status: 404, message: _) {
+                throw APIClientError.server(status: 409, message: "This server needs an update for safe funding-request retries. Your request remains saved in Pending Sync.")
+            }
+            try await credentials.prepare()
+            try transactionOutbox.requireServer(budgetID: budget.id, serverURL: credentials.serverURL, token: credentials.token)
+            _ = try await client.createFinancialRequest(budgetID: budget.id, request: request, operationID: entry.id, token: token)
+            return
+        }
         if let removal = entry.attachmentRemoval {
             try await credentials.prepare()
             try transactionOutbox.requireServer(budgetID: budget.id, serverURL: credentials.serverURL, token: credentials.token)
@@ -4378,7 +4394,13 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
     func debtPayoffPlanHistory(limit: Int, offset: Int) async throws -> [APIDebtPayoffPlanRevision] { try await credentials.prepare(); return try await client.debtPayoffPlanHistory(budgetID: budget.id, limit: limit, offset: offset, token: token) }
     func saveDebtPayoffPlan(_ value: APIDebtPayoffPlanUpsert) async throws -> APIDebtPayoffPlan { try await credentials.prepare(); return try await client.saveDebtPayoffPlan(budgetID: budget.id, request: value, token: token) }
     func deleteDebtPayoffPlan() async throws { try await credentials.prepare(); try await client.deleteDebtPayoffPlan(budgetID: budget.id, token: token) }
-    func createRequest(_ value: APIFinancialRequestCreate) async throws { try await credentials.prepare(); _ = try await client.createFinancialRequest(budgetID: budget.id, request: value, token: token) }
+    func createRequest(_ value: APIFinancialRequestCreate) async throws {
+        guard budget.can("request_money") else { throw workspaceRepositoryError("You do not have permission to request money.") }
+        let identity = UUID().uuidString.lowercased()
+        try transactionOutbox.enqueueRequest(id: identity, request: value)
+        do { try await replaySavedPlanning() }
+        catch { guard transactionOutbox.entries.contains(where: { $0.id == identity }) else { throw error } }
+    }
     func updateCategory(id: String, value: APICategoryUpdate, groupName: String?, existingDelegatedUserID: String?, delegatedUserID: String?) async throws { try await credentials.prepare(); _ = try await client.updateCategory(budgetID: budget.id, categoryID: id, category: value, token: token); if existingDelegatedUserID != delegatedUserID { _ = try await client.updateCategoryDelegation(budgetID: budget.id, categoryID: id, delegatedUserID: delegatedUserID, token: token) } }
     func updateGroup(id: String, currentName: String?, value: APICategoryGroupUpdate) async throws { try await credentials.prepare(); _ = try await client.updateCategoryGroup(budgetID: budget.id, groupID: id, group: value, token: token) }
     func categoryHistory(categoryID: String, limit: Int, offset: Int) async throws -> [APIBudgetStructureRevision] { try await credentials.prepare(); return try await client.categoryHistory(budgetID: budget.id, categoryID: categoryID, limit: limit, offset: offset, token: token) }
@@ -5035,7 +5057,12 @@ final class BudgetWorkspaceStore: ObservableObject {
                 if let live = commandRepository as? LiveWorkspaceCommandRepository {
                     pendingSyncCount = live.pendingTransactionCount
                     if pendingSyncCount > 0 {
-                        try await live.flushTransactionOutbox()
+                        do { try await live.flushTransactionOutbox() }
+                        catch where isTransientConnectivityFailure(error) {
+                            // Uncertain command delivery must not prevent authoritative or cached
+                            // reads. The immutable pending identity remains available for retry.
+                            syncStatusMessage = "Saved changes are waiting for server confirmation."
+                        }
                         pendingSyncCount = live.pendingTransactionCount
                     }
                 }
@@ -5407,6 +5434,9 @@ final class BudgetWorkspaceStore: ObservableObject {
         guard !workspaceAccessDenied else { return [] }
         let accountIDs = Set(accounts.map(\.id)), categoryIDs = Set(categories.map(\.id))
         return ((commandRepository as? LiveWorkspaceCommandRepository)?.pendingTransactions ?? []).filter { entry in
+            if let request = entry.requestCreation {
+                return budget.can("request_money") && budget.can("view_categories") && categoryIDs.contains(request.destinationCategoryID)
+            }
             if let removal = entry.attachmentRemoval {
                 return budget.can("edit_transaction") && budget.can("view_transactions")
                     && transactions.contains(where: { $0.id == removal.transactionID })
@@ -6969,6 +6999,11 @@ private struct PendingLiveTransactionsView: View {
                                 Text("\(accountName(reconciliation.accountID)) · through \(reconciliation.throughDate) · \(store.format(reconciliation.statementBalanceMinor))")
                                     .font(.caption).foregroundStyle(.secondary)
                                 Text("Saved for server approval · reconciliation history and balances remain unchanged until accepted")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            } else if let request = entry.requestCreation {
+                                Text("Request Money").font(.headline)
+                                Text("\(store.categories.first(where: { $0.id == request.destinationCategoryID }).map(store.categoryDisplayName) ?? "Category") · \(store.format(request.requestedAmountMinor))")
+                                Text("Saved on this iPhone · awaiting server confirmation")
                                     .font(.caption).foregroundStyle(.secondary)
                             } else if let removal = entry.attachmentRemoval {
                                 Text("Remove Attachment").font(.headline)
@@ -8815,8 +8850,22 @@ private struct ForecastScenarioView: View {
 
 private struct LiveRequestsView: View {
     @EnvironmentObject private var store: BudgetWorkspaceStore
+    private var pending: [LiveTransactionOutbox.Entry] { store.pendingLiveTransactions.filter { $0.requestCreation != nil } }
     var body: some View {
         List {
+            if !pending.isEmpty {
+                Section("Saved on this iPhone") {
+                    ForEach(pending) { entry in
+                        if let request = entry.requestCreation {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("\(store.categories.first(where: { $0.id == request.destinationCategoryID }).map(store.categoryDisplayName) ?? "Category") · \(store.format(request.requestedAmountMinor))")
+                                Text("Awaiting server confirmation · no money has moved").font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    NavigationLink("Review Pending Sync") { PendingLiveTransactionsView(store: store) }
+                }
+            }
             Section("Active") {
                 ForEach(store.requests.filter { ["pending", "changes_requested"].contains($0.status) }) { row($0) }
             }
@@ -8826,7 +8875,7 @@ private struct LiveRequestsView: View {
         }
         .navigationTitle("Requests")
         .refreshable { await store.refresh() }
-        .overlay { if store.requests.isEmpty { ContentUnavailableView("No requests", systemImage: "hand.raised", description: Text("Requests you are authorized to view appear here.")) } }
+        .overlay { if store.requests.isEmpty && pending.isEmpty { ContentUnavailableView("No requests", systemImage: "hand.raised", description: Text("Requests you are authorized to view appear here.")) } }
     }
     private func row(_ request: APIFinancialRequest) -> some View {
         NavigationLink { LiveRequestDetailView(requestID: request.id) } label: {

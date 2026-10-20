@@ -4,6 +4,26 @@ import BudgetAPI
 
 final class FinancialGoldenVectorTests: XCTestCase {
     @MainActor
+    func testPendingFundingRequestRetainsExactIdentityAndRejectsChangedPayload() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("queue.json")
+        let queue = LiveTransactionOutbox(fileURL: file)
+        let id = UUID().uuidString.lowercased()
+        let request = APIFinancialRequestCreate(destinationCategoryID: "delegated-food", requestedAmountMinor: 9_007_199_254_740_993, reason: "Reviewed")
+        try queue.enqueueRequest(id: id, request: request); try queue.enqueueRequest(id: id, request: request)
+        let reopened = LiveTransactionOutbox(fileURL: file)
+        XCTAssertEqual(reopened.entries.first?.id, id); XCTAssertEqual(reopened.entries.first?.requestCreation, request)
+        XCTAssertEqual(reopened.count, 1)
+        XCTAssertThrowsError(try reopened.enqueueRequest(id: id, request: .init(destinationCategoryID: "other", requestedAmountMinor: 1, reason: "Changed")))
+        XCTAssertThrowsError(try reopened.enqueueRequest(id: UUID().uuidString, request: .init(destinationCategoryID: "food", requestedAmountMinor: 0, reason: "")))
+        do { try await reopened.replayCommands { _ in throw URLError(.notConnectedToInternet) }; XCTFail("Expected outage") }
+        catch { XCTAssertEqual((error as? URLError)?.code, .notConnectedToInternet) }
+        XCTAssertEqual(LiveTransactionOutbox(fileURL: file).entries.first?.id, id)
+        try await reopened.replayCommands { entry in XCTAssertEqual(entry.id, id); XCTAssertEqual(entry.requestCreation, request) }
+        XCTAssertEqual(LiveTransactionOutbox(fileURL: file).count, 0)
+    }
+    @MainActor
     func testPendingAttachmentRemovalRetainsReviewedIdentityAcrossRelaunch() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory) }

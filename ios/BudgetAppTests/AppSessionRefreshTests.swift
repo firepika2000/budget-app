@@ -13,6 +13,80 @@ import CryptoKit
 /// user-visible "Invalid or expired refresh token" alert even though the winning refresh had already
 /// recovered the session. These tests lock in the single-flight fix and the clean sign-in transition.
 final class AppSessionRefreshTests: XCTestCase {
+    @MainActor
+    func testLiveFundingRequestNeverPostsToUnsupportedServerAndRetainsReview() async throws {
+        let posts = FundingRequestPostRecorder()
+        FundingRequestMockURLProtocol.handler = { request in
+            if request.url!.path.hasSuffix("/requests/capabilities") { return Self.json(404, #"{"detail":"Not found"}"#) }
+            if request.httpMethod == "POST" { posts.append(request); return Self.json(500, "{}") }
+            if request.url!.path.hasSuffix("/account-balances") {
+                return Self.json(200, #"[{"account_id":"private-account","currency_code":"USD","cleared_balance_minor":0,"uncleared_balance_minor":0,"working_balance_minor":0}]"#)
+            }
+            return Self.workspaceResponse(request.url!.path)
+        }
+        let configuration = URLSessionConfiguration.ephemeral; configuration.protocolClasses = [FundingRequestMockURLProtocol.self]
+        let transport = URLSession(configuration: configuration)
+        let url = URL(string: "https://old-request-server-\(UUID().uuidString.lowercased()).example.com")!
+        let store = BudgetWorkspaceStore.production(context: .live(budget: .init(id: "b1", householdID: "h1", name: "Home", currencyCode: "USD"), serverURL: url, token: "A1"),
+            clientFactory: { try APIClient(baseURL: $0, session: transport) })
+        try await store.createRequest(.init(destinationCategoryID: "c1", requestedAmountMinor: 100, reason: "Keep intent"))
+        XCTAssertTrue(posts.values.isEmpty); XCTAssertEqual(store.pendingSyncCount, 1)
+        store.categories = [try JSONDecoder().decode(APICategory.self, from: Data(#"{"id":"c1","budget_id":"b1","group_id":"g1","name":"Food","note":"","sort_order":0,"is_archived":false,"is_favorite":false}"#.utf8))]
+        XCTAssertEqual(store.pendingLiveTransactions.first?.requiresReview, true)
+        XCTAssertEqual(store.pendingLiveTransactions.first?.requestCreation?.requestedAmountMinor, 100)
+        let id = try XCTUnwrap(store.pendingLiveTransactions.first?.id)
+        try store.discardPendingLiveTransaction(id: id)
+        XCTAssertEqual(store.pendingSyncCount, 0)
+    }
+    @MainActor
+    func testLiveFundingRequestReplaysAfterRelaunchWithRotatedCredentialAndNoLocalMoney() async throws {
+        let phase = Counter(), posts = FundingRequestPostRecorder()
+        let categoryJSON = #"{"id":"c1","budget_id":"b1","group_id":"g1","name":"Food","note":"","sort_order":0,"is_archived":false,"is_favorite":false}"#
+        let accepted = #"{"id":"r1","requester_user_id":"member","request_type":"additional_allocation","destination_category_id":"c1","requested_amount_minor":9007199254740993,"reason":"Offline request","status":"pending","version":0,"approved_amount_minor":null,"source_category_id":null,"allocation_operation_id":null,"actions":[]}"#
+        FundingRequestMockURLProtocol.handler = { request in
+            if phase.value == 1 { throw URLError(.notConnectedToInternet) }
+            if request.url!.path.hasSuffix("/requests/capabilities") { return Self.json(200, #"{"creation_replay_version":1}"#) }
+            if request.httpMethod == "POST", request.url!.path.hasSuffix("/requests") {
+                posts.append(request)
+                if phase.value == 2 { throw URLError(.networkConnectionLost) }
+                return Self.json(201, accepted)
+            }
+            if request.url!.path.hasSuffix("/categories") { return Self.json(200, "[\(categoryJSON)]") }
+            if request.url!.path.hasSuffix("/requests") { return Self.json(200, phase.value >= 3 ? "[\(accepted)]" : "[]") }
+            if request.url!.path.hasSuffix("/account-balances") {
+                return Self.json(200, #"[{"account_id":"private-account","currency_code":"USD","cleared_balance_minor":42,"uncleared_balance_minor":0,"working_balance_minor":42}]"#)
+            }
+            return Self.workspaceResponse(request.url!.path)
+        }
+        let configuration = URLSessionConfiguration.ephemeral; configuration.protocolClasses = [FundingRequestMockURLProtocol.self]
+        let transport = URLSession(configuration: configuration)
+        let url = URL(string: "https://request-replay-\(UUID().uuidString.lowercased()).example.com")!
+        let budget = APIBudget(id: "b1", householdID: "h1", name: "Home", currencyCode: "USD")
+        func workspace() -> BudgetWorkspaceStore {
+            BudgetWorkspaceStore.production(context: .live(budget: budget, serverURL: url, token: "A1"),
+                clientFactory: { try APIClient(baseURL: $0, session: transport) })
+        }
+        let original = workspace()
+        await original.refresh()
+        XCTAssertNil(original.errorMessage)
+        _ = phase.increment()
+        try await original.createRequest(.init(destinationCategoryID: "c1", requestedAmountMinor: 9_007_199_254_740_993, reason: "Offline request"))
+        XCTAssertTrue(posts.values.isEmpty); XCTAssertEqual(original.pendingSyncCount, 1)
+        XCTAssertTrue(original.requests.isEmpty); XCTAssertTrue(original.transactions.isEmpty)
+        let identity = try XCTUnwrap(original.pendingLiveTransactions.first?.id)
+        let reopened = workspace()
+        _ = phase.increment(); await reopened.refresh()
+        XCTAssertNil(reopened.errorMessage)
+        XCTAssertEqual(reopened.pendingLiveTransactions.first?.id, identity)
+        XCTAssertEqual(Set(posts.values.map { $0.0 }), [identity])
+        let money = reopened.summary, balances = reopened.accountBalances
+        reopened.updateLiveCredentials(serverURL: url, token: "A2")
+        _ = phase.increment(); await reopened.refresh()
+        XCTAssertEqual(reopened.pendingSyncCount, 0); XCTAssertTrue(reopened.pendingLiveTransactions.isEmpty)
+        XCTAssertEqual(reopened.requests.first?.id, "r1"); XCTAssertEqual(reopened.requests.first?.requestedAmountMinor, 9_007_199_254_740_993)
+        XCTAssertEqual(reopened.summary, money); XCTAssertEqual(reopened.accountBalances, balances)
+        XCTAssertEqual(posts.values.last?.1, "Bearer A2"); XCTAssertEqual(Set(posts.values.map { $0.0 }), [identity])
+    }
     func testPendingTransactionDetailsRequireCurrentWholeResourceScope() {
         let operation = RecordTransactionOperation(accountID: "checking", categoryID: nil, amountMinor: -3,
             occurredOn: "2026-10-09", payeeName: "Private purchase", memo: "Sensitive", isCleared: false,
@@ -131,6 +205,9 @@ final class AppSessionRefreshTests: XCTestCase {
     }
 
     private static func workspaceResponse(_ path: String) -> (Int, Data) {
+        if path.hasSuffix("/account-balances") {
+            return json(200, #"[{"account_id":"private-account","currency_code":"USD","cleared_balance_minor":42,"uncleared_balance_minor":0,"working_balance_minor":42}]"#)
+        }
         if path.hasSuffix("/delegated-budgets/me") { return json(200, "null") }
         if path.hasSuffix("/forecast") {
             return json(200, #"{"as_of":"2026-09-01","through":"2026-12-01","currency_code":"USD","actual_total_on_budget_minor":0,"projected_total_on_budget_minor":0,"lowest_projected_total_minor":0,"accounts":[],"occurrences":[]}"#)
@@ -160,7 +237,7 @@ final class AppSessionRefreshTests: XCTestCase {
         let transport = URLSession(configuration: configuration)
         return BudgetWorkspaceStore.production(context: .live(
             budget: budget ?? APIBudget(id: "b1", householdID: "h1", name: "Home", currencyCode: "USD"),
-            serverURL: URL(string: "https://budget.example.com")!, token: "current-token"),
+            serverURL: URL(string: "https://revocation-\(UUID().uuidString.lowercased()).example.com")!, token: "current-token"),
             clientFactory: { try APIClient(baseURL: $0, session: transport) })
     }
 
@@ -2176,6 +2253,33 @@ private final class InMemoryTokenStore: TokenStoring {
     func save(_ value: String, account: String) throws { lock.lock(); storage[account] = value; lock.unlock() }
     func read(account: String) -> String? { lock.lock(); defer { lock.unlock() }; return storage[account] }
     func delete(account: String) { lock.lock(); storage[account] = nil; lock.unlock() }
+}
+
+private final class FundingRequestMockURLProtocol: URLProtocol {
+    static var handler: ((URLRequest) throws -> (Int, Data))?
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        do {
+            guard let handler = Self.handler else { throw URLError(.badServerResponse) }
+            let (status, data) = try handler(request)
+            let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: data); client?.urlProtocolDidFinishLoading(self)
+        } catch { client?.urlProtocol(self, didFailWithError: error) }
+    }
+    override func stopLoading() {}
+}
+
+private final class FundingRequestPostRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var recorded: [(String, String)] = []
+    var values: [(String, String)] { lock.lock(); defer { lock.unlock() }; return recorded }
+    func append(_ request: URLRequest) {
+        lock.lock(); defer { lock.unlock() }
+        recorded.append((request.value(forHTTPHeaderField: "X-Request-Operation-ID") ?? "missing",
+                         request.value(forHTTPHeaderField: "Authorization") ?? "missing"))
+    }
 }
 
 private final class Counter: @unchecked Sendable {

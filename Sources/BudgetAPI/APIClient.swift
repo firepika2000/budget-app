@@ -739,17 +739,19 @@ public struct APIClient {
         try await send(path: "api/v1/budgets/\(budgetID)/requests", token: token)
     }
 
+    public func financialRequestCapabilities(budgetID: String, token: String) async throws -> APIFinancialRequestCapabilities {
+        try await send(path: "api/v1/budgets/\(budgetID)/requests/capabilities", token: token)
+    }
+
     public func createFinancialRequest(
         budgetID: String,
         request: APIFinancialRequestCreate,
+        operationID: String? = nil,
         token: String
     ) async throws -> APIFinancialRequest {
-        try await send(
-            path: "api/v1/budgets/\(budgetID)/requests",
-            method: "POST",
-            token: token,
-            body: request
-        )
+        try await send(url: baseURL.appending(path: "api/v1/budgets/\(budgetID)/requests"),
+            method: "POST", token: token, bodyData: JSONEncoder().encode(request),
+            headers: operationID.map { ["X-Request-Operation-ID": $0] } ?? [:])
     }
 
     public func decideFinancialRequest(budgetID: String, requestID: String, decision: APIFinancialRequestDecision, token: String) async throws -> APIFinancialRequest {

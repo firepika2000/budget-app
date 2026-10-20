@@ -1,6 +1,6 @@
 # Data ownership, local operation, and backup destinations
 
-Updated 2026-10-09. This document tracks the v0.14 data-ownership implementation. It does not
+Updated 2026-10-20. This document tracks the v0.14 data-ownership implementation. It does not
 claim that incomplete providers are production-ready.
 
 ## Authority and destination are separate
@@ -19,9 +19,47 @@ to merge drafts or claiming that an in-flight request did not reach the server.
 edits, observed bulk metadata/clearing actions, Assign, category Move Money and account-transfer
 creation/observed edits, observed Void with Reversal, reconciliation against a captured server-reviewed transaction set,
 integrity-bound attachment uploads with protected staged bytes, and ordinary scheduled-transaction creation.
-Administrative commands still send directly through their authenticated APIs.
+Funding-request creation also persists exact intent and a stable replay identity before network
+work. Request approval, revision and cancellation, and other administrative commands, still send
+directly through their authenticated APIs.
 The following defines the complete milestone, not a claim of human-accepted offline editing. Local Device
 already owns its local writes; its storage must not be replaced by a hosted replay queue.
+
+### Offline funding request creation
+
+The production Live request form now saves creation intent in the protected, server/actor-scoped
+outbox before sending. Requests and Pending Sync distinguish saved intent from server-confirmed
+requests. Queueing does not create an accepted request locally or affect balances, category Available,
+RTA or approvals. Exact Int64 money, category identity and reason survive reopening; retries keep
+the same operation UUID. Current permissions filter pending details, and replay checks current
+credentials and the bound server.
+
+Before any replay POST, the client checks the authorized `GET /requests/capabilities` contract for
+`creation_replay_version: 1`. Older servers cannot silently ignore the new identity header: a missing
+or unsupported contract stops submission and retains the request for review. The new server's
+`X-Request-Operation-ID` receipt (`dfc6fc9`) atomically binds actor, budget, original intent and resource.
+It acknowledges current authorized state rather than recreating a request or undoing later decisions.
+Conflicting intent and revoked access fail closed. An updated server deployment is required; this
+checkpoint introduces no new schema revision.
+
+A transient send failure no longer prevents workspace hydration. Authorized current reads, or the
+existing cache fallback, continue while the original command remains pending. The label is awaiting
+server confirmation, not proof that an uncertain request never reached the server.
+
+Four focused native tests passed, including the Live-shaped offline/reopen/lost-response/token-rotation
+journey, unsupported-server refusal, exact persisted payload and the existing authoritative-read
+failure policy. The Swift API test passed for capability discovery, optional identity headers and
+money beyond Double's exact range. The regular-Xcode simulator build and diff check passed. These
+are automated tests, not human acceptance or complete hosted offline request management.
+
+Minimized human acceptance on the updated app and server:
+
+1. As a member authorized to request money for a visible category, hydrate the Live budget and note
+   its balances. Disconnect the phone from the server, then submit one small, distinctly named request.
+2. Confirm it appears as saved/awaiting confirmation in Requests or Pending Sync. Relaunch without
+   erasing data; the intent and budget observations must remain available.
+3. Reconnect and refresh. Confirm exactly one server request appears, pending sync clears, and ordinary
+   refresh/relaunch does not create another request. Balances, RTA and category Available stay unchanged.
 
 Live reconciliation now persists its exact statement balance, cutoff, adjustment consent/reason,
 cleared-balance observation, opaque reviewed-set token and mutation UUID before sending. An

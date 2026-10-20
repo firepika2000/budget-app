@@ -2470,7 +2470,12 @@ public struct APICategory: Identifiable, Codable, Equatable, Sendable {
     }
 }
 
-public struct APIFinancialRequestCreate: Encodable, Sendable {
+public struct APIFinancialRequestCapabilities: Decodable, Sendable {
+    public let creationReplayVersion: Int
+    enum CodingKeys: String, CodingKey { case creationReplayVersion = "creation_replay_version" }
+}
+
+public struct APIFinancialRequestCreate: Codable, Equatable, Sendable {
     public let requestType: String
     public let destinationCategoryID: String
     public let requestedAmountMinor: Int64

@@ -2,10 +2,34 @@
 
 ## Current workspace checkpoint
 
-Inspected implementation: `acfc35c` on `codex/development`, plus the household directory checkpoint below. App and widget remain `0.11.0`
+Inspected implementation: `5985280` on `codex/development`, plus the offline request checkpoint below. App and widget remain `0.11.0`
 build `7`; TestFlight is held. Regular Xcode 27.1 (`27A9275`) builds and executes focused tests
 on preserved iPhone 17 Pro Max `3ABD861E-D38D-4AFD-A356-959266051564`, iOS 27.0 (`24A434`).
 No Simulator or Live data reset, merge, tag, or release is part of these checkpoints.
+
+### Offline funding requests and independent read refresh
+
+Funding-request creation now uses the protected Live outbox and the server receipt contract from
+`dfc6fc9`. Intent survives reconnect/relaunch with one immutable identity and exact Int64 money.
+Replay checks current credentials, bound server and advertised replay support before POST. An old
+server receives no creation POST; saved intent remains for review. Requests and Pending Sync label
+unconfirmed intent separately from accepted server data. A transient outbox failure no longer blocks
+normal workspace reads or the existing cache fallback. Approval, revision and cancellation are not
+new offline commands. See `DATA-OWNERSHIP.md` for the consolidated human acceptance flow.
+
+Four focused native tests passed in `Test-BudgetApp-2026.10.20_08-52-02--0400.xcresult`; the API
+contract test also executed and passed. The simulator build and diff check passed. Healthy-read
+fixtures now include required authoritative account balances and isolated durable cache namespaces;
+the existing transient/denial regression reaches its intended error phase. No human pass is claimed.
+Rebuild the app and deploy/restart a server containing the new contract; no new migration is added.
+
+The preceding server audit ran the full backend suite once: 982 passed, 41 skipped and seven failed.
+Five terminal/local-port-dependent tests passed outside the sandbox. Three independently reproduced
+fixture failures were then corrected in `5985280`: a valid legacy owner/household/budget graph now
+replaces orphan categories, export fixtures use typed dates, and the launcher derives the current
+Alembic head instead of hardcoding revision 0035. Ten focused fixture/migration/local-server tests
+passed. The final request receipt/auth/financial-vector run passed 48 checks. These scoped reruns do
+not constitute a new full-suite pass; no product validation or attribution checks were weakened.
 
 ### Household editing and history recovery
 

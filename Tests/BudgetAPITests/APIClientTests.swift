@@ -2,6 +2,34 @@ import XCTest
 @testable import BudgetAPI
 
 final class APIClientTests: XCTestCase {
+    func testFundingRequestReplayCapabilityAndOptionalIdentityPreserveExactBody() async throws {
+        let identity = UUID().uuidString.lowercased()
+        var posts = 0
+        let configuration = URLSessionConfiguration.ephemeral; configuration.protocolClasses = [MockURLProtocol.self]
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer current")
+            if request.url!.path.hasSuffix("/capabilities") {
+                XCTAssertEqual(request.httpMethod, "GET")
+                return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, Data(#"{"creation_replay_version":1}"#.utf8))
+            }
+            XCTAssertEqual(request.url!.path, "/api/v1/budgets/b/requests")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "X-Request-Operation-ID"), posts == 0 ? nil : identity)
+            posts += 1
+            let body = try XCTUnwrap(JSONSerialization.jsonObject(with: requestBody(request)) as? [String: Any])
+            XCTAssertEqual((body["requested_amount_minor"] as? NSNumber)?.stringValue, "9007199254740993")
+            XCTAssertEqual(Set(body.keys), ["request_type", "destination_category_id", "requested_amount_minor", "reason"])
+            let response = #"{"id":"r","requester_user_id":"member","request_type":"additional_allocation","destination_category_id":"c","requested_amount_minor":9007199254740993,"reason":"Reviewed","status":"pending","version":0,"actions":[]}"#
+            return (HTTPURLResponse(url: request.url!, statusCode: 201, httpVersion: nil, headerFields: nil)!, Data(response.utf8))
+        }
+        let client = try APIClient(baseURL: URL(string: "https://example.com")!, session: URLSession(configuration: configuration))
+        let capability = try await client.financialRequestCapabilities(budgetID: "b", token: "current")
+        XCTAssertEqual(capability.creationReplayVersion, 1)
+        for id in [nil, identity] {
+            let value = try await client.createFinancialRequest(budgetID: "b", request: .init(destinationCategoryID: "c", requestedAmountMinor: 9_007_199_254_740_993, reason: "Reviewed"), operationID: id, token: "current")
+            XCTAssertEqual(value.requestedAmountMinor, 9_007_199_254_740_993)
+        }
+        XCTAssertEqual(posts, 2)
+    }
     func testPayeeCategorySuggestionUsesScopedIdentityAndOptionalResult() async throws {
         let configuration = URLSessionConfiguration.ephemeral; configuration.protocolClasses = [MockURLProtocol.self]
         MockURLProtocol.handler = { request in
