@@ -1215,8 +1215,17 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertTrue(detail.contains("guard !isSaving, !historyBusy, let version"))
         XCTAssertTrue(detail.contains("guard !isSaving, !historyBusy else { return }; isSaving = true"))
         XCTAssertEqual(detail.components(separatedBy: "await loadHistory() } catch").count - 1, 2)
-        // Post-save reload remains permitted while isSaving holds the interaction lock.
-        XCTAssertTrue(detail.contains("guard !loadingHistory, !loadingOlderPolicy, !loadingOlderIssuances else { return }"))
+        // Post-save/background refresh supersedes stale reads without unlocking the command.
+        XCTAssertTrue(detail.contains(".task(id: historyContext)"))
+        XCTAssertTrue(detail.contains("historyRequestID == id, context == historyContext"))
+        let pair = try XCTUnwrap(detail.range(of: "let (issuanceRows, policyRows) = try await (issuances, changes)"))
+        let firstPublication = try XCTUnwrap(detail.range(of: "history = issuanceRows"))
+        XCTAssertLessThan(pair.lowerBound, firstPublication.lowerBound, "Neither half publishes until both reads succeed")
+        XCTAssertFalse(detail.contains("history = try await issuances"))
+        for intent in ["refresh", "policy", "issuances"] {
+            XCTAssertTrue(detail.contains("historyRetry = .\(intent)"))
+        }
+        XCTAssertTrue(detail.contains("Button(\"Retry History\")"))
     }
     func testPayeeHistoryExplainsAllAliasesMergeAndQualifiedSuggestionWithoutDirectoryLoading() {
         let old = APIPayeeRevisionSnapshot(displayName: "Market", isArchived: false,

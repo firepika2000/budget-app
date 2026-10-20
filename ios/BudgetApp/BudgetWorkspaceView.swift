@@ -14820,6 +14820,11 @@ private struct AllowanceDetailView: View {
     private let historyPageSize = 25
     @State private var errorMessage: String?
     @State private var isSaving = false
+    private enum ReadIntent { case refresh, policy, issuances }
+    @State private var historyError: String?
+    @State private var historyRetry: ReadIntent = .refresh
+    @State private var historyRequestID = UUID()
+    private var historyContext: String { "\(store.authorityRevision)|\(store.reportRevision)|\(planID)" }
     private var plan: APIAllowancePlan? { store.allowances.first { $0.id == planID } }
     private var historyBusy: Bool { loadingHistory || loadingOlderPolicy || loadingOlderIssuances }
     var body: some View {
@@ -14841,7 +14846,7 @@ private struct AllowanceDetailView: View {
                 }
                 Section("History") {
                     ForEach(history) { item in VStack(alignment: .leading) { Text(item.issuedOn); Text("Issued \(store.format(item.amountMinor))" + (item.reclaimedMinor > 0 ? " · returned \(store.format(item.reclaimedMinor))" : "")).font(.caption).foregroundStyle(.secondary) } }
-                    if history.isEmpty { Text("No allowance has been issued yet").foregroundStyle(.secondary) }
+                    if history.isEmpty && !historyBusy && historyError == nil { Text("No allowance has been issued yet").foregroundStyle(.secondary) }
                     if hasOlderIssuances {
                         Button("Load Earlier Issuances") { Task { await loadOlderIssuances() } }
                             .disabled(isSaving || historyBusy)
@@ -14864,7 +14869,7 @@ private struct AllowanceDetailView: View {
                             }
                         }
                     }
-                    if policyHistory.isEmpty { Text("No plan changes recorded").foregroundStyle(.secondary) }
+                    if policyHistory.isEmpty && !historyBusy && historyError == nil { Text("No plan changes recorded").foregroundStyle(.secondary) }
                     if hasOlderPolicy {
                         Button("Load Earlier Plan Changes") { Task { await loadOlderPolicy() } }
                             .disabled(isSaving || historyBusy)
@@ -14873,9 +14878,25 @@ private struct AllowanceDetailView: View {
                     if loadingHistory || loadingOlderPolicy { ProgressView("Loading history…") }
                 }
             }
+            if let historyError {
+                Section("History Unavailable") {
+                    Text(historyError).font(.caption).foregroundStyle(.secondary)
+                    Button("Retry History") {
+                        Task {
+                            switch historyRetry {
+                            case .refresh: await loadHistory()
+                            case .policy: await loadOlderPolicy()
+                            case .issuances: await loadOlderIssuances()
+                            }
+                        }
+                    }.disabled(historyBusy || isSaving)
+                }
+            }
         }
         .navigationTitle(plan?.name ?? "Allowance")
-        .task { await loadHistory() }
+        .task(id: historyContext) { await loadHistory() }
+        .refreshable { await loadHistory() }
+        .onDisappear { historyRequestID = UUID(); loadingHistory = false; loadingOlderPolicy = false; loadingOlderIssuances = false }
         .alert("Unable to update allowance", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) { Button("OK", role: .cancel) {} } message: { Text(errorMessage ?? "Unknown error") }
     }
     private func categoryName(_ id: String) -> String {
@@ -14887,36 +14908,59 @@ private struct AllowanceDetailView: View {
     }
     private func loadOlderPolicy() async {
         guard !isSaving, !historyBusy, hasOlderPolicy else { return }
-        loadingOlderPolicy = true; defer { loadingOlderPolicy = false }
+        let id = UUID(), context = historyContext; historyRequestID = id
+        loadingOlderPolicy = true; defer { if historyRequestID == id { loadingOlderPolicy = false } }
         do {
             let page = try await store.allowancePlanHistory(id: planID, limit: historyPageSize, offset: policyHistory.count)
+            guard historyRequestID == id, context == historyContext, !Task.isCancelled else { return }
+            let ids = policyHistory.map(\.id) + page.map(\.id)
+            guard page.count <= historyPageSize, Set(ids).count == ids.count else { throw workspaceRepositoryError("Plan history returned an invalid page. Refresh to try again.") }
             policyHistory += page; hasOlderPolicy = page.count == historyPageSize
-        } catch { handleHistoryError(error) }
+            historyError = nil
+        } catch { if historyRequestID == id, context == historyContext, !(error is CancellationError) { historyRetry = .policy; handleHistoryError(error) } }
     }
     private func loadOlderIssuances() async {
         guard !isSaving, !historyBusy, hasOlderIssuances else { return }
-        loadingOlderIssuances = true; defer { loadingOlderIssuances = false }
+        let id = UUID(), context = historyContext; historyRequestID = id
+        loadingOlderIssuances = true; defer { if historyRequestID == id { loadingOlderIssuances = false } }
         do {
             let page = try await store.allowanceIssuances(id: planID, limit: historyPageSize, offset: history.count)
+            guard historyRequestID == id, context == historyContext, !Task.isCancelled else { return }
+            let ids = history.map(\.id) + page.map(\.id)
+            guard page.count <= historyPageSize, Set(ids).count == ids.count else { throw workspaceRepositoryError("Issuance history returned an invalid page. Refresh to try again.") }
             history += page; hasOlderIssuances = page.count == historyPageSize
-        } catch { handleHistoryError(error) }
+            historyError = nil
+        } catch { if historyRequestID == id, context == historyContext, !(error is CancellationError) { historyRetry = .issuances; handleHistoryError(error) } }
     }
     private func loadHistory() async {
-        guard !loadingHistory, !loadingOlderPolicy, !loadingOlderIssuances else { return }
-        loadingHistory = true; defer { loadingHistory = false }
+        let id = UUID(), context = historyContext; historyRequestID = id
+        loadingHistory = true; loadingOlderPolicy = false; loadingOlderIssuances = false
+        defer { if historyRequestID == id { loadingHistory = false } }
         do {
-        async let issuances = store.allowanceIssuances(id: planID, limit: historyPageSize, offset: 0)
-        async let changes = store.allowancePlanHistory(id: planID, limit: historyPageSize, offset: 0)
-        history = try await issuances
-        hasOlderIssuances = history.count == historyPageSize
-        policyHistory = try await changes
-        hasOlderPolicy = policyHistory.count == historyPageSize
-    } catch { handleHistoryError(error) } }
+            async let issuances = store.allowanceIssuances(id: planID, limit: historyPageSize, offset: 0)
+            async let changes = store.allowancePlanHistory(id: planID, limit: historyPageSize, offset: 0)
+            let (issuanceRows, policyRows) = try await (issuances, changes)
+            guard historyRequestID == id, context == historyContext, !Task.isCancelled else { return }
+            guard issuanceRows.count <= historyPageSize, policyRows.count <= historyPageSize,
+                  Set(issuanceRows.map(\.id)).count == issuanceRows.count,
+                  Set(policyRows.map(\.id)).count == policyRows.count else {
+                throw workspaceRepositoryError("Allowance history returned an invalid page. Refresh to try again.")
+            }
+            history = issuanceRows; hasOlderIssuances = history.count == historyPageSize
+            policyHistory = policyRows; hasOlderPolicy = policyHistory.count == historyPageSize
+            historyError = nil
+        } catch {
+            if historyRequestID == id, context == historyContext, !(error is CancellationError) {
+                historyRetry = .refresh; handleHistoryError(error)
+            }
+        }
+    }
     private func handleHistoryError(_ error: Error) {
         if HistoryObservationPolicy.mustDiscard(after: error) {
             history = []; policyHistory = []; hasOlderIssuances = false; hasOlderPolicy = false
+            historyRetry = .refresh
         }
-        errorMessage = error.localizedDescription
+        historyError = error.localizedDescription
     }
     private func issue(_ plan: APIAllowancePlan) async { guard !isSaving, !historyBusy, let version = store.summary?.allocationVersion else { return }; isSaving = true; defer { isSaving = false }; do { try await store.issueAllowance(id: plan.id, issueDate: plan.nextIssueDate, expectedVersion: version); await loadHistory() } catch { errorMessage = error.localizedDescription } }
     private func setActive(_ plan: APIAllowancePlan, _ active: Bool) async { guard !isSaving, !historyBusy else { return }; isSaving = true; defer { isSaving = false }; do { try await store.setAllowanceActive(id: plan.id, active: active); await loadHistory() } catch { errorMessage = error.localizedDescription } }
