@@ -4723,6 +4723,7 @@ final class BudgetWorkspaceStore: ObservableObject {
     private var applicationServices: BudgetApplicationServices?
     private var transactionBrowseTask: Task<APITransactionPage, Error>?
     private var transactionBrowseQuery: APITransactionQuery?
+    private var transactionBrowseRevision: Int?
     private var transactionBrowseOperationID: UUID?
     private var snapshotOperationID: UUID?
     private var forecastOperationID: UUID?
@@ -5222,9 +5223,10 @@ final class BudgetWorkspaceStore: ObservableObject {
     func reportContributors(query: WorkspaceReportQuery, kind: APIReportContributorKind, cursor: String?) async throws -> APIReportContributorPage {
         try requireWorkspaceAccess()
         let revision = authorityRevision
+        let observationRevision = reportRevision
         guard let dataSource else { throw workspaceRepositoryError("Reports are unavailable.") }
         let page = try await dataSource.reportContributors(planMonth: planMonth, query: query, kind: kind, cursor: cursor)
-        guard !Task.isCancelled, authorityRevision == revision else { throw CancellationError() }
+        guard !Task.isCancelled, authorityRevision == revision, reportRevision == observationRevision else { throw CancellationError() }
         for item in page.items {
             if let index = transactions.firstIndex(where: { $0.id == item.id }) { transactions[index] = item }
             else { transactions.append(item) }
@@ -5600,40 +5602,53 @@ final class BudgetWorkspaceStore: ObservableObject {
     }
 
     func browseTransactions(_ query: APITransactionQuery) async throws -> APITransactionPage {
+        let service = try services().transactions
+        return try await browseTransactions(query, fetch: { try await service.browse($0) })
+    }
+
+    func browseTransactions(_ query: APITransactionQuery,
+                           fetch: @escaping @MainActor (APITransactionQuery) async throws -> APITransactionPage) async throws -> APITransactionPage {
         try requireWorkspaceAccess()
         let revision = authorityRevision
-        if transactionBrowseQuery == query, let transactionBrowseTask {
+        let observationRevision = reportRevision
+        if transactionBrowseQuery == query, transactionBrowseRevision == observationRevision, let transactionBrowseTask {
             let value = try await transactionBrowseTask.value
-            guard authorityRevision == revision else { throw CancellationError() }
+            guard !Task.isCancelled, authorityRevision == revision, reportRevision == observationRevision else { throw CancellationError() }
+            publishBrowsedTransactions(value.items)
             return value
         }
-        let service = try services().transactions
         let operationID = UUID()
-        let task = Task { try await service.browse(query) }
+        let task = Task { try await fetch(query) }
         transactionBrowseQuery = query
+        transactionBrowseRevision = observationRevision
         transactionBrowseTask = task
         transactionBrowseOperationID = operationID
         defer {
             if transactionBrowseOperationID == operationID {
                 transactionBrowseTask = nil
                 transactionBrowseQuery = nil
+                transactionBrowseRevision = nil
                 transactionBrowseOperationID = nil
             }
         }
         let value = try await task.value
-        guard authorityRevision == revision else { throw CancellationError() }
+        guard !Task.isCancelled, authorityRevision == revision, reportRevision == observationRevision else { throw CancellationError() }
+        publishBrowsedTransactions(value.items)
+        return value
+    }
+
+    private func publishBrowsedTransactions(_ items: [APITransaction]) {
         if (commandRepository as? LiveWorkspaceCommandRepository)?.lastTransactionReadWasCached == true {
             isWorkingOffline = true
             if pendingSyncCount == 0 { syncStatusMessage = "Offline · showing saved transaction results" }
         }
         // Keep canonical detail/edit lookup in sync with authorized browser observations.
         // This is server data, never an optimistic financial mutation.
-        for transaction in value.items {
+        for transaction in items {
             if let index = transactions.firstIndex(where: { $0.id == transaction.id }) {
                 transactions[index] = transaction
             } else { transactions.append(transaction) }
         }
-        return value
     }
 
     func createTransfer(_ operation: TransferMoneyOperation) async throws {

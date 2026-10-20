@@ -12,6 +12,84 @@ import UserNotifications
 
 final class DemoStoreTests: XCTestCase {
     @MainActor
+    func testCurrentCoalescedBrowserPublishesWhenOriginalWaiterCancels() async throws {
+        let store = BudgetWorkspaceStore.demo()
+        await store.refresh()
+        let transaction = try XCTUnwrap(store.transactions.first)
+        store.transactions.removeAll { $0.id == transaction.id }
+        let query = APITransactionQuery(transactionIDs: [transaction.id], limit: 1)
+        var continuation: CheckedContinuation<APITransactionPage, Never>?
+        let started = expectation(description: "Shared request started")
+        let original = Task {
+            try await store.browseTransactions(query, fetch: { _ in
+                await withCheckedContinuation { continuation = $0; started.fulfill() }
+            })
+        }
+        await fulfillment(of: [started], timeout: 2)
+        let waiting = expectation(description: "Second waiter attached")
+        let current = Task {
+            waiting.fulfill()
+            return try await store.browseTransactions(query, fetch: { _ in
+                XCTFail("Identical current queries should coalesce")
+                return .init(items: [], nextCursor: nil, totalCount: 0)
+            })
+        }
+        await fulfillment(of: [waiting], timeout: 2)
+        original.cancel()
+        let response = try XCTUnwrap(continuation)
+        response.resume(returning: .init(items: [transaction], nextCursor: nil, totalCount: 1))
+        do { _ = try await original.value; XCTFail("Cancelled waiter must not publish") }
+        catch is CancellationError { }
+        let page = try await current.value
+        XCTAssertEqual(page.items, [transaction])
+        XCTAssertEqual(store.transactions.first { $0.id == transaction.id }, transaction)
+    }
+
+    @MainActor
+    func testWorkspaceBrowserCannotReuseOrPublishPreRefreshTransactions() async throws {
+        let store = BudgetWorkspaceStore.demo()
+        await store.refresh()
+        let account = try XCTUnwrap(store.accounts.first { $0.id == "checking" })
+        try await store.createTransaction(.init(accountID: account.id, categoryID: nil, amountMinor: -123,
+            occurredOn: "2026-09-05", payeeName: "Revision race", memo: "Keep metadata", isCleared: false,
+            splits: [], flag: "orange", tags: ["keep"], attachmentMetadata: []))
+        let original = try XCTUnwrap(store.transactions.first { $0.payeeName == "Revision race" })
+        let beforeBalance = store.balance(for: account)
+        let query = APITransactionQuery(transactionIDs: [original.id], limit: 1)
+        var continuation: CheckedContinuation<APITransactionPage, Never>?
+        let started = expectation(description: "Old browser request started")
+        let oldRequest = Task {
+            try await store.browseTransactions(query, fetch: { _ in
+                await withCheckedContinuation { continuation = $0; started.fulfill() }
+            })
+        }
+        await fulfillment(of: [started], timeout: 2)
+        let previousRevision = store.reportRevision
+        try await store.setTransactionCleared(id: original.id, cleared: true)
+        XCTAssertGreaterThan(store.reportRevision, previousRevision)
+        let current = try XCTUnwrap(store.transactions.first { $0.id == original.id })
+        XCTAssertTrue(current.isCleared)
+        var fetchedCurrent = false
+        let newRequest = Task {
+            try await store.browseTransactions(query, fetch: { _ in
+                fetchedCurrent = true
+                return .init(items: [current], nextCursor: nil, totalCount: 1)
+            })
+        }
+        for _ in 0..<100 where !fetchedCurrent { await Task.yield() }
+        XCTAssertTrue(fetchedCurrent, "New revision must not reuse the old in-flight request")
+        let oldContinuation = try XCTUnwrap(continuation)
+        oldContinuation.resume(returning: .init(items: [original], nextCursor: nil, totalCount: 1))
+        do { _ = try await oldRequest.value; XCTFail("Old revision must be cancelled before publication") }
+        catch is CancellationError { }
+        let page = try await newRequest.value
+        XCTAssertEqual(page.items, [current])
+        XCTAssertEqual(store.transactions.first { $0.id == current.id }, current)
+        XCTAssertEqual(store.balance(for: account), beforeBalance)
+        XCTAssertEqual(current.memo, "Keep metadata"); XCTAssertEqual(current.tags, ["keep"])
+    }
+
+    @MainActor
     func testScheduledRemindersDisableSupersedesPendingAuthorization() async throws {
         let suite = "Reminders.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
