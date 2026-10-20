@@ -2,10 +2,52 @@
 
 ## Current workspace checkpoint
 
-Inspected implementation: `380c955` on `codex/development`. App and widget remain `0.11.0`
+Inspected implementation: `0d084ac` on `codex/development`. App and widget remain `0.11.0`
 build `7`; TestFlight is held. Regular Xcode 27.1 (`27A9275`) builds and executes focused tests
 on preserved iPhone 17 Pro Max `3ABD861E-D38D-4AFD-A356-959266051564`, iOS 27.0 (`24A434`).
 No Simulator or Live data reset, merge, tag, or release is part of these checkpoints.
+
+### Statement review and reconciliation continuity
+
+Statement Imports distinguishes a failed read from an empty history, offers a retry for the failed
+page, retains rows during temporary errors, and rejects duplicate, out-of-scope and superseded
+results (`6ae4175`). Five focused native tests passed, including persisted review reconstruction.
+
+Reconciliation initializes statement text once instead of replacing it when an import screen
+returns. Workspace/date changes invalidate the reviewed observation; submissions without an
+explicit observation fetch the provider's date-specific review rather than calculating from a
+partial workspace ledger (`4296429`). Four native checks and the production register
+Clear/Unclear/reconciliation UI test passed. Existing explicit reviewed values and server conflict
+checks remain authoritative.
+
+Local statement duplicate warnings now include the memo and canonical payee normalization in their
+fingerprint, matching the server (`04bf038`). Distinct purchases with different memos are not
+automatically marked as duplicate source rows. Eight native checks and six existing server matching
+tests passed, including exact posting of both distinct purchases and a 1,002-row review.
+
+Local matching also indexes exact amounts and dates, precomputes authorized alias/default-category
+lookups, and reuses repeated queries (`c6cbf83`). Nine native tests passed, including comparison
+against exhaustive matching over 2,001 observations, 20-result truncation, restricted visibility and
+money beyond Double's exact integer range. These overlapping focused runs are not a cumulative
+full-suite result or an end-to-end performance benchmark. Local startup still reads its full ledger.
+
+### Restore source lifetime and scheduled reminder ordering
+
+Downloaded backup packages remain owned until active verification finishes (`4bdb84b`). Leaving
+Backup & Recovery defers cleanup during a read; a download completing after departure is removed
+without attaching to hidden UI state. Restore and rollback actions claim the same operation lock
+as backup capture. Four native custody/serialization checks and the production Local Device
+backup/recovery UI flow passed. Real Dropbox download/restore remains the separate gate below.
+
+Scheduled reminder updates now rebuild serially until they match the latest preference and
+schedule snapshot (`0d084ac`). A late authorization response cannot re-enable a disabled preference;
+an add completing after disable is removed. Updates preserve unrelated notification requests,
+exclude wrong-budget/paused schedules, keep generic content and surface scheduling failures.
+Four native tests passed using a controlled notification client. Actual permission prompts and
+lock-screen delivery remain device acceptance checks in `V0.11-CLOSURE-AUDIT.md`.
+
+All these checkpoints passed regular-Xcode simulator builds and diff checks. Rebuild the app;
+none requires a server restart or migration. TestFlight remains held.
 
 ### First backup and retained generation execution
 
@@ -160,6 +202,10 @@ Use existing disposable fixtures; retain all previously recorded human acceptanc
    attachment. Observe verified-file progress followed by finalization, not premature success. Revoke
    the connection explicitly and confirm existing remote generations remain. Do not replace a
    current budget, delete backups, or record recovery keys in evidence.
+5. In a disposable statement review, use two same-date/amount/payee rows with different memos and
+   one exact repeated row. Confirm only the repeated row starts skipped. From Reconcile, enter a
+   statement balance, visit import history, and return: the typed balance must remain. Cancel unless
+   an intentional posting/reconciliation is part of the existing acceptance fixture.
 
 These flows remain human checks, not completed results. The independent live Dropbox recovery flow
 and deployment gates remain required. Current app changes require a rebuild; server payee/history
