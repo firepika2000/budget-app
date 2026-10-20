@@ -377,14 +377,77 @@ final class DemoStoreTests: XCTestCase {
         let scopedStart = try XCTUnwrap(source.range(of: "private struct ScopedTransactionHistoryView: View"))
         let scopedEnd = try XCTUnwrap(source.range(of: "private struct TransactionFilterView: View"))
         let scoped = String(source[scopedStart.lowerBound..<scopedEnd.lowerBound])
-        XCTAssertTrue(scoped.contains("if HistoryObservationPolicy.mustDiscard(after: error) { rows = []; nextCursor = nil; totalCount = 0 }"))
-        XCTAssertTrue(scoped.contains("guard !loading else { return }"))
-        for view in [activity, scoped] {
-            XCTAssertTrue(view.contains("retryIntent = reset ? .refresh : .older"))
-            XCTAssertTrue(view.contains("retryIntent.shouldReset(hasLoadedRows: !rows.isEmpty)"))
-            XCTAssertTrue(view.contains("page.validatedRows(after:"))
+        XCTAssertTrue(scoped.contains("@StateObject private var history = TransactionHistoryPager()"))
+        XCTAssertTrue(scoped.contains("history.clear()"))
+        XCTAssertTrue(scoped.contains("history.load(query:"))
+        XCTAssertTrue(scoped.contains("history.retryIntent.shouldReset(hasLoadedRows: !history.rows.isEmpty)"))
+        XCTAssertTrue(activity.contains("retryIntent = reset ? .refresh : .older"))
+        XCTAssertTrue(activity.contains("page.validatedRows(after:"))
+    }
+
+    @MainActor
+    func testSharedTransactionPagerRetriesOlderPageAndPurgesDeniedHistory() async throws {
+        let store = BudgetWorkspaceStore.demo()
+        await store.refresh()
+        let rows = Array(store.transactions.prefix(2))
+        XCTAssertEqual(rows.count, 2)
+        let pager = TransactionHistoryPager()
+        let query = APITransactionQuery(limit: 1)
+        await pager.load(query: query, reset: true) { request in
+            XCTAssertNil(request.cursor)
+            return .init(items: [rows[0]], nextCursor: "next", totalCount: 2)
         }
-        XCTAssertTrue(scoped.contains("try Task.checkCancellation()"))
+        await pager.load(query: query, reset: false) { request in
+            XCTAssertEqual(request.cursor, "next")
+            throw URLError(.networkConnectionLost)
+        }
+        XCTAssertEqual(pager.rows, [rows[0]])
+        XCTAssertEqual(pager.retryIntent, .older)
+        await pager.load(query: query, reset: false) { request in
+            XCTAssertEqual(request.cursor, "next")
+            return .init(items: [rows[1]], nextCursor: nil, totalCount: 2)
+        }
+        XCTAssertEqual(pager.rows, rows)
+        XCTAssertNil(pager.errorMessage)
+        await pager.load(query: query, reset: false) { _ in XCTFail("Final page must not repeat"); return .init(items: [], nextCursor: nil, totalCount: 0) }
+        await pager.load(query: query, reset: true) { _ in throw APIClientError.server(status: 403, message: "Denied") }
+        XCTAssertTrue(pager.rows.isEmpty)
+        XCTAssertNil(pager.nextCursor)
+        XCTAssertFalse(pager.loading)
+    }
+
+    @MainActor
+    func testAccountRegisterUsesBoundedSharedPagerWithoutFinancialMutation() async throws {
+        let source = DemoWorkspaceDataSource()
+        let operations = (0..<75).map { index in RecordTransactionOperation(accountID: "checking", categoryID: nil,
+            amountMinor: 1, occurredOn: "2026-09-15", payeeName: "Paged merchant \(index)", memo: "", isCleared: false,
+            splits: [], flag: nil, tags: [], attachmentMetadata: []) }
+        XCTAssertNotNil(source.demo.recordCanonicalTransactionBatch(operations))
+        let accounts = source.demo.accounts, available = source.demo.unassignedMinor
+        let pager = TransactionHistoryPager()
+        let query = APITransactionQuery(accountIDs: ["checking"], limit: 50)
+        await pager.load(query: query, reset: true) { try await source.browseTransactions(query: $0) }
+        XCTAssertEqual(pager.rows.count, 50)
+        XCTAssertNotNil(pager.nextCursor)
+        while pager.nextCursor != nil {
+            await pager.load(query: query, reset: false) { try await source.browseTransactions(query: $0) }
+            XCTAssertNil(pager.errorMessage)
+            if pager.errorMessage != nil { break }
+        }
+        XCTAssertEqual(pager.rows.count, pager.totalCount)
+        XCTAssertGreaterThanOrEqual(pager.totalCount, 75)
+        XCTAssertTrue(pager.rows.allSatisfy { $0.accountID == "checking" })
+        XCTAssertEqual(Set(pager.rows.map(\.id)).count, pager.rows.count)
+        XCTAssertEqual(source.demo.accounts, accounts)
+        XCTAssertEqual(source.demo.unassignedMinor, available)
+        let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("BudgetApp/BudgetWorkspaceView.swift")
+        let text = try String(contentsOf: file)
+        let start = try XCTUnwrap(text.range(of: "struct LiveAccountRegisterView: View"))
+        let end = try XCTUnwrap(text.range(of: "private struct ReconciliationHistoryView: View"))
+        let register = String(text[start.lowerBound..<end.lowerBound])
+        XCTAssertTrue(register.contains("TransactionHistoryRows(history: history, showsRegisterBadges: true"))
+        XCTAssertTrue(register.contains("accountIDs: [account.id], limit: 50"))
+        XCTAssertFalse(register.contains("store.transactions(for: account)"))
     }
 
     func testActivityOnlyPublishesAndFinishesLatestRefresh() throws {

@@ -10613,85 +10613,80 @@ private struct ScopedTransactionHistoryView: View {
     @EnvironmentObject private var store: BudgetWorkspaceStore
     let title: String
     let filter: TransactionBrowserFilter
-    @State private var rows: [APITransaction] = []
-    @State private var nextCursor: String?
-    @State private var totalCount = 0
-    @State private var loading = false
-    @State private var errorMessage: String?
-    @State private var retryIntent: HistoryRetryIntent = .refresh
+    @StateObject private var history = TransactionHistoryPager()
 
     var body: some View {
-        List {
-            if rows.isEmpty && loading {
+        List { TransactionHistoryRows(history: history, onLoad: load) }
+            .navigationTitle(title)
+            .navigationBarTitleDisplayMode(.inline)
+            .accessibilityIdentifier("scoped-transaction-history")
+            .task(id: filter.description) { await load(true) }
+            .refreshable { await load(true) }
+            .onChange(of: store.authorityRevision) { _, _ in
+                history.clear()
+                Task { await load(true) }
+            }
+    }
+    private func load(_ reset: Bool) async {
+        await history.load(query: filter.query(search: "", currencyCode: store.budget.currencyCode, cursor: nil), reset: reset) {
+            try await store.browseTransactions($0)
+        }
+    }
+}
+
+private struct TransactionHistoryRows: View {
+    @ObservedObject var history: TransactionHistoryPager
+    var showsRegisterBadges = false
+    let onLoad: (Bool) async -> Void
+
+    var body: some View {
+        Group {
+            if history.rows.isEmpty && history.loading {
                 HStack { Spacer(); ProgressView(); Spacer() }
-            } else if rows.isEmpty, let errorMessage {
-                ContentUnavailableView(
-                    "History Unavailable", systemImage: "exclamationmark.triangle",
-                    description: Text(errorMessage)
-                )
-                Button("Try Again") { Task { await load(reset: true) } }
-            } else if rows.isEmpty {
-                ContentUnavailableView(
-                    "No Transactions", systemImage: "tray",
-                    description: Text("No authorized transactions match this history.")
-                )
+            } else if history.rows.isEmpty {
+                ContentUnavailableView(history.errorMessage == nil ? "No Transactions" : "History Unavailable",
+                    systemImage: history.errorMessage == nil ? "tray" : "exclamationmark.triangle",
+                    description: Text(history.errorMessage ?? "No authorized transactions match this history."))
+                if history.errorMessage != nil { Button("Try Again") { Task { await onLoad(true) } } }
             } else {
-                ForEach(rows) { transaction in
-                    LiveTransactionLink(transaction: transaction, allowsQuickClearing: true) {
-                        await load(reset: true)
-                    }
+                ForEach(history.rows) { transaction in
+                    LiveTransactionLink(transaction: transaction, allowsQuickClearing: true) { await onLoad(true) }
+                        .badge(showsRegisterBadges ? registerBadge(transaction) : "")
                 }
-                if let errorMessage {
+                if let errorMessage = history.errorMessage {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text(retryIntent == .older ? "More transactions could not be loaded." : "Transactions could not be refreshed.").font(.subheadline.weight(.semibold))
+                        Text(history.retryIntent == .older ? "More transactions could not be loaded." : "Transactions could not be refreshed.")
+                            .font(.subheadline.weight(.semibold))
                         Text(errorMessage).font(.caption).foregroundStyle(.secondary)
-                        Button("Try Again") { Task { await load(reset: retryIntent.shouldReset(hasLoadedRows: !rows.isEmpty)) } }
-                        Button("Refresh List") { Task { await load(reset: true) } }
+                        Button("Try Again") { Task { await onLoad(history.retryIntent.shouldReset(hasLoadedRows: !history.rows.isEmpty)) } }
+                        Button("Refresh List") { Task { await onLoad(true) } }
                     }
                     .accessibilityIdentifier("scoped-transaction-history-page-error")
-                } else if nextCursor != nil {
-                    Button { Task { await load(reset: false) } } label: {
+                } else if history.nextCursor != nil {
+                    Button { Task { await onLoad(false) } } label: {
                         HStack {
                             Spacer()
-                            if loading { ProgressView() } else { Text("Load More") }
+                            if history.loading { ProgressView() } else { Text("Load More") }
                             Spacer()
                         }
                     }
-                    .disabled(loading)
+                    .disabled(history.loading)
                     .accessibilityIdentifier("scoped-transaction-history-load-more")
                 } else {
-                    Text("Showing \(rows.count) of \(totalCount)")
+                    Text("Showing \(history.rows.count) of \(history.totalCount)")
                         .font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity)
                 }
             }
         }
-        .navigationTitle(title)
-        .navigationBarTitleDisplayMode(.inline)
-        .accessibilityIdentifier("scoped-transaction-history")
-        .task { await load(reset: true) }
-        .refreshable { await load(reset: true) }
     }
 
-    private func load(reset: Bool) async {
-        guard !loading else { return }
-        guard reset || nextCursor != nil else { return }
-        loading = true
-        defer { loading = false }
-        do {
-            let page = try await store.browseTransactions(
-                filter.query(search: "", currencyCode: store.budget.currencyCode, cursor: reset ? nil : nextCursor)
-            )
-            try Task.checkCancellation()
-            rows = try page.validatedRows(after: reset ? [] : rows, previousTotal: reset ? nil : totalCount, requestedCursor: reset ? nil : nextCursor)
-            nextCursor = page.nextCursor
-            totalCount = page.totalCount
-            errorMessage = nil
-        } catch where Task.isCancelled {
-        } catch {
-            retryIntent = reset ? .refresh : .older
-            if HistoryObservationPolicy.mustDiscard(after: error) { rows = []; nextCursor = nil; totalCount = 0 }
-            errorMessage = error.localizedDescription
-        }
+    private func registerBadge(_ transaction: APITransaction) -> String {
+        var values: [String] = []
+        if transaction.isReconciled { values.append("R") } else if transaction.isCleared { values.append("C") }
+        if !transaction.splits.isEmpty { values.append("Split") }
+        if transaction.transferID != nil { values.append("Transfer") }
+        if !transaction.memo.isEmpty || transaction.attachmentMetadata?.isEmpty == false { values.append("Details") }
+        return values.joined(separator: " · ")
     }
 }
 
@@ -11691,10 +11686,10 @@ struct LiveAccountRegisterView: View {
     @State private var showReconcile = false
     @State private var showSettings = false
     @State private var showReconciliationHistory = false
+    @StateObject private var history = TransactionHistoryPager()
 
     private var account: APIAccount { store.accounts.first(where: { $0.id == initialAccount.id }) ?? initialAccount }
 
-    private var transactions: [APITransaction] { store.transactions(for: account) }
     private var paymentReserve: Int64? {
         guard let id = account.paymentCategoryID else { return nil }
         return store.summary?.categories.first(where: { $0.categoryID == id })?.availableMinor
@@ -11722,14 +11717,7 @@ struct LiveAccountRegisterView: View {
             }
 
             Section("Register") {
-                if transactions.isEmpty {
-                    ContentUnavailableView("No transactions", systemImage: "list.bullet.rectangle", description: Text("Transactions recorded in this account will appear here."))
-                } else {
-                    ForEach(transactions) { transaction in
-                        LiveTransactionLink(transaction: transaction, allowsQuickClearing: true)
-                            .badge(registerBadge(transaction))
-                    }
-                }
+                TransactionHistoryRows(history: history, showsRegisterBadges: true, onLoad: loadHistory)
             }
         }
         .navigationTitle(account.name)
@@ -11748,15 +11736,17 @@ struct LiveAccountRegisterView: View {
         .sheet(isPresented: $showSettings) { HistoryAuthorityBoundary(.account(account.id), unavailableTitle: "Account unavailable") { AccountSettingsView(account: account) } }
         .sheet(isPresented: $showReconciliationHistory) { HistoryAuthorityBoundary(.account(account.id)) { ReconciliationHistoryView(account: account) } }
         .refreshable { await store.refresh() }
+        .task(id: store.reportRevision) { await loadHistory(true) }
+        .onChange(of: store.authorityRevision) { _, _ in
+            history.clear()
+            Task { await loadHistory(true) }
+        }
     }
 
-    private func registerBadge(_ transaction: APITransaction) -> String {
-        var values: [String] = []
-        if transaction.isReconciled { values.append("R") } else if transaction.isCleared { values.append("C") }
-        if !transaction.splits.isEmpty { values.append("Split") }
-        if transaction.transferID != nil { values.append("Transfer") }
-        if transaction.memo.isEmpty == false || transaction.attachmentMetadata?.isEmpty == false { values.append("Details") }
-        return values.joined(separator: " · ")
+    private func loadHistory(_ reset: Bool) async {
+        await history.load(query: .init(accountIDs: [account.id], limit: 50), reset: reset) {
+            try await store.browseTransactions($0)
+        }
     }
 
     @ViewBuilder private var entry: some View {
