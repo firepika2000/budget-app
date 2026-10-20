@@ -1909,19 +1909,18 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         return try await loadStatementImport(accountID: accountID, batchID: batchID)
     }
     func stageStatementImport(accountID: String, data: Data, mapping: APIStatementImportMapping) async throws -> APIStatementImport { try requireActiveMembership();
+        return try await stageStatementImport(accountID: accountID, data: data, mapping: mapping, parse: NativeStatementParsing.parse)
+    }
+    func stageStatementImport(accountID: String, data: Data, mapping: APIStatementImportMapping, parse: (Data, APIStatementImportMapping) async throws -> [LocalDelimitedStatementParser.Candidate]) async throws -> APIStatementImport { try requireActiveMembership();
         try await requireStatementAccount(accountID)
-        let parsed: [LocalDelimitedStatementParser.Candidate]
-        switch mapping.sourceFormat {
-        case "csv": parsed = try LocalDelimitedStatementParser.parse(data: data, mapping: mapping)
-        case "qif": parsed = try LocalQIFStatementParser.parse(data: data, mapping: mapping)
-        case "ofx", "qfx": parsed = try LocalOFXStatementParser.parse(data: data, mapping: mapping)
-        case "mt940": parsed = try LocalMT940StatementParser.parse(data: data, mapping: mapping)
-        case "camt": parsed = try LocalCAMTStatementParser.parse(data: data, mapping: mapping)
-        case "pdf": parsed = try LocalPDFStatementParser.parse(data: data, mapping: mapping)
-        case "pdf_ocr": parsed = try LocalDelimitedStatementParser.parse(data: data, mapping: mapping)
-        default:
-            throw workspaceRepositoryError("Local statement import supports CSV, TSV, delimited text, OFX, QFX, QIF, MT940, CAMT, and PDF statements.")
+        let actor = statementActorID
+        let parsed = try await parse(data, mapping)
+        try Task.checkCancellation()
+        try requireActiveMembership()
+        guard actor == statementActorID else {
+            throw APIClientError.server(status: 403, message: "Statement access changed. Reopen the import with current access.")
         }
+        try await requireStatementAccount(accountID)
         // Match only currently visible, posted observations from the statement's account. A
         // same-day purchase in another account is not evidence that this bank row is a duplicate.
         // Keep suggestions bounded and deterministic, matching the server review boundary.
@@ -1986,6 +1985,8 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
                                        candidateCount: candidates.count, candidates: candidates,
                                        createdAt: ISO8601DateFormatter().string(from: now()))
         try await persistStatementImportIfNeeded(batch)
+        try requireActiveMembership()
+        guard actor == statementActorID else { throw APIClientError.server(status: 403, message: "Statement access changed.") }
         statementImportBatches[batch.id] = batch
         statementImportOwners[batch.id] = statementActorID
         return batch
@@ -12202,8 +12203,39 @@ private struct StatementImportFile: Identifiable {
     var suggestedDelimiter: String { fileExtension == "tsv" ? "\t" : "," }
 }
 
+enum NativeStatementParsing {
+    static func run<Value: Sendable>(_ operation: @escaping @Sendable () throws -> Value) async throws -> Value {
+        try Task.checkCancellation()
+        let worker = Task.detached(priority: .userInitiated) {
+            try Task.checkCancellation()
+            let value = try operation()
+            try Task.checkCancellation()
+            return value
+        }
+        return try await withTaskCancellationHandler {
+            let value = try await worker.value
+            try Task.checkCancellation()
+            return value
+        } onCancel: { worker.cancel() }
+    }
+
+    static func parse(_ data: Data, _ mapping: APIStatementImportMapping) async throws -> [LocalDelimitedStatementParser.Candidate] {
+        try await run {
+            switch mapping.sourceFormat {
+            case "csv", "pdf_ocr": return try LocalDelimitedStatementParser.parse(data: data, mapping: mapping)
+            case "qif": return try LocalQIFStatementParser.parse(data: data, mapping: mapping)
+            case "ofx", "qfx": return try LocalOFXStatementParser.parse(data: data, mapping: mapping)
+            case "mt940": return try LocalMT940StatementParser.parse(data: data, mapping: mapping)
+            case "camt": return try LocalCAMTStatementParser.parse(data: data, mapping: mapping)
+            case "pdf": return try LocalPDFStatementParser.parse(data: data, mapping: mapping)
+            default: throw workspaceRepositoryError("Local statement import supports CSV, TSV, delimited text, OFX, QFX, QIF, MT940, CAMT, and PDF statements.")
+            }
+        }
+    }
+}
+
 enum LocalDelimitedStatementParser {
-    struct Candidate {
+    struct Candidate: Sendable, Equatable {
         let sourceRow: Int; let occurredOn: String; let amountMinor: Int64; let payee: String; let memo: String
     }
     static func parse(data: Data, mapping: APIStatementImportMapping) throws -> [Candidate] {

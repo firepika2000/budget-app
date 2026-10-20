@@ -11,6 +11,60 @@ import UserNotifications
 @testable import Budget_App
 
 final class DemoStoreTests: XCTestCase {
+    @MainActor
+    func testStatementParsingWorkerRunsOffMainAndPreservesExactParserResults() async throws {
+        let onMain = try await NativeStatementParsing.run { Thread.isMainThread }
+        XCTAssertFalse(onMain)
+        let mapping = APIStatementImportMapping(sourceFormat: "csv", currencyCode: "USD", dateColumn: "Date",
+            amountColumn: "Amount", payeeColumn: "Payee", dateOrder: "ymd")
+        let rows = (0..<2_000).map { "2026-09-15,-1.23,Merchant \($0)" }
+        let data = Data((["Date,Amount,Payee", "2026-09-15,90071992547409.93,Exact"] + rows).joined(separator: "\n").utf8)
+        let parsed = try await NativeStatementParsing.parse(data, mapping)
+        XCTAssertEqual(parsed, try LocalDelimitedStatementParser.parse(data: data, mapping: mapping))
+        XCTAssertEqual(parsed.first?.amountMinor, 9_007_199_254_740_993)
+        XCTAssertEqual(parsed.count, 2_001)
+    }
+
+    @MainActor
+    func testCanceledStatementParsingDoesNotReturnWorkerResult() async {
+        let task = Task { try await NativeStatementParsing.run { 42 } }
+        task.cancel()
+        do { _ = try await task.value; XCTFail("Canceled parsing must not return a review") }
+        catch { XCTAssertTrue(error is CancellationError) }
+    }
+
+    @MainActor
+    func testStatementStagingRechecksActorAndPermissionsAfterParsingBeforePublishing() async throws {
+        for switchActor in [false, true] {
+            let source = DemoWorkspaceDataSource()
+            _ = try await source.updateAccessProfile(userID: "jordan", value: .init(
+                capabilities: ["view_budget", "view_transactions", "create_transaction"],
+                restrictAccounts: false, accountIDs: [], restrictCategories: false, categoryIDs: [], expectedVersion: nil))
+            source.demo.persona = .partner
+            let account = try XCTUnwrap(source.demo.visibleAccounts.first)
+            let before = source.demo.transactions
+            let mapping = APIStatementImportMapping(sourceFormat: "csv", currencyCode: "USD", dateColumn: "Date",
+                amountColumn: "Amount", payeeColumn: "Payee", dateOrder: "ymd")
+            do {
+                _ = try await source.stageStatementImport(accountID: account.id, data: Data(), mapping: mapping, parse: { _, _ in
+                    source.demo.persona = .rey
+                    if !switchActor {
+                        _ = try await source.updateAccessProfile(userID: "jordan", value: .init(
+                            capabilities: ["view_budget"], restrictAccounts: false, accountIDs: [],
+                            restrictCategories: false, categoryIDs: [], expectedVersion: nil))
+                        source.demo.persona = .partner
+                    }
+                    return [.init(sourceRow: 2, occurredOn: "2026-09-15", amountMinor: 100, payee: "Private row", memo: "")]
+                })
+                XCTFail("An old parsing request must not publish under changed access")
+            } catch let APIClientError.server(status, _) { XCTAssertEqual(status, 403) }
+            source.demo.persona = .rey
+            let history = try await source.statementImports(accountID: account.id, limit: 25, offset: 0)
+            XCTAssertTrue(history.items.isEmpty)
+            XCTAssertEqual(source.demo.transactions, before)
+        }
+    }
+
     func testNativeImportReaderHandlesShortReadsAndExactLimitWithoutTruncation() throws {
         let expected = Data("abcde".utf8)
         var offset = 0, requests: [Int] = []
