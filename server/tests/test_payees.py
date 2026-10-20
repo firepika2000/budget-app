@@ -1,5 +1,6 @@
 from time import monotonic
 from datetime import date
+import pytest
 
 from sqlalchemy import event
 from sqlalchemy.orm import Session
@@ -48,6 +49,69 @@ def test_payee_search_streams_exact_totals_without_loading_ledger_entities(clien
     assert next(item for item in legacy.json() if item["id"] == payee["id"])["net_amount_minor"] == -2001
     assert loaded == [], "Bounded payee search must not materialize its entire contributing ledger"
     assert batches == [500, 500], "Scalar observations must be fetched in bounded batches"
+
+
+def test_large_payee_rename_and_merge_flush_bounded_batches_without_losing_audits(client, owner_token, session_factory):
+    budget = create_budget(client, owner_token, session_factory)
+    account, category = create_budget_structure(client, owner_token, budget["id"])
+    root = f"/api/v1/budgets/{budget['id']}/payees"
+    source = client.post(root, headers=auth(owner_token), json={"display_name": "Source"}).json()
+    destination = client.post(root, headers=auth(owner_token), json={"display_name": "Destination"}).json()
+    with session_factory() as db:
+        owner_id = db.query(User.id).filter(User.email == "owner@example.com").scalar()
+        db.add_all([Transaction(budget_id=budget["id"], account_id=account["id"], category_id=category["id"],
+            payee_id=source["id"], amount_minor=-index, occurred_on=date(2026, 9, 15),
+            payee_name="Source", memo="Preserve", tags=["qa"], is_cleared=True, created_by_user_id=owner_id)
+            for index in range(1201)])
+        db.commit()
+    batch_sizes = []
+    ledger_entities = []
+    def observe_flush(session, context, instances):
+        batch_sizes.append(sum(isinstance(item, Transaction) for item in session.dirty))
+    def observe_load(session, instance):
+        if isinstance(instance, Transaction):
+            ledger_entities.append(sum(isinstance(item, Transaction) for item in session.identity_map.values()))
+    event.listen(Session, "before_flush", observe_flush)
+    event.listen(Session, "loaded_as_persistent", observe_load)
+    try:
+        renamed = client.put(f"{root}/{source['id']}", headers=auth(owner_token), json={"display_name": "Renamed", "is_archived": False})
+        assert renamed.status_code == 200, renamed.text
+        merge_batches = 0
+        def fail_second_batch(session, context, instances):
+            nonlocal merge_batches
+            if any(isinstance(item, TransactionChange) and item.action == "payee_merged" for item in session.new):
+                merge_batches += 1
+                if merge_batches == 2:
+                    raise RuntimeError("injected later-batch failure")
+        event.listen(Session, "before_flush", fail_second_batch)
+        try:
+            with pytest.raises(RuntimeError, match="later-batch failure"):
+                client.post(f"{root}/{source['id']}/merge", headers=auth(owner_token), json={"destination_payee_id": destination["id"]})
+        finally:
+            event.remove(Session, "before_flush", fail_second_batch)
+        with session_factory() as db:
+            assert db.query(Transaction).filter_by(payee_id=source["id"]).count() == 1201
+            assert db.query(Transaction).filter_by(payee_id=destination["id"]).count() == 0
+            assert db.query(TransactionChange).filter_by(action="payee_merged").count() == 0
+            assert db.get(Payee, source["id"]).merged_into_payee_id is None
+        merged = client.post(f"{root}/{source['id']}/merge", headers=auth(owner_token), json={"destination_payee_id": destination["id"]})
+        assert merged.status_code == 200, merged.text
+    finally:
+        event.remove(Session, "before_flush", observe_flush)
+        event.remove(Session, "loaded_as_persistent", observe_load)
+    assert max(batch_sizes) <= 500, "Do not retain every dirty ledger entity until commit"
+    assert max(ledger_entities) <= 500, "Do not materialize the complete history before batching writes"
+    assert merged.json()["transaction_count"] == 1201
+    assert merged.json()["net_amount_minor"] == -sum(range(1201))
+    with session_factory() as db:
+        transactions = db.query(Transaction).filter_by(payee_id=destination["id"]).all()
+        assert len(transactions) == 1201
+        assert all(item.payee_name == "Destination" and item.memo == "Preserve" and item.tags == ["qa"] and item.is_cleared for item in transactions)
+        ids = [item.id for item in transactions]
+        for action in ["payee_renamed", "payee_merged"]:
+            observations = db.query(TransactionChange).filter(TransactionChange.transaction_id.in_(ids), TransactionChange.action == action).all()
+            assert len(observations) == 1201
+            assert len({item.transaction_id for item in observations}) == 1201
 
 
 def test_payee_identity_normalization_default_and_transaction_link(client, owner_token, session_factory):

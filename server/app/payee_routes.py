@@ -3,7 +3,7 @@ from __future__ import annotations
 import base64
 import binascii
 import json
-from typing import Optional
+from typing import Iterator, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import and_, delete, exists, func, or_, select
@@ -55,6 +55,24 @@ def _visible_payee_observations(
         count, total = observations.get(payee_id, (0, 0))
         observations[payee_id] = (count + 1, total + amount_minor)
     return observations
+
+
+def _transaction_batches(db: Session, payee_id: str) -> Iterator[list[Transaction]]:
+    """Bound dirty entities and audit inserts without committing any partial rename/merge."""
+    cursor: str | None = None
+    while True:
+        query = select(Transaction).where(Transaction.payee_id == payee_id)
+        if cursor is not None:
+            query = query.where(Transaction.id > cursor)
+        rows = list(db.scalars(query.order_by(Transaction.id).limit(500)))
+        if not rows:
+            return
+        cursor = rows[-1].id
+        yield rows
+        # Flush is not commit: a later failure still rolls back every batch and audit.
+        db.flush()
+        for transaction in rows:
+            db.expunge(transaction)
 
 
 def _response(
@@ -248,16 +266,17 @@ def update_payee(budget_id: str, payee_id: str, body: PayeeUpdate, user: User = 
     old_name = payee.display_name
     payee.display_name, payee.name_key, payee.is_archived = name, key, body.is_archived
     if name != old_name:
-        for transaction in db.scalars(select(Transaction).where(Transaction.payee_id == payee.id)):
-            transaction.payee_name = name
-            db.add(TransactionChange(
-                budget_id=transaction.budget_id,
-                transaction_id=transaction.id,
-                actor_user_id=user.id,
-                action="payee_renamed",
-                before_json=json.dumps({"payee_id": payee.id, "payee_name": old_name}),
-                after_json=json.dumps({"payee_id": payee.id, "payee_name": name}),
-            ))
+        for batch in _transaction_batches(db, payee.id):
+            for transaction in batch:
+                transaction.payee_name = name
+                db.add(TransactionChange(
+                    budget_id=transaction.budget_id,
+                    transaction_id=transaction.id,
+                    actor_user_id=user.id,
+                    action="payee_renamed",
+                    before_json=json.dumps({"payee_id": payee.id, "payee_name": old_name}),
+                    after_json=json.dumps({"payee_id": payee.id, "payee_name": name}),
+                ))
         for schedule in db.scalars(select(ScheduledTransaction).where(ScheduledTransaction.payee_id == payee.id)):
             schedule.name = name
     preference_before, preference_after = _set_preference(db, budget, payee, body.default_category_id, user)
@@ -318,12 +337,13 @@ def merge_payee(budget_id: str, payee_id: str, body: PayeeMerge, user: User = De
         raise HTTPException(status_code=409, detail="Choose two active payees")
     source_before = payee_snapshot(db, source)
     destination_before = payee_snapshot(db, destination)
-    for transaction in db.scalars(select(Transaction).where(Transaction.payee_id == source.id)):
-        before = transaction.payee_id
-        transaction.payee_id = destination.id
-        transaction.payee_name = destination.display_name
-        db.add(TransactionChange(budget_id=transaction.budget_id, transaction_id=transaction.id, actor_user_id=user.id,
-                                 action="payee_merged", before_json=f'{{"payee_id":"{before}"}}', after_json=f'{{"payee_id":"{destination.id}"}}'))
+    for batch in _transaction_batches(db, source.id):
+        for transaction in batch:
+            before = transaction.payee_id
+            transaction.payee_id = destination.id
+            transaction.payee_name = destination.display_name
+            db.add(TransactionChange(budget_id=transaction.budget_id, transaction_id=transaction.id, actor_user_id=user.id,
+                                     action="payee_merged", before_json=f'{{"payee_id":"{before}"}}', after_json=f'{{"payee_id":"{destination.id}"}}'))
     for schedule in db.scalars(select(ScheduledTransaction).where(ScheduledTransaction.payee_id == source.id)):
         schedule.payee_id = destination.id
         schedule.name = destination.display_name
