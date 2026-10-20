@@ -10174,13 +10174,16 @@ private struct LiveActivityView: View {
     var requestedQuickEntryDraft: QuickEntryDraft?
     @State private var search = ""
     @State private var filter = TransactionBrowserFilter()
-    @State private var rows: [APITransaction] = []
-    @State private var nextCursor: String?
-    @State private var totalCount = 0
-    @State private var loading = false
-    @State private var errorMessage: String?
-    @State private var retryIntent: HistoryRetryIntent = .refresh
-    @State private var pageRequestID = UUID()
+    @StateObject private var history = TransactionHistoryPager()
+    @State private var loadedQuery: String?
+    @State private var mutationLoading = false
+    @State private var commandError: String?
+    private var rows: [APITransaction] { history.rows }
+    private var nextCursor: String? { history.nextCursor }
+    private var totalCount: Int { history.totalCount }
+    private var loading: Bool { mutationLoading || history.loading }
+    private var retryIntent: HistoryRetryIntent { history.retryIntent }
+    private var errorMessage: String? { commandError ?? history.errorMessage }
     @State private var showFilters = false
     @State private var showAdd = false
     @State private var entryDraft: QuickEntryDraft?
@@ -10200,7 +10203,8 @@ private struct LiveActivityView: View {
     @State private var transactionChangesError: String?
     @State private var transactionChangesAuthority: Int?
     @State private var reconciliationAuthority: Int?
-    private var queryKey: String { "\(store.authorityRevision)|\(search)|\(filter)" }
+    private var selectionKey: String { "\(store.authorityRevision)|\(search)|\(filter)" }
+    private var queryKey: String { "\(selectionKey)|\(store.reportRevision)" }
     private var recentPlanChanges: [APIAllocationOperation] {
         Array(store.allocationOperations.sorted {
             if $0.occurredOn != $1.occurredOn { return $0.occurredOn > $1.occurredOn }
@@ -10347,7 +10351,7 @@ private struct LiveActivityView: View {
             .task(id: queryKey) { if !search.isEmpty { try? await Task.sleep(for: .milliseconds(250)) }; guard !Task.isCancelled else { return }; await load(reset: true) }
             .task(id: store.authorityRevision) { async let changes: Void = loadRecentTransactionChanges(); async let reconciliations: Void = loadRecentReconciliations(); _ = await (changes, reconciliations) }
             .onChange(of: store.authorityRevision) { _, _ in
-                rows = []; nextCursor = nil; totalCount = 0; errorMessage = nil
+                history.clear(); commandError = nil
                 transactionSelection.removeAll(); selecting = false; showTagPrompt = false
                 recentTransactionChanges = []; recentReconciliations = []; reconciliationAccount = nil
                 transactionChangesError = nil; reconciliationError = nil
@@ -10562,7 +10566,7 @@ private struct LiveActivityView: View {
     private func canBulkEdit(_ transaction: APITransaction) -> Bool { !transaction.isReconciled && transaction.transferID == nil && transaction.scheduledTransactionID == nil && !["Starting Balance", "Reconciliation adjustment"].contains(transaction.payeeName) }
     private func toggleSelection(_ transaction: APITransaction) {
         do { try transactionSelection.toggle(id: transaction.id, revision: transaction.revision) }
-        catch { errorMessage = error.localizedDescription }
+        catch { commandError = error.localizedDescription }
     }
     @ViewBuilder private var bulkBar: some View {
         HStack {
@@ -10577,35 +10581,31 @@ private struct LiveActivityView: View {
         }.padding(.horizontal).padding(.vertical, 10).background(.bar)
     }
     private func bulkUpdate(action: String, cleared: Bool? = nil, flag: String? = nil, tags: [String]? = nil) async {
-        loading = true; defer { loading = false }
+        guard !mutationLoading else { return }
+        mutationLoading = true; defer { mutationLoading = false }
         do {
             let update = try transactionSelection.update(action: action, cleared: cleared, flag: flag, tags: tags)
             try await store.bulkUpdateTransactions(update)
             transactionSelection.removeAll(); selecting = false
             await load(reset: true)
-        } catch { errorMessage = error.localizedDescription }
+        } catch { commandError = error.localizedDescription }
     }
     private func load(reset: Bool) async {
         let requestedKey = queryKey
         if loading && !reset { return }
-        let requestID = UUID()
-        pageRequestID = requestID
-        loading = true
-        defer { if requestID == pageRequestID { loading = false } }
-        do {
-            let page = try await store.browseTransactions(filter.query(search: search, currencyCode: store.budget.currencyCode, cursor: reset ? nil : nextCursor))
-            guard requestID == pageRequestID, requestedKey == queryKey, !Task.isCancelled else { return }
-            rows = try page.validatedRows(after: reset ? [] : rows, previousTotal: reset ? nil : totalCount, requestedCursor: reset ? nil : nextCursor)
-            nextCursor = page.nextCursor; totalCount = page.totalCount; errorMessage = nil
-        } catch is CancellationError { return }
-        catch {
-            guard requestID == pageRequestID, requestedKey == queryKey else { return }
-            retryIntent = reset ? .refresh : .older
-            if HistoryObservationPolicy.mustDiscard(after: error) {
-                rows = []; nextCursor = nil; totalCount = 0
-                transactionSelection.removeAll(); selecting = false; showTagPrompt = false
+        if loadedQuery != selectionKey {
+            history.clear()
+            loadedQuery = selectionKey
+        }
+        commandError = nil
+        await history.load(query: filter.query(search: search, currencyCode: store.budget.currencyCode, cursor: nil), reset: reset, preserveDepth: true) { query in
+            do { return try await store.browseTransactions(query) }
+            catch {
+                if requestedKey == queryKey, !Task.isCancelled, HistoryObservationPolicy.mustDiscard(after: error) {
+                    transactionSelection.removeAll(); selecting = false; showTagPrompt = false
+                }
+                throw error
             }
-            if !Task.isCancelled { errorMessage = error.localizedDescription }
         }
     }
 }

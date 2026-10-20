@@ -1437,6 +1437,7 @@ final class AuthenticationJourneyTests: XCTestCase {
         app.launch()
 
         let row = app.buttons["transaction-row-t1"]
+        for _ in 0..<8 where !row.isHittable { app.swipeUp() }
         XCTAssertTrue(row.waitForExistence(timeout: 5))
         XCTAssertEqual(row.value as? String, "Uncleared")
         row.swipeLeft()
@@ -2020,7 +2021,10 @@ final class AuthenticationJourneyTests: XCTestCase {
 
         XCTAssertTrue(app.navigationBars["Activity"].waitForExistence(timeout: 5))
         app.buttons["bulk-select-action"].tap()
-        app.buttons["bulk-transaction-row-t1"].tap()
+        let row = app.buttons["bulk-transaction-row-t1"]
+        for _ in 0..<8 where !row.isHittable { app.swipeUp() }
+        XCTAssertTrue(row.waitForExistence(timeout: 5))
+        row.tap()
         app.buttons["bulk-update-menu"].tap()
         app.buttons["Mark Cleared"].tap()
 

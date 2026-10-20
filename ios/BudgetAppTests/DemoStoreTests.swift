@@ -370,7 +370,7 @@ final class DemoStoreTests: XCTestCase {
         let activityEnd = try XCTUnwrap(source.range(of: "private struct TransactionBrowserFilter:"))
         let activity = String(source[activityStart.lowerBound..<activityEnd.lowerBound])
         XCTAssertEqual(activity.components(separatedBy: "HistoryObservationPolicy.mustDiscard(after: error)").count - 1, 3)
-        XCTAssertTrue(activity.contains("rows = []; nextCursor = nil; totalCount = 0"))
+        XCTAssertTrue(activity.contains("history.clear(); commandError = nil"))
         XCTAssertTrue(activity.contains("transactionSelection.removeAll(); selecting = false; showTagPrompt = false"))
         XCTAssertTrue(activity.contains("recentTransactionChanges = []"))
         XCTAssertTrue(activity.contains("recentReconciliations = []; reconciliationAccount = nil"))
@@ -381,8 +381,8 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertTrue(scoped.contains("history.clear()"))
         XCTAssertTrue(scoped.contains("history.load(query:"))
         XCTAssertTrue(scoped.contains("history.retryIntent.shouldReset(hasLoadedRows: !history.rows.isEmpty)"))
-        XCTAssertTrue(activity.contains("retryIntent = reset ? .refresh : .older"))
-        XCTAssertTrue(activity.contains("page.validatedRows(after:"))
+        XCTAssertTrue(activity.contains("history.load(query:"))
+        XCTAssertTrue(activity.contains("preserveDepth: true"))
     }
 
     @MainActor
@@ -596,19 +596,37 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertTrue(accounts.contains("TransactionHistoryRows(history: history"), "Granted transaction visibility remains usable")
     }
 
-    func testActivityOnlyPublishesAndFinishesLatestRefresh() throws {
+    @MainActor
+    func testActivityOnlyPublishesAndFinishesLatestRefresh() async throws {
         let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("BudgetApp/BudgetWorkspaceView.swift")
         let source = try String(contentsOf: file)
         let start = try XCTUnwrap(source.range(of: "private struct LiveActivityView: View"))
         let end = try XCTUnwrap(source.range(of: "private struct TransactionBrowserFilter:"))
         let activity = String(source[start.lowerBound..<end.lowerBound])
-        XCTAssertTrue(activity.contains("@State private var pageRequestID = UUID()"))
-        XCTAssertTrue(activity.contains("let requestID = UUID()\n        pageRequestID = requestID"))
-        XCTAssertTrue(activity.contains("defer { if requestID == pageRequestID { loading = false } }"))
-        XCTAssertTrue(activity.contains("guard requestID == pageRequestID, requestedKey == queryKey, !Task.isCancelled else { return }"))
-        XCTAssertTrue(activity.contains("guard requestID == pageRequestID, requestedKey == queryKey else { return }"))
+        XCTAssertTrue(activity.contains("@StateObject private var history = TransactionHistoryPager()"))
+        XCTAssertTrue(activity.contains("\\(selectionKey)|\\(store.reportRevision)"))
+        XCTAssertTrue(activity.contains("if loadedQuery != selectionKey"))
+        XCTAssertTrue(activity.contains("preserveDepth: true"))
         XCTAssertTrue(activity.contains("\\(store.authorityRevision)|\\(search)|\\(filter)"))
         XCTAssertFalse(activity.contains("await load(reset: true); errorMessage = nil"), "Bulk success must not hide a failed authoritative refresh")
+        let store = BudgetWorkspaceStore.demo()
+        await store.refresh()
+        let rows = Array(store.transactions.prefix(2))
+        XCTAssertEqual(rows.count, 2)
+        let pager = TransactionHistoryPager()
+        await pager.load(query: .init(limit: 1), reset: true) { _ in
+            await pager.load(query: .init(limit: 1), reset: true) { _ in
+                .init(items: [rows[1]], nextCursor: nil, totalCount: 1)
+            }
+            return .init(items: [rows[0]], nextCursor: nil, totalCount: 1)
+        }
+        XCTAssertEqual(pager.rows, [rows[1]], "An earlier request cannot replace a newer observation")
+        XCTAssertFalse(pager.loading)
+        await pager.load(query: .init(limit: 1), reset: true) { _ in
+            pager.clear()
+            return .init(items: [rows[0]], nextCursor: nil, totalCount: 1)
+        }
+        XCTAssertTrue(pager.rows.isEmpty, "Authority clearing invalidates an in-flight observation")
     }
     func testReportHistoryRefreshPublishesReplacementOnlyAfterCurrentResponse() throws {
         let source = try String(contentsOf: URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("BudgetApp/BudgetWorkspaceView.swift"))
