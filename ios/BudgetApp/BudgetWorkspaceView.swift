@@ -10201,8 +10201,9 @@ private struct LiveActivityView: View {
     @State private var recentTransactionChanges: [APITransactionChange] = []
     @State private var transactionChangesLoading = false
     @State private var transactionChangesError: String?
-    @State private var transactionChangesAuthority: Int?
-    @State private var reconciliationAuthority: Int?
+    @State private var transactionChangesAuthority: String?
+    @State private var reconciliationAuthority: String?
+    private var activityObservationKey: String { "\(store.authorityRevision)|\(store.reportRevision)" }
     private var selectionKey: String { "\(store.authorityRevision)|\(search)|\(filter)" }
     private var queryKey: String { "\(selectionKey)|\(store.reportRevision)" }
     private var recentPlanChanges: [APIAllocationOperation] {
@@ -10349,7 +10350,7 @@ private struct LiveActivityView: View {
             .onAppear { openQuickEntryIfRequested() }
             .onChange(of: quickEntryRequest) { _, _ in openQuickEntryIfRequested() }
             .task(id: queryKey) { if !search.isEmpty { try? await Task.sleep(for: .milliseconds(250)) }; guard !Task.isCancelled else { return }; await load(reset: true) }
-            .task(id: store.authorityRevision) { async let changes: Void = loadRecentTransactionChanges(); async let reconciliations: Void = loadRecentReconciliations(); _ = await (changes, reconciliations) }
+            .task(id: activityObservationKey) { async let changes: Void = loadRecentTransactionChanges(); async let reconciliations: Void = loadRecentReconciliations(); _ = await (changes, reconciliations) }
             .onChange(of: store.authorityRevision) { _, _ in
                 history.clear(); commandError = nil
                 transactionSelection.removeAll(); selecting = false; showTagPrompt = false
@@ -10491,39 +10492,39 @@ private struct LiveActivityView: View {
         return " · " + names.joined(separator: ", ")
     }
     private func loadRecentTransactionChanges() async {
-        let revision = store.authorityRevision
+        let revision = activityObservationKey
         guard !transactionChangesLoading || transactionChangesAuthority != revision else { return }
         transactionChangesAuthority = revision
         transactionChangesLoading = true
         defer { if transactionChangesAuthority == revision { transactionChangesLoading = false } }
         do {
             let values = try await store.recentTransactionChanges()
-            guard revision == store.authorityRevision, !Task.isCancelled else { return }
+            guard revision == activityObservationKey, !Task.isCancelled else { return }
             recentTransactionChanges = values
             transactionChangesError = nil
         } catch is CancellationError { return
         } catch where Task.isCancelled { return }
         catch {
-            guard revision == store.authorityRevision else { return }
+            guard revision == activityObservationKey else { return }
             if HistoryObservationPolicy.mustDiscard(after: error) { recentTransactionChanges = [] }
             transactionChangesError = error.localizedDescription
         }
     }
     private func loadRecentReconciliations() async {
-        let revision = store.authorityRevision
+        let revision = activityObservationKey
         guard !reconciliationLoading || reconciliationAuthority != revision else { return }
         reconciliationAuthority = revision
         reconciliationLoading = true
         defer { if reconciliationAuthority == revision { reconciliationLoading = false } }
         do {
             let values = try await store.recentReconciliationHistory()
-            guard revision == store.authorityRevision, !Task.isCancelled else { return }
+            guard revision == activityObservationKey, !Task.isCancelled else { return }
             recentReconciliations = values
             reconciliationError = nil
         } catch is CancellationError { return
         } catch where Task.isCancelled { return }
         catch {
-            guard revision == store.authorityRevision else { return }
+            guard revision == activityObservationKey else { return }
             if HistoryObservationPolicy.mustDiscard(after: error) { recentReconciliations = []; reconciliationAccount = nil }
             reconciliationError = error.localizedDescription
         }

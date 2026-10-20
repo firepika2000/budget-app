@@ -374,6 +374,10 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertTrue(activity.contains("transactionSelection.removeAll(); selecting = false; showTagPrompt = false"))
         XCTAssertTrue(activity.contains("recentTransactionChanges = []"))
         XCTAssertTrue(activity.contains("recentReconciliations = []; reconciliationAccount = nil"))
+        XCTAssertTrue(activity.contains(".task(id: activityObservationKey)"))
+        XCTAssertTrue(activity.contains("private var activityObservationKey: String { \"\\(store.authorityRevision)|\\(store.reportRevision)\" }"))
+        XCTAssertEqual(activity.components(separatedBy: "let revision = activityObservationKey").count - 1, 2)
+        XCTAssertEqual(activity.components(separatedBy: "guard revision == activityObservationKey").count - 1, 4)
         let scopedStart = try XCTUnwrap(source.range(of: "private struct ScopedTransactionHistoryView: View"))
         let scopedEnd = try XCTUnwrap(source.range(of: "private struct TransactionFilterView: View"))
         let scoped = String(source[scopedStart.lowerBound..<scopedEnd.lowerBound])
@@ -414,6 +418,32 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertTrue(pager.rows.isEmpty)
         XCTAssertNil(pager.nextCursor)
         XCTAssertFalse(pager.loading)
+    }
+
+    @MainActor
+    func testActivityAuditObservationsAdvanceWithoutPermissionChange() async throws {
+        let store = BudgetWorkspaceStore.demo()
+        await store.refresh()
+        let authority = store.authorityRevision
+        let revision = store.reportRevision
+        let date = BudgetWorkspaceStore.dateString(Date.demo(monthsAgo: 0, day: 15))
+        try await store.createTransaction(.init(accountID: "checking", categoryID: "groceries", amountMinor: -100,
+            occurredOn: date, payeeName: "Audit refresh merchant", memo: "", isCleared: true,
+            splits: [], flag: nil, tags: [], attachmentMetadata: []))
+        let transaction = try XCTUnwrap(store.transactions.first { $0.payeeName == "Audit refresh merchant" })
+        XCTAssertEqual(store.authorityRevision, authority)
+        XCTAssertGreaterThan(store.reportRevision, revision)
+        let changes = try await store.recentTransactionChanges()
+        XCTAssertTrue(changes.contains { $0.transactionID == transaction.id })
+        let beforeReconciliation = store.reportRevision
+        let account = try XCTUnwrap(store.accounts.first { $0.id == "checking" })
+        let balance = store.clearedBalance(for: account)
+        try await store.reconcile(accountID: account.id, statementBalance: balance, throughDate: date,
+            createAdjustment: false, reason: "")
+        XCTAssertEqual(store.authorityRevision, authority)
+        XCTAssertGreaterThan(store.reportRevision, beforeReconciliation)
+        let reconciliations = try await store.recentReconciliationHistory()
+        XCTAssertTrue(reconciliations.contains { $0.accountID == account.id && $0.statementBalanceMinor == balance })
     }
 
     @MainActor
