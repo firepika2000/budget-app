@@ -2578,7 +2578,12 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         let old = demo.payees[index].name; demo.payees[index].name = name
         demo.payees[index].isArchived = operation.isArchived; demo.payees[index].defaultCategoryID = operation.defaultCategoryID
         for transactionIndex in demo.transactions.indices where demo.transactions[transactionIndex].payeeID == operation.payeeID || demo.transactions[transactionIndex].payee == old { demo.transactions[transactionIndex].payee = demo.payees[index].name }
-        for scheduleIndex in demo.schedules.indices where demo.schedules[scheduleIndex].destinationAccountID == nil && demo.schedules[scheduleIndex].name == old { demo.schedules[scheduleIndex].name = name }
+        for scheduleIndex in demo.schedules.indices where demo.schedules[scheduleIndex].destinationAccountID == nil && demo.schedules[scheduleIndex].name == old && old != name {
+            let before = scheduleSnapshot(demo.schedules[scheduleIndex])
+            demo.schedules[scheduleIndex].name = name
+            appendDemoScheduleRevision(scheduleID: demo.schedules[scheduleIndex].id, action: "updated",
+                before: before, after: scheduleSnapshot(demo.schedules[scheduleIndex]))
+        }
         appendDemoPayeeChange(before: before, after: demo.payees[index], action: "updated")
     }
     func mergePayee(sourceID: String, destinationID: String) async throws { try requireActiveMembership();
@@ -2594,7 +2599,12 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
             demo.transactions[index].payee = destination.name
             demo.transactions[index].payeeID = destinationID
         }
-        for index in demo.schedules.indices where demo.schedules[index].name == source.name { demo.schedules[index].name = destination.name }
+        for index in demo.schedules.indices where demo.schedules[index].destinationAccountID == nil && demo.schedules[index].name == source.name && source.name != destination.name {
+            let before = scheduleSnapshot(demo.schedules[index])
+            demo.schedules[index].name = destination.name
+            appendDemoScheduleRevision(scheduleID: demo.schedules[index].id, action: "updated",
+                before: before, after: scheduleSnapshot(demo.schedules[index]))
+        }
         let sourceNames = [source.name] + source.aliases
         for name in sourceNames where !demo.payees[destinationIndex].aliases.contains(where: { $0.caseInsensitiveCompare(name) == .orderedSame }) {
             demo.payees[destinationIndex].aliases.append(name)

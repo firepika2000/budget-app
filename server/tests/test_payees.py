@@ -12,6 +12,46 @@ from .conftest import auth
 from .test_budgeting_api import create_budget, create_budget_structure
 
 
+def test_payee_rename_and_merge_preserve_linked_schedule_decisions(client, owner_token, session_factory):
+    budget = create_budget(client, owner_token, session_factory)
+    account, category = create_budget_structure(client, owner_token, budget["id"])
+    root = f"/api/v1/budgets/{budget['id']}"
+    source = client.post(f"{root}/payees", headers=auth(owner_token), json={"display_name": "Source"}).json()
+    destination = client.post(f"{root}/payees", headers=auth(owner_token), json={"display_name": "Destination"}).json()
+    schedule = client.post(f"{root}/scheduled-transactions", headers=auth(owner_token), json={
+        "account_id": account["id"], "category_id": category["id"], "payee_id": source["id"],
+        "name": "Source", "amount_minor": -123, "next_date": "2027-01-01",
+        "recurrence_unit": "months", "interval_count": 1, "is_active": False,
+    })
+    assert schedule.status_code == 201, schedule.text
+    schedule_id = schedule.json()["id"]
+    def history():
+        response = client.get(f"{root}/scheduled-transactions/history", headers=auth(owner_token))
+        assert response.status_code == 200, response.text
+        return [row for row in response.json() if row["schedule_id"] == schedule_id]
+    assert len(history()) == 1
+    for _ in range(2):
+        response = client.put(f"{root}/payees/{source['id']}", headers=auth(owner_token), json={"display_name": "Renamed", "is_archived": False})
+        assert response.status_code == 200, response.text
+    assert len(history()) == 2, "No-op payee save must not duplicate a schedule decision"
+    response = client.post(f"{root}/payees/{source['id']}/merge", headers=auth(owner_token), json={"destination_payee_id": destination["id"]})
+    assert response.status_code == 200, response.text
+    rows = history()
+    assert len(rows) == 3
+    updates = [row for row in rows if row["action"] == "updated"]
+    assert {(row["before_snapshot"]["name"], row["after_snapshot"]["name"]) for row in updates} == {("Source", "Renamed"), ("Renamed", "Destination")}
+    for row in updates:
+        assert row["actor_user_id"]
+        assert row["before_snapshot"]["amount_minor"] == row["after_snapshot"]["amount_minor"] == -123
+        assert row["before_snapshot"]["is_active"] is row["after_snapshot"]["is_active"] is False
+        assert not row["transaction_ids"]
+    merged = next(row for row in updates if row["after_snapshot"]["name"] == "Destination")
+    assert merged["before_snapshot"]["payee_id"] == source["id"]
+    assert merged["after_snapshot"]["payee_id"] == destination["id"]
+    with session_factory() as db:
+        assert db.query(Transaction).filter_by(budget_id=budget["id"]).count() == 0
+
+
 def test_payee_search_streams_exact_totals_without_loading_ledger_entities(client, owner_token, session_factory):
     budget = create_budget(client, owner_token, session_factory)
     account, category = create_budget_structure(client, owner_token, budget["id"])

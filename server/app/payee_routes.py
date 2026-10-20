@@ -17,6 +17,7 @@ from .dependencies import get_current_user
 from .models import Budget, Category, Payee, PayeeAlias, PayeeBudgetPreference, PayeeRevision, ScheduledTransaction, Transaction, TransactionChange, TransactionSplit, User
 from .payee_history import append_payee_revision, payee_snapshot, preference_snapshot
 from .payee_names import display_payee_name, normalized_payee_name
+from .schedule_history import append_schedule_revision, schedule_snapshot
 from .schemas import PayeeAliasCreate, PayeeAliasResponse, PayeeCreate, PayeeMerge, PayeePageResponse, PayeeResponse, PayeeRevisionResponse, PayeeUpdate
 
 
@@ -278,7 +279,11 @@ def update_payee(budget_id: str, payee_id: str, body: PayeeUpdate, user: User = 
                     after_json=json.dumps({"payee_id": payee.id, "payee_name": name}),
                 ))
         for schedule in db.scalars(select(ScheduledTransaction).where(ScheduledTransaction.payee_id == payee.id)):
+            schedule_before = schedule_snapshot(schedule)
             schedule.name = name
+            schedule_after = schedule_snapshot(schedule)
+            if schedule_before != schedule_after:
+                append_schedule_revision(db, schedule, "updated", user.id, schedule_before, schedule_after)
     preference_before, preference_after = _set_preference(db, budget, payee, body.default_category_id, user)
     append_payee_revision(db, payee=payee, actor_user_id=user.id, action="updated",
                           before=before, after=payee_snapshot(db, payee))
@@ -345,8 +350,10 @@ def merge_payee(budget_id: str, payee_id: str, body: PayeeMerge, user: User = De
             db.add(TransactionChange(budget_id=transaction.budget_id, transaction_id=transaction.id, actor_user_id=user.id,
                                      action="payee_merged", before_json=f'{{"payee_id":"{before}"}}', after_json=f'{{"payee_id":"{destination.id}"}}'))
     for schedule in db.scalars(select(ScheduledTransaction).where(ScheduledTransaction.payee_id == source.id)):
+        schedule_before = schedule_snapshot(schedule)
         schedule.payee_id = destination.id
         schedule.name = destination.display_name
+        append_schedule_revision(db, schedule, "updated", user.id, schedule_before, schedule_snapshot(schedule))
     destination_alias_keys = set(db.scalars(select(PayeeAlias.name_key).where(PayeeAlias.payee_id == destination.id)))
     for alias in list(db.scalars(select(PayeeAlias).where(PayeeAlias.payee_id == source.id))):
         if alias.name_key == destination.name_key or alias.name_key in destination_alias_keys:
