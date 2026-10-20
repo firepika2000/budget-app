@@ -4,6 +4,29 @@ import BudgetAPI
 
 final class FinancialGoldenVectorTests: XCTestCase {
     @MainActor
+    func testPendingRequestRevisionRetainsExactIntentAndExcludesCancellation() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("queue.json"), id = UUID().uuidString.lowercased()
+        let intent = RequestRevisionIntent(requestID: "r1", expectedVersion: 7,
+            value: .init(destinationCategoryID: "food", requestedAmountMinor: 9_007_199_254_740_993, reason: "Clarified"))
+        let queue = LiveTransactionOutbox(fileURL: file)
+        try queue.enqueueRequestRevision(id: id, intent: intent); try queue.enqueueRequestRevision(id: id, intent: intent)
+        let reopened = LiveTransactionOutbox(fileURL: file)
+        XCTAssertEqual(reopened.entries.first?.requestRevision, intent); XCTAssertEqual(reopened.count, 1)
+        XCTAssertThrowsError(try reopened.enqueueRequestRevision(id: id, intent: .init(requestID: "r1", expectedVersion: 8, value: intent.value)))
+        XCTAssertThrowsError(try reopened.enqueueRequestCancellation(id: UUID().uuidString, intent: .init(requestID: "r1", expectedVersion: 7, note: "Cancel instead")))
+        XCTAssertThrowsError(try reopened.enqueueRequestCancellation(id: id, intent: .init(requestID: "r1", expectedVersion: 7, note: "Cancel instead")))
+        do { try await reopened.replayCommands { _ in throw URLError(.networkConnectionLost) }; XCTFail("Expected outage") }
+        catch { XCTAssertEqual((error as? URLError)?.code, .networkConnectionLost) }
+        XCTAssertEqual(LiveTransactionOutbox(fileURL: file).entries.first?.requestRevision, intent)
+        try await reopened.replayCommands { entry in XCTAssertEqual(entry.id, id); XCTAssertEqual(entry.requestRevision, intent) }
+        XCTAssertEqual(LiveTransactionOutbox(fileURL: file).count, 0)
+        let cancellationID = UUID().uuidString
+        try reopened.enqueueRequestCancellation(id: cancellationID, intent: .init(requestID: "r1", expectedVersion: 7, note: ""))
+        XCTAssertThrowsError(try reopened.enqueueRequestRevision(id: id, intent: intent))
+    }
+    @MainActor
     func testPendingRequestCancellationPreservesIdentityAndRejectsReplacement() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }

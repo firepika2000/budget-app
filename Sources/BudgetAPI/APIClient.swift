@@ -764,8 +764,10 @@ public struct APIClient {
             headers: operationID.map { ["X-Request-Operation-ID": $0] } ?? [:])
     }
 
-    public func reviseFinancialRequest(budgetID: String, requestID: String, value: APIFinancialRequestCreate, expectedVersion: Int, token: String) async throws -> APIFinancialRequest {
-        try await send(path: "api/v1/budgets/\(budgetID)/requests/\(requestID)/revise", method: "POST", token: token, body: APIFinancialRequestRevision(requestType: value.requestType, destinationCategoryID: value.destinationCategoryID, requestedAmountMinor: value.requestedAmountMinor, reason: value.reason, expectedRequestVersion: expectedVersion))
+    public func reviseFinancialRequest(budgetID: String, requestID: String, value: APIFinancialRequestCreate, expectedVersion: Int, operationID: String? = nil, token: String) async throws -> APIFinancialRequest {
+        try await send(url: baseURL.appending(path: "api/v1/budgets/\(budgetID)/requests/\(requestID)/revise"), method: "POST", token: token,
+            bodyData: JSONEncoder().encode(APIFinancialRequestRevision(requestType: value.requestType, destinationCategoryID: value.destinationCategoryID, requestedAmountMinor: value.requestedAmountMinor, reason: value.reason, expectedRequestVersion: expectedVersion)),
+            headers: operationID.map { ["X-Request-Operation-ID": $0] } ?? [:])
     }
 
     public func allowancePlans(

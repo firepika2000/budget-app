@@ -604,6 +604,8 @@ struct FundingRequestView: View {
     @State private var categoryID: String
     @State private var amount: String
     @State private var reason: String
+    @State private var reviewedRequestVersion: Int?
+    @State private var reviewedRequestType: String
     @State private var isSaving = false
     @State private var errorMessage: String?
 
@@ -612,6 +614,8 @@ struct FundingRequestView: View {
         _categoryID = State(initialValue: request?.destinationCategoryID ?? "")
         _amount = State(initialValue: request.map { CurrencyText.editable($0.requestedAmountMinor, currencyCode: budget.currencyCode) } ?? "")
         _reason = State(initialValue: request?.reason ?? "")
+        _reviewedRequestVersion = State(initialValue: request?.version)
+        _reviewedRequestType = State(initialValue: request?.requestType ?? "additional_allocation")
     }
 
     var body: some View {
@@ -661,11 +665,15 @@ struct FundingRequestView: View {
         defer { isSaving = false }
         do {
             let value = APIFinancialRequestCreate(
+                    requestType: reviewedRequestType,
                     destinationCategoryID: categoryID,
                     requestedAmountMinor: parsedAmount,
                     reason: reason
                 )
-            if let request { try await workspace.reviseRequest(id: request.id, version: request.version, value: value) }
+            if let request {
+                guard let reviewedRequestVersion else { throw BudgetApplicationError.invalidOperation("Reopen this request to review its current version.") }
+                try await workspace.reviseRequest(id: request.id, version: reviewedRequestVersion, value: value)
+            }
             else { try await workspace.createRequest(value) }
             await onSaved()
             dismiss()

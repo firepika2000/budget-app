@@ -2473,7 +2473,8 @@ public struct APICategory: Identifiable, Codable, Equatable, Sendable {
 public struct APIFinancialRequestCapabilities: Decodable, Sendable {
     public let creationReplayVersion: Int
     public let cancellationReplayVersion: Int?
-    enum CodingKeys: String, CodingKey { case creationReplayVersion = "creation_replay_version", cancellationReplayVersion = "cancellation_replay_version" }
+    public let revisionReplayVersion: Int?
+    enum CodingKeys: String, CodingKey { case creationReplayVersion = "creation_replay_version", cancellationReplayVersion = "cancellation_replay_version", revisionReplayVersion = "revision_replay_version" }
 }
 
 public struct APIFinancialRequestCreate: Codable, Equatable, Sendable {

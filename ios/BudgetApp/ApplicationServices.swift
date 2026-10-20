@@ -619,6 +619,13 @@ struct ReportFilterSelection: Equatable {
     var isActive: Bool { self != Self() }
 }
 
+struct RequestRevisionIntent: Codable, Equatable {
+    let requestID: String
+    let expectedVersion: Int
+    let value: APIFinancialRequestCreate
+    var isValidPending: Bool { !requestID.isEmpty && requestID.count <= 128 && expectedVersion >= 0 && value.isValidPending }
+}
+
 struct RequestCancellationIntent: Codable, Equatable {
     let requestID: String
     let expectedVersion: Int
@@ -1178,6 +1185,8 @@ final class LiveTransactionOutbox {
         var attachmentRemoval: DetachAttachmentOperation? = nil
         var requestCreation: APIFinancialRequestCreate? = nil
         var requestCancellation: RequestCancellationIntent? = nil
+        var requestRevision: RequestRevisionIntent? = nil
+        var pendingRequestID: String? { requestCancellation?.requestID ?? requestRevision?.requestID }
         var referencedTransactionIDs: Set<String> {
             var ids = Set([transactionID, attachmentUpload?.transactionID, attachmentRemoval?.transactionID,
                 voidCommand?.transactionID, duplicateCommand?.transactionID, deletionCommand?.transactionID].compactMap { $0 })
@@ -1393,6 +1402,7 @@ final class LiveTransactionOutbox {
                   existing.attachmentRemoval == entry.attachmentRemoval,
                   existing.requestCreation == entry.requestCreation,
                   existing.requestCancellation == entry.requestCancellation,
+                  existing.requestRevision == entry.requestRevision,
                   existing.operation == nil && existing.bulkUpdate == nil else {
                 throw BudgetApplicationError.invalidOperation("A pending command identity cannot be reused for different details.")
             }
@@ -1434,10 +1444,20 @@ final class LiveTransactionOutbox {
         guard UUID(uuidString: id) != nil, intent.isValidPending else {
             throw BudgetApplicationError.invalidOperation("Reopen this request to review its details before cancelling.")
         }
-        if let existing = entries.first(where: { $0.requestCancellation?.requestID == intent.requestID }), existing.id != id {
+        if let existing = entries.first(where: { $0.pendingRequestID == intent.requestID }), existing.id != id {
             throw BudgetApplicationError.invalidOperation("A cancellation for this request is already saved in Pending Sync.")
         }
         try enqueuePlanning(Entry(id: id, queuedAt: Date(), operation: nil, requestCancellation: intent))
+    }
+
+    func enqueueRequestRevision(id: String, intent: RequestRevisionIntent) throws {
+        guard UUID(uuidString: id) != nil, intent.isValidPending else {
+            throw BudgetApplicationError.invalidOperation("Review the request category, positive amount and explanation before saving.")
+        }
+        if let existing = entries.first(where: { $0.pendingRequestID == intent.requestID }), existing.id != id {
+            throw BudgetApplicationError.invalidOperation("A change for this request is already saved in Pending Sync.")
+        }
+        try enqueuePlanning(Entry(id: id, queuedAt: Date(), operation: nil, requestRevision: intent))
     }
 
     func enqueueMakeRecurring(transactionID: String, operation: MakeRecurringOperation) throws {
@@ -1662,10 +1682,14 @@ final class LiveTransactionOutbox {
         catch let error as CocoaError where error.code == .fileReadNoSuchFile { return [] }
         let values = try JSONDecoder().decode([Entry].self, from: data)
         guard Set(values.map(\.id)).count == values.count,
+              Set(values.compactMap(\.pendingRequestID)).count == values.compactMap(\.pendingRequestID).count,
               values.allSatisfy({ entry in
                   guard UUID(uuidString: entry.id) != nil else { return false }
-                  let payloadCount = [entry.operation != nil, entry.bulkUpdate != nil, entry.assignment != nil, entry.moneyMove != nil, entry.accountTransfer != nil, entry.reconciliation != nil, entry.voidCommand != nil, entry.duplicateCommand != nil, entry.deletionCommand != nil, entry.transferDeletionCommand != nil, entry.attachmentUpload != nil, entry.scheduleCreation != nil, entry.makeRecurring != nil, entry.scheduleEdit != nil, entry.scheduleDeletion != nil, entry.scheduleRealization != nil, entry.attachmentRemoval != nil, entry.requestCreation != nil, entry.requestCancellation != nil].filter { $0 }.count
+                  let payloadCount = [entry.operation != nil, entry.bulkUpdate != nil, entry.assignment != nil, entry.moneyMove != nil, entry.accountTransfer != nil, entry.reconciliation != nil, entry.voidCommand != nil, entry.duplicateCommand != nil, entry.deletionCommand != nil, entry.transferDeletionCommand != nil, entry.attachmentUpload != nil, entry.scheduleCreation != nil, entry.makeRecurring != nil, entry.scheduleEdit != nil, entry.scheduleDeletion != nil, entry.scheduleRealization != nil, entry.attachmentRemoval != nil, entry.requestCreation != nil, entry.requestCancellation != nil, entry.requestRevision != nil].filter { $0 }.count
                   guard payloadCount == 1 else { return false }
+                  if let revision = entry.requestRevision {
+                      return entry.scheduleID == nil && entry.transactionID == nil && entry.transferID == nil && revision.isValidPending
+                  }
                   if let cancellation = entry.requestCancellation {
                       return entry.scheduleID == nil && entry.transactionID == nil && entry.transferID == nil && cancellation.isValidPending
                   }

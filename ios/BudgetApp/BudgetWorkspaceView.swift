@@ -3926,6 +3926,23 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
     }
 
     private func sendPendingTransaction(_ entry: LiveTransactionOutbox.Entry) async throws {
+        if let revision = entry.requestRevision {
+            try await credentials.prepare()
+            try transactionOutbox.requireServer(budgetID: budget.id, serverURL: credentials.serverURL, token: credentials.token)
+            do {
+                let support = try await client.financialRequestCapabilities(budgetID: budget.id, token: token)
+                guard support.revisionReplayVersion == 1 else {
+                    throw APIClientError.server(status: 409, message: "Update ClearPocket Server before retrying this saved request revision.")
+                }
+            } catch APIClientError.server(status: 404, message: _) {
+                throw APIClientError.server(status: 409, message: "This server needs an update for safe request revisions. Your edits remain saved in Pending Sync.")
+            }
+            try await credentials.prepare()
+            try transactionOutbox.requireServer(budgetID: budget.id, serverURL: credentials.serverURL, token: credentials.token)
+            _ = try await client.reviseFinancialRequest(budgetID: budget.id, requestID: revision.requestID,
+                value: revision.value, expectedVersion: revision.expectedVersion, operationID: entry.id, token: token)
+            return
+        }
         if let cancellation = entry.requestCancellation {
             try await credentials.prepare()
             try transactionOutbox.requireServer(budgetID: budget.id, serverURL: credentials.serverURL, token: credentials.token)
@@ -4112,7 +4129,7 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
     func cancelRequest(id: String, version: Int, note: String) async throws {
         guard budget.can("request_money") else { throw workspaceRepositoryError("You do not have permission to cancel funding requests.") }
         let intent = RequestCancellationIntent(requestID: id, expectedVersion: version, note: note)
-        let existing = transactionOutbox.entries.first { $0.requestCancellation?.requestID == id }
+        let existing = transactionOutbox.entries.first { $0.pendingRequestID == id }
         if let existing, existing.requestCancellation != intent {
             throw workspaceRepositoryError("Review the saved cancellation in Pending Sync before changing its details.")
         }
@@ -4121,7 +4138,18 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
         do { try await replaySavedPlanning() }
         catch { guard transactionOutbox.entries.contains(where: { $0.id == identity }) else { throw error } }
     }
-    func reviseRequest(id: String, version: Int, value: APIFinancialRequestCreate) async throws { try await credentials.prepare(); _ = try await client.reviseFinancialRequest(budgetID: budget.id, requestID: id, value: value, expectedVersion: version, token: token) }
+    func reviseRequest(id: String, version: Int, value: APIFinancialRequestCreate) async throws {
+        guard budget.can("request_money") else { throw workspaceRepositoryError("You do not have permission to revise funding requests.") }
+        let intent = RequestRevisionIntent(requestID: id, expectedVersion: version, value: value)
+        let existing = transactionOutbox.entries.first { $0.pendingRequestID == id }
+        if let existing, existing.requestRevision != intent {
+            throw workspaceRepositoryError("Review the saved change in Pending Sync before changing its details.")
+        }
+        let identity = existing?.id ?? UUID().uuidString.lowercased()
+        try transactionOutbox.enqueueRequestRevision(id: identity, intent: intent)
+        do { try await replaySavedPlanning() }
+        catch { guard transactionOutbox.entries.contains(where: { $0.id == identity }) else { throw error } }
+    }
     func createAllowance(_ value: APIAllowancePlanCreate) async throws { try await credentials.prepare(); _ = try await client.createAllowancePlan(budgetID: budget.id, value: value, token: token) }
     func setAllowanceActive(id: String, active: Bool) async throws { try await credentials.prepare(); _ = try await client.setAllowancePlanActive(budgetID: budget.id, planID: id, isActive: active, token: token) }
     func issueAllowance(id: String, issueDate: String, expectedVersion: Int) async throws { try await credentials.prepare(); _ = try await client.issueAllowance(budgetID: budget.id, planID: id, issueDate: issueDate, expectedAllocationVersion: expectedVersion, token: token) }
@@ -4489,7 +4517,13 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
             guard transactionOutbox.entries.contains(where: { $0.id == identified.mutationOperationID }) else { throw error }
         }
     }
-    func decideRequest(id: String, decision: String, version: Int, amount: Int64?, sourceCategoryID: String?, note: String) async throws { try await credentials.prepare(); _ = try await client.decideFinancialRequest(budgetID: budget.id, requestID: id, decision: APIFinancialRequestDecision(decision: decision, expectedRequestVersion: version, approvedAmountMinor: amount, sourceCategoryID: sourceCategoryID, note: note), token: token) }
+    func decideRequest(id: String, decision: String, version: Int, amount: Int64?, sourceCategoryID: String?, note: String) async throws {
+        guard !transactionOutbox.entries.contains(where: { $0.pendingRequestID == id }) else {
+            throw workspaceRepositoryError("Resolve this request's saved change in Pending Sync before deciding it.")
+        }
+        try await credentials.prepare()
+        _ = try await client.decideFinancialRequest(budgetID: budget.id, requestID: id, decision: APIFinancialRequestDecision(decision: decision, expectedRequestVersion: version, approvedAmountMinor: amount, sourceCategoryID: sourceCategoryID, note: note), token: token)
+    }
     func smartFundingPreview(month: String) async throws -> APISmartFundingPreview { try await credentials.prepare(); return try await client.smartFundingPreview(budgetID: budget.id, month: month, token: token) }
     func commitSmartFunding(_ preview: APISmartFundingPreview) async throws { try await credentials.prepare(); _ = try await client.commitSmartFunding(budgetID: budget.id, month: preview.month, expectedAllocationVersion: preview.allocationVersion, token: token) }
     func updateDelegatedPolicy(userID: String, value: APIDelegatedBudgetUpsert) async throws { try await credentials.prepare(); _ = try await client.updateDelegatedBudget(budgetID: budget.id, userID: userID, policy: value, token: token) }
@@ -5480,6 +5514,11 @@ final class BudgetWorkspaceStore: ObservableObject {
         guard !workspaceAccessDenied else { return [] }
         let accountIDs = Set(accounts.map(\.id)), categoryIDs = Set(categories.map(\.id))
         return ((commandRepository as? LiveWorkspaceCommandRepository)?.pendingTransactions ?? []).filter { entry in
+            if let revision = entry.requestRevision {
+                return budget.can("request_money") && budget.can("view_categories")
+                    && categoryIDs.contains(revision.value.destinationCategoryID)
+                    && requests.contains(where: { $0.id == revision.requestID && categoryIDs.contains($0.destinationCategoryID) })
+            }
             if let cancellation = entry.requestCancellation {
                 return budget.can("request_money") && budget.can("view_categories")
                     && requests.contains(where: { $0.id == cancellation.requestID && categoryIDs.contains($0.destinationCategoryID) })
@@ -7049,6 +7088,11 @@ private struct PendingLiveTransactionsView: View {
                                 Text("\(accountName(reconciliation.accountID)) · through \(reconciliation.throughDate) · \(store.format(reconciliation.statementBalanceMinor))")
                                     .font(.caption).foregroundStyle(.secondary)
                                 Text("Saved for server approval · reconciliation history and balances remain unchanged until accepted")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            } else if let revision = entry.requestRevision {
+                                Text("Revise Funding Request").font(.headline)
+                                Text("\(store.categories.first(where: { $0.id == revision.value.destinationCategoryID }).map(store.categoryDisplayName) ?? "Category") · \(store.format(revision.value.requestedAmountMinor))")
+                                Text("Edits saved on this iPhone · awaiting server confirmation. The accepted request remains unchanged until confirmed.")
                                     .font(.caption).foregroundStyle(.secondary)
                             } else if let cancellation = entry.requestCancellation {
                                 Text("Cancel Funding Request").font(.headline)
@@ -8952,6 +8996,9 @@ private struct LiveRequestsView: View {
                 if store.pendingLiveTransactions.contains(where: { $0.requestCancellation?.requestID == request.id }) {
                     Text("Cancellation saved · awaiting server confirmation").font(.caption).foregroundStyle(.secondary)
                 }
+                if store.pendingLiveTransactions.contains(where: { $0.requestRevision?.requestID == request.id }) {
+                    Text("Revision saved · awaiting server confirmation").font(.caption).foregroundStyle(.secondary)
+                }
             }
         }.accessibilityIdentifier("funding-request-\(request.id)")
     }
@@ -8982,7 +9029,7 @@ private struct LiveRequestDetailView: View {
     @State private var isSaving = false; @State private var errorMessage: String?
     @State private var showRevise = false; @State private var confirmCancel = false
     private var request: APIFinancialRequest? { store.requests.first(where: { $0.id == requestID }) }
-    private var cancellationPending: Bool { store.pendingLiveTransactions.contains { $0.requestCancellation?.requestID == requestID } }
+    private var requestChangePending: Bool { store.pendingLiveTransactions.contains { $0.pendingRequestID == requestID } }
     private var sources: [APICategoryMonth] { (store.summary?.categories ?? []).filter { $0.availableMinor > 0 && $0.categoryID != request?.destinationCategoryID } }
     var body: some View {
         Form {
@@ -8995,9 +9042,9 @@ private struct LiveRequestDetailView: View {
                     LabeledContent("Status", value: request.status.replacingOccurrences(of: "_", with: " ").capitalized)
                     if let expiresAt = request.expiresAt, ["pending", "changes_requested"].contains(request.status) { LabeledContent("Expires", value: expiresAt) }
                 }
-                if cancellationPending {
-                    Section("Cancellation saved on this iPhone") {
-                        Text("Awaiting server confirmation. The request remains in its last confirmed state until the server accepts cancellation.")
+                if requestChangePending {
+                    Section("Request change saved on this iPhone") {
+                        Text("Awaiting server confirmation. The request remains in its last confirmed state until the server accepts your saved change.")
                         NavigationLink("Review Pending Sync") { PendingLiveTransactionsView(store: store) }
                     }
                 }
@@ -9009,20 +9056,20 @@ private struct LiveRequestDetailView: View {
                         CurrencyAmountField("Approved amount", text: $draft.amount, currencyCode: store.budget.currencyCode)
                         TextField("Note", text: $draft.note)
                     }
-                    .disabled(isSaving || cancellationPending || !draft.matches(request))
+                    .disabled(isSaving || requestChangePending || !draft.matches(request))
                     Section {
                         Button("Approve") { Task { await decide("approve") } }.disabled(parsed == nil || draft.sourceCategoryID.isEmpty || isSaving)
                         Button("Request changes") { Task { await decide("changes_requested") } }.disabled(draft.note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSaving)
                         Button("Reject", role: .destructive) { Task { await decide("reject") } }.disabled(isSaving)
                     }
-                    .disabled(cancellationPending || !draft.matches(request))
+                    .disabled(requestChangePending || !draft.matches(request))
                 }
                 if store.isRequestOwner(request.requesterUserID, authenticatedUserID: session.profile?.id) && ["pending", "changes_requested"].contains(request.status) {
                     Section("Your request") {
                         if request.status == "changes_requested" { Button("Revise and Resubmit") { showRevise = true } }
                         Button("Cancel Request", role: .destructive) { confirmCancel = true }
                     }
-                    .disabled(isSaving || cancellationPending || !draft.matches(request))
+                    .disabled(isSaving || requestChangePending || !draft.matches(request))
                 }
                 if !draft.matches(request) && ["pending", "changes_requested"].contains(request.status) {
                     Section {
@@ -9066,8 +9113,8 @@ private struct LiveRequestDetailView: View {
     }
     private var parsed: Int64? { guard let value = CurrencyText.parseMinorUnits(draft.amount, currencyCode: store.budget.currencyCode), value > 0, value <= (request?.requestedAmountMinor ?? 0) else { return nil }; return value }
     private func requesterName(_ id: String) -> String { store.householdMembers.first(where: { $0.userID == id })?.displayName ?? "Household member" }
-    private func cancel() async { guard !isSaving, !cancellationPending, draft.matches(request), let request, let version = draft.expectedVersion else { return }; isSaving = true; defer { isSaving = false }; do { try await store.cancelRequest(id: request.id, version: version, note: draft.note) } catch { errorMessage = error.localizedDescription } }
-    private func decide(_ decision: String) async { guard !isSaving, !cancellationPending, draft.matches(request), let request, let version = draft.expectedVersion else { return }; isSaving = true; defer { isSaving = false }; do { try await store.decideRequest(id: request.id, decision: decision, version: version, amount: decision == "approve" ? parsed : nil, sourceCategoryID: decision == "approve" ? draft.sourceCategoryID : nil, note: draft.note) } catch { errorMessage = error.localizedDescription } }
+    private func cancel() async { guard !isSaving, !requestChangePending, draft.matches(request), let request, let version = draft.expectedVersion else { return }; isSaving = true; defer { isSaving = false }; do { try await store.cancelRequest(id: request.id, version: version, note: draft.note) } catch { errorMessage = error.localizedDescription } }
+    private func decide(_ decision: String) async { guard !isSaving, !requestChangePending, draft.matches(request), let request, let version = draft.expectedVersion else { return }; isSaving = true; defer { isSaving = false }; do { try await store.decideRequest(id: request.id, decision: decision, version: version, amount: decision == "approve" ? parsed : nil, sourceCategoryID: decision == "approve" ? draft.sourceCategoryID : nil, note: draft.note) } catch { errorMessage = error.localizedDescription } }
 }
 
 private struct MoveMoneyPresentation: Identifiable {

@@ -2,6 +2,33 @@ import XCTest
 @testable import BudgetAPI
 
 final class APIClientTests: XCTestCase {
+    func testFundingRevisionUsesImmutableIdentityAndReviewedVersion() async throws {
+        let identity = UUID().uuidString.lowercased()
+        let configuration = URLSessionConfiguration.ephemeral; configuration.protocolClasses = [MockURLProtocol.self]
+        var posts = 0
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/api/v1/budgets/b/requests/r/revise")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer current")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "X-Request-Operation-ID"), posts == 0 ? nil : identity)
+            posts += 1
+            let body = try XCTUnwrap(JSONSerialization.jsonObject(with: requestBody(request)) as? [String: Any])
+            XCTAssertEqual(Set(body.keys), ["request_type", "destination_category_id", "requested_amount_minor", "reason", "expected_request_version"])
+            XCTAssertEqual(body["expected_request_version"] as? Int, 7)
+            XCTAssertEqual((body["requested_amount_minor"] as? NSNumber)?.stringValue, "9007199254740993")
+            XCTAssertEqual(body["reason"] as? String, "Clarified")
+            XCTAssertEqual(body["request_type"] as? String, "purchase_approval")
+            let response = #"{"id":"r","requester_user_id":"member","request_type":"additional_allocation","destination_category_id":"c","requested_amount_minor":9007199254740993,"reason":"Clarified","status":"pending","version":8,"actions":[]}"#
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, Data(response.utf8))
+        }
+        let client = try APIClient(baseURL: URL(string: "https://example.com")!, session: URLSession(configuration: configuration))
+        for id in [nil, identity] {
+            let result = try await client.reviseFinancialRequest(budgetID: "b", requestID: "r", value: .init(requestType: "purchase_approval", destinationCategoryID: "c", requestedAmountMinor: 9_007_199_254_740_993, reason: "Clarified"), expectedVersion: 7, operationID: id, token: "current")
+            XCTAssertEqual(result.requestedAmountMinor, 9_007_199_254_740_993)
+        }
+        XCTAssertEqual(posts, 2)
+        XCTAssertNil(try JSONDecoder().decode(APIFinancialRequestCapabilities.self, from: Data(#"{"creation_replay_version":1,"cancellation_replay_version":1}"#.utf8)).revisionReplayVersion)
+        XCTAssertEqual(try JSONDecoder().decode(APIFinancialRequestCapabilities.self, from: Data(#"{"creation_replay_version":1,"revision_replay_version":1}"#.utf8)).revisionReplayVersion, 1)
+    }
     func testFundingCancellationIdentityAndCapabilityAreAdditive() async throws {
         let identity = UUID().uuidString.lowercased()
         let configuration = URLSessionConfiguration.ephemeral; configuration.protocolClasses = [MockURLProtocol.self]

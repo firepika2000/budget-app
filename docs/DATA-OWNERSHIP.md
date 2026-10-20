@@ -20,8 +20,8 @@ edits, observed bulk metadata/clearing actions, Assign, category Move Money and 
 creation/observed edits, observed Void with Reversal, reconciliation against a captured server-reviewed transaction set,
 integrity-bound attachment uploads with protected staged bytes, and ordinary scheduled-transaction creation.
 Funding-request creation also persists exact intent and a stable replay identity before network
-work. Request cancellation also retains the reviewed version and note for safe replay. Request
-approval, revision and other administrative commands still send directly through authenticated APIs.
+work. Request cancellation and revision retain reviewed versions and exact intent for safe replay.
+Request approval and other administrative commands still send directly through authenticated APIs.
 The following defines the complete milestone, not a claim of human-accepted offline editing. Local Device
 already owns its local writes; its storage must not be replaced by a hosted replay queue.
 
@@ -81,6 +81,28 @@ Human acceptance uses one disposable pending request: load it online, disconnect
 Request, and verify the pending label without a confirmed status change. Relaunch without erasing
 data, reconnect, and confirm one cancellation history action, no pending entry, and unchanged money.
 Deploy/restart a server containing `5e1f209` and rebuild the app first; no new schema revision is added.
+
+### Offline funding request revision
+
+Resubmission saves the request identity, reviewed version, category, exact amount, explanation and
+request type in the protected scoped outbox before sending. The accepted request and its history
+remain unchanged until authoritative confirmation. Pending Sync displays the proposed category and
+amount; the request list/detail identify an outstanding change. One request cannot have both a
+pending revision and cancellation. A local decision is blocked while either intent remains unresolved.
+
+Replay requires `revision_replay_version: 1` from the server capabilities endpoint. An older server
+receives no revision POST and saved edits remain available for review. Server checkpoint `9b77b9f`
+binds the complete payload and reviewed version to one actor/budget/resource receipt, acknowledges
+accepted retries without another revision, and never resets a later approval/rejection. Current
+permissions and resource scope are rechecked. Conflicts pause the original saved intent rather than
+silently rebasing it onto a new version. The form retains its reviewed version separately from
+background updates.
+
+Human acceptance extends the request flow: ask for changes on a disposable request while online,
+then disconnect the requester, edit and Resubmit. Confirm the last accepted request still says
+Changes Requested with a saved-change indicator. Relaunch, reconnect, and verify one Revised action
+and the edited server-confirmed values. Confirm balances/RTA remain unchanged. Rebuild and deploy/
+restart a server containing `9b77b9f`; there is no new migration. Approval is not an offline command.
 
 ### Offline reconciliation
 

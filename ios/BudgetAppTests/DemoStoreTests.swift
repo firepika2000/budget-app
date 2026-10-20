@@ -90,10 +90,18 @@ final class DemoStoreTests: XCTestCase {
         for signature in ["private func cancel() async {", "private func decide(_ decision: String) async {"] {
             let handler = try XCTUnwrap(view.range(of: signature))
             let prefix = String(view[handler.upperBound...].prefix(250))
-            XCTAssertTrue(prefix.hasPrefix(" guard !isSaving, !cancellationPending, draft.matches(request), let request, let version = draft.expectedVersion else { return }; isSaving = true; defer { isSaving = false }"))
+            XCTAssertTrue(prefix.hasPrefix(" guard !isSaving, !requestChangePending, draft.matches(request), let request, let version = draft.expectedVersion else { return }; isSaving = true; defer { isSaving = false }"))
         }
         XCTAssertFalse(view.contains("version: request.version"))
-        XCTAssertTrue(view.contains(".disabled(isSaving || cancellationPending || !draft.matches(request))"))
+        XCTAssertTrue(view.contains(".disabled(isSaving || requestChangePending || !draft.matches(request))"))
+        let editor = try String(contentsOf: file.deletingLastPathComponent().appendingPathComponent("EditingViews.swift"))
+        let formStart = try XCTUnwrap(editor.range(of: "struct FundingRequestView: View"))
+        let formEnd = try XCTUnwrap(editor.range(of: "struct ", range: formStart.upperBound..<editor.endIndex))
+        let form = String(editor[formStart.lowerBound..<formEnd.lowerBound])
+        XCTAssertTrue(form.contains("_reviewedRequestVersion = State(initialValue: request?.version)"))
+        XCTAssertTrue(form.contains("version: reviewedRequestVersion"))
+        XCTAssertTrue(form.contains("requestType: reviewedRequestType"))
+        XCTAssertFalse(form.contains("version: request.version"))
     }
     func testEditingSaveHandlersClaimSubmissionBeforeFirstSuspension() throws {
         let directory = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("BudgetApp")

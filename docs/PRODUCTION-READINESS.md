@@ -2,7 +2,7 @@
 
 ## Current workspace checkpoint
 
-Inspected implementation: `5e1f209` on `codex/development`, plus the offline cancellation integration below. App and widget remain `0.11.0`
+Inspected implementation: `9b77b9f` on `codex/development`, plus the offline revision integration below. App and widget remain `0.11.0`
 build `7`; TestFlight is held. Regular Xcode 27.1 (`27A9275`) builds and executes focused tests
 on preserved iPhone 17 Pro Max `3ABD861E-D38D-4AFD-A356-959266051564`, iOS 27.0 (`24A434`).
 No Simulator or Live data reset, merge, tag, or release is part of these checkpoints.
@@ -22,7 +22,7 @@ the draft to the request ID and version actually reviewed rather than silently a
 version from background refresh. Changed requests disable actions until Reload Latest Request
 explicitly discards the old draft. Submitted commands still pass through the canonical application
 service and server version/permission checks. Cancellation now also has durable replay as described
-below; approval and revision remain online.
+below; revision also has durable replay at the current integration. Approval remains online.
 
 The reviewed-version checkpoint passed four native tests and the production delegated-cancellation
 UI test in `Test-BudgetApp-2026.10.20_09-24-12--0400.xcresult`, plus the backend single-winner
@@ -44,8 +44,8 @@ Funding-request creation now uses the protected Live outbox and the server recei
 Replay checks current credentials, bound server and advertised replay support before POST. An old
 server receives no creation POST; saved intent remains for review. Requests and Pending Sync label
 unconfirmed intent separately from accepted server data. A transient outbox failure no longer blocks
-normal workspace reads or the existing cache fallback. Approval and revision are not new offline
-commands. See `DATA-OWNERSHIP.md` for the consolidated human acceptance flows.
+normal workspace reads or the existing cache fallback. Approval is not a new offline command.
+See `DATA-OWNERSHIP.md` for the consolidated human acceptance flows.
 
 ### Offline request cancellation
 
@@ -84,6 +84,36 @@ replaces orphan categories, export fixtures use typed dates, and the launcher de
 Alembic head instead of hardcoding revision 0035. Ten focused fixture/migration/local-server tests
 passed. The final request receipt/auth/financial-vector run passed 48 checks. These scoped reruns do
 not constitute a new full-suite pass; no product validation or attribution checks were weakened.
+
+### Offline request revision
+
+Request resubmission now retains immutable edited values and the reviewed version in the scoped
+Live outbox before network work. Requests/Pending Sync distinguish the proposal from accepted state;
+neither request history nor financial balances change locally. Queue and command guards exclude a
+second/opposite change for the same request. The revision form captures the reviewed version instead
+of accepting a newer version through a SwiftUI value refresh. Current credentials, bound server and
+explicit revision-replay support are checked before POST. Unsupported servers receive no POST;
+conflicts and denials retain paused intent for review.
+
+Server checkpoint `9b77b9f` passed 68 combined request/auth/golden-vector tests and one additional
+resource-identity/deletion regression. Accepted replay preserves later decisions and one Revised
+action. App rebuild plus updated server deployment/restart are required; no migration is added.
+The consolidated disconnect/resubmit/relaunch/reconnect acceptance flow is in `DATA-OWNERSHIP.md`.
+
+The app checkpoint passed seven native tests and the production delegated-cancellation UI flow in
+`Test-BudgetApp-2026.10.20_09-46-46--0400.xcresult`, plus all three request API contract tests.
+The shared Live-shaped replay test covers cancellation and revision across success, unsupported
+server, conflict and denial outcomes; exact edited amounts survive lost responses and token rotation
+without changing accepted observations early. Queue tests reject changed identity and opposite
+pending actions. Form wiring retains the reviewed version and request type, rather than defaulting
+an existing request to another type. The regular Xcode 27.1 build and diff check passed. The UI test
+covers shared confirmation/history, not human offline resubmission acceptance.
+
+Dropbox list follow-through (`9d805ca`) passed four native checks and the production Recovery
+navigation UI test. Failed reads retain known backups and expose Retry rather than reporting an
+empty destination. Verified publication still counts as successful if its follow-up list fails;
+late responses cannot resurrect disconnected backups. Real Dropbox OAuth/backup/restore/revoke
+acceptance remains open and separate from the controlled transport checks.
 
 ### Household editing and history recovery
 
