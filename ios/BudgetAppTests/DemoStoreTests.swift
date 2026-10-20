@@ -11,6 +11,43 @@ import UserNotifications
 @testable import Budget_App
 
 final class DemoStoreTests: XCTestCase {
+    func testReportDateDraftPreservesPendingDatesAndValidatesBeforeApply() throws {
+        let start = BudgetWorkspaceStore.parseDate("2026-09-01"), end = BudgetWorkspaceStore.parseDate("2026-09-30")
+        var draft = ReportDateRangeDraft()
+        draft.prepare(scope: "owner|budget", start: start, end: end)
+        draft.start = BudgetWorkspaceStore.parseDate("2026-08-01")
+        draft.prepare(scope: "owner|budget", start: start, end: end)
+        XCTAssertEqual(draft.start, BudgetWorkspaceStore.parseDate("2026-08-01")); XCTAssertTrue(draft.hasChanges)
+        draft.end = BudgetWorkspaceStore.parseDate("2026-07-31")
+        XCTAssertFalse(draft.isValid); XCTAssertNil(draft.apply())
+        draft.end = draft.start
+        let applied = try XCTUnwrap(draft.apply())
+        XCTAssertEqual(applied.start, applied.end); XCTAssertFalse(draft.hasChanges)
+        draft.prepare(scope: "owner|budget", start: start, end: end)
+        XCTAssertEqual(draft.start, start, "Pristine drafts follow externally applied ranges")
+        draft.start = BudgetWorkspaceStore.parseDate("2026-07-01")
+        draft.prepare(scope: "other-owner|budget", start: start, end: end)
+        XCTAssertEqual(draft.start, start); XCTAssertFalse(draft.hasChanges)
+    }
+
+    @MainActor
+    func testReportDateDraftDoesNotMutateReportUntilExplicitApply() async throws {
+        let store = BudgetWorkspaceStore.demo(); await store.refresh()
+        let original = store.customReportStart
+        var draft = ReportDateRangeDraft()
+        draft.prepare(scope: "owner|budget", start: original, end: store.customReportEnd)
+        draft.start = BudgetWorkspaceStore.parseDate("2026-01-01")
+        XCTAssertEqual(store.customReportStart, original)
+        draft.prepare(scope: "owner|budget", start: store.customReportStart, end: store.customReportEnd, replacing: true)
+        XCTAssertEqual(draft.start, original); XCTAssertFalse(draft.hasChanges)
+        let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("BudgetApp/BudgetWorkspaceView.swift")
+        let source = try String(contentsOf: file)
+        let start = try XCTUnwrap(source.range(of: "private struct ReportPeriodControls: View"))
+        let end = try XCTUnwrap(source.range(of: "private struct SpendingIncomeReportView: View"))
+        let view = String(source[start.lowerBound..<end.lowerBound])
+        XCTAssertTrue(view.contains("ReportDateRangeDraft()")); XCTAssertTrue(view.contains("guard let range = draft.apply()"))
+        XCTAssertTrue(view.contains("report-range-validation")); XCTAssertTrue(view.contains("reset-report-range"))
+    }
     private func directoryProfile(_ id: String, version: Int = 1) throws -> APIAccessProfile {
         try JSONDecoder().decode(APIAccessProfile.self, from: Data("""
         {"budget_id":"budget","user_id":"\(id)","capabilities":["view_budget"],"restrict_accounts":false,"account_ids":[],"restrict_categories":false,"category_ids":[],"grant_permission":"view","is_custom":false,"version":\(version)}

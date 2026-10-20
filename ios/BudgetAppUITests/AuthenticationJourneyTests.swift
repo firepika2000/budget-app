@@ -635,10 +635,16 @@ final class AuthenticationJourneyTests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["--demo", "--demo-screen=insights"]
         app.launch()
-        XCTAssertTrue(app.buttons["insights-plan-performance"].waitForExistence(timeout: 5))
-        app.buttons["insights-plan-performance"].tap()
+        let report = app.buttons["insights-plan-performance"]
+        for _ in 0..<6 where !report.isHittable { app.swipeUp() }
+        XCTAssertTrue(report.waitForExistence(timeout: 5)); report.tap()
         let period = app.buttons["report-period"]
         XCTAssertTrue(period.waitForExistence(timeout: 5))
+        period.tap()
+        app.buttons["Custom"].tap()
+        let apply = app.buttons["apply-report-range"]
+        XCTAssertTrue(apply.waitForExistence(timeout: 5)); XCTAssertTrue(apply.isEnabled)
+        XCTAssertFalse(app.staticTexts["report-range-validation"].exists)
         period.tap()
         app.buttons["6 Months"].tap()
         let chart = app.descendants(matching: .any)["plan-performance-history-chart"]

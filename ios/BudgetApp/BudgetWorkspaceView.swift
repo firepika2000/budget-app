@@ -13210,8 +13210,8 @@ private struct LiveInsightsView: View {
 
 private struct ReportPeriodControls: View {
     @EnvironmentObject private var store: BudgetWorkspaceStore
-    @State private var draftStart = Date()
-    @State private var draftEnd = Date()
+    @State private var draft = ReportDateRangeDraft()
+    private var draftScope: String { "\(store.authorityRevision)|\(store.budget.id)" }
     var body: some View {
         Section("Period") {
             Picker("Period", selection: $store.reportPeriod) {
@@ -13220,18 +13220,32 @@ private struct ReportPeriodControls: View {
                 Text("Year to Date").tag("ytd"); Text("1 Year").tag("1y"); Text("Custom").tag("custom")
             }.accessibilityIdentifier("report-period")
             if store.reportPeriod == "custom" {
-                DatePicker("From", selection: $draftStart, displayedComponents: .date)
-                DatePicker("Through", selection: $draftEnd, displayedComponents: .date)
+                DatePicker("From", selection: $draft.start, displayedComponents: .date)
+                DatePicker("Through", selection: $draft.end, displayedComponents: .date)
+                if !draft.isValid {
+                    Text("Through must be on or after From.").font(.caption).foregroundStyle(.red)
+                        .accessibilityIdentifier("report-range-validation")
+                }
                 Button("Apply custom range") {
-                    store.customReportStart = draftStart
-                    store.customReportEnd = draftEnd
+                    guard let range = draft.apply() else { return }
+                    store.customReportStart = range.start
+                    store.customReportEnd = range.end
+                }.disabled(!draft.isValid).accessibilityIdentifier("apply-report-range")
+                if draft.hasChanges {
+                    Button("Reset Dates") { prepareDraft(replacing: true) }
+                        .accessibilityIdentifier("reset-report-range")
+                    Text("Date changes update the report only after you apply them.")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
             }
-        }.onAppear {
-            draftStart = store.customReportStart; draftEnd = store.customReportEnd
-        }
-        .onChange(of: store.customReportStart) { _, value in draftStart = value }
-        .onChange(of: store.customReportEnd) { _, value in draftEnd = value }
+        }.onAppear { prepareDraft() }
+        .onChange(of: draftScope) { _, _ in prepareDraft() }
+        .onChange(of: store.customReportStart) { _, _ in prepareDraft() }
+        .onChange(of: store.customReportEnd) { _, _ in prepareDraft() }
+    }
+
+    private func prepareDraft(replacing: Bool = false) {
+        draft.prepare(scope: draftScope, start: store.customReportStart, end: store.customReportEnd, replacing: replacing)
     }
 }
 

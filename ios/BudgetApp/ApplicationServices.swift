@@ -596,6 +596,35 @@ final class AttachmentListObservation: ObservableObject {
     }
 }
 
+struct ReportDateRangeDraft {
+    var start = Date()
+    var end = Date()
+    private var appliedStart: Date?
+    private var appliedEnd: Date?
+    private var scope: String?
+
+    var isValid: Bool { Calendar.current.startOfDay(for: start) <= Calendar.current.startOfDay(for: end) }
+    var hasChanges: Bool {
+        guard let appliedStart, let appliedEnd else { return false }
+        let calendar = Calendar.current
+        return !calendar.isDate(start, inSameDayAs: appliedStart) || !calendar.isDate(end, inSameDayAs: appliedEnd)
+    }
+
+    mutating func prepare(scope: String, start: Date, end: Date, replacing: Bool = false) {
+        guard self.scope != scope || replacing || !hasChanges else { return }
+        self.scope = scope; self.start = start; self.end = end
+        appliedStart = start; appliedEnd = end
+    }
+
+    mutating func apply() -> (start: Date, end: Date)? {
+        guard scope != nil, isValid else { return nil }
+        let calendar = Calendar.current
+        start = calendar.startOfDay(for: start); end = calendar.startOfDay(for: end)
+        appliedStart = start; appliedEnd = end
+        return (start, end)
+    }
+}
+
 @MainActor
 final class HouseholdDirectoryObservation: ObservableObject {
     @Published private(set) var profiles: [String: APIAccessProfile] = [:]
