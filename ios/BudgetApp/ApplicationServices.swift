@@ -596,6 +596,39 @@ final class AttachmentListObservation: ObservableObject {
     }
 }
 
+struct DelegatedPolicyEditorDraft {
+    var poolCategoryID = ""
+    var authority = ""
+    var allowCreation = true
+    var allowReallocation = true
+    private(set) var expectedAllocationVersion: Int?
+    private(set) var rules: [APIDelegatedRuleUpsert] = []
+    private var scope: String?
+
+    mutating func prepare(scope: String, policy: APIDelegatedBudget?, fallbackCategoryID: String?,
+                          currencyCode: String, allocationVersion: Int?, replacing: Bool = false) {
+        guard self.scope != scope || replacing else { return }
+        self.scope = scope
+        poolCategoryID = policy?.poolCategoryID ?? fallbackCategoryID ?? ""
+        authority = CurrencyText.editable(policy?.authorityMinor ?? 0, currencyCode: currencyCode)
+        allowCreation = policy?.allowCategoryCreation ?? true
+        allowReallocation = policy?.allowReallocation ?? true
+        expectedAllocationVersion = allocationVersion
+        rules = policy?.rules.map {
+            .init(categoryID: $0.categoryID, ruleKind: $0.ruleKind,
+                  minimumMinor: $0.minimumMinor, maximumMinor: $0.maximumMinor)
+        } ?? []
+    }
+
+    func mutation(userID: String, currencyCode: String) -> APIDelegatedBudgetUpsert? {
+        guard !poolCategoryID.isEmpty, let expectedAllocationVersion,
+              let amount = CurrencyText.parseMinorUnits(authority, currencyCode: currencyCode), amount >= 0 else { return nil }
+        return .init(userID: userID, poolCategoryID: poolCategoryID, authorityMinor: amount,
+                     allowCategoryCreation: allowCreation, allowReallocation: allowReallocation,
+                     expectedAllocationVersion: expectedAllocationVersion, rules: rules)
+    }
+}
+
 @MainActor
 final class DecisionHistoryPager<Row: Identifiable & Sendable>: ObservableObject {
     @Published private(set) var rows: [Row] = []

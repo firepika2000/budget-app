@@ -15706,17 +15706,49 @@ struct LiveDelegatedPolicyView: View {
     @ObservedObject var session: AppSession
     @ObservedObject var store: BudgetWorkspaceStore
     let member: APIHouseholdMember
-    @State private var poolCategoryID = ""; @State private var authority = ""; @State private var allowCreation = true; @State private var allowReallocation = true; @State private var isSaving = false; @State private var errorMessage: String?
+    @State private var draft = DelegatedPolicyEditorDraft()
+    @State private var isSaving = false
+    @State private var errorMessage: String?
+    private var draftScope: String { "\(store.authorityRevision)|\(store.budget.id)|\(member.userID)" }
     private var categories: [APICategory] { store.categories.filter { $0.delegatedUserID == member.userID && !$0.isArchived } }
     var body: some View { Form {
-        Section("Authority") { Picker("To assign category", selection: $poolCategoryID) { ForEach(categories) { Text($0.name).tag($0.id) } }; CurrencyAmountField("Total authority", text: $authority, currencyCode: store.budget.currencyCode, allowsZero: true); Toggle("Can create categories", isOn: $allowCreation); Toggle("Can move money", isOn: $allowReallocation) }
+        Section("Authority") { Picker("To assign category", selection: $draft.poolCategoryID) { ForEach(categories) { Text($0.name).tag($0.id) } }; CurrencyAmountField("Total authority", text: $draft.authority, currencyCode: store.budget.currencyCode, allowsZero: true); Toggle("Can create categories", isOn: $draft.allowCreation); Toggle("Can move money", isOn: $draft.allowReallocation) }
         if store.delegatedBudgets.contains(where: { $0.userID == member.userID }) {
             Section { NavigationLink { HistoryAuthorityBoundary { DelegatedPolicyHistoryView(member: member) } } label: { Label("Authority history", systemImage: "clock.arrow.circlepath") } }
         }
         Section { Text("Authority is a hard household boundary. The member can organize only categories delegated to them, and cannot expose or move money into private family categories.").font(.footnote).foregroundStyle(.secondary) }
-    }.navigationTitle(member.displayName).toolbar { Button("Save") { Task { await save() } }.disabled(poolCategoryID.isEmpty || parsed == nil || isSaving) }.onAppear { let existing = store.delegatedBudgets.first(where: { $0.userID == member.userID }); poolCategoryID = existing?.poolCategoryID ?? categories.first?.id ?? ""; authority = CurrencyText.editable(existing?.authorityMinor ?? 0, currencyCode: store.budget.currencyCode); allowCreation = existing?.allowCategoryCreation ?? true; allowReallocation = existing?.allowReallocation ?? true }.alert("Unable to save delegated budget", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) { Button("OK", role: .cancel) {} } message: { Text(errorMessage ?? "Unknown error") } }
-    private var parsed: Int64? { guard let amount = CurrencyText.parseMinorUnits(authority, currencyCode: store.budget.currencyCode), amount >= 0 else { return nil }; return amount }
-    private func save() async { guard let parsed else { return }; isSaving = true; defer { isSaving = false }; do { try await store.updateDelegatedPolicy(userID: member.userID, value: APIDelegatedBudgetUpsert(userID: member.userID, poolCategoryID: poolCategoryID, authorityMinor: parsed, allowCategoryCreation: allowCreation, allowReallocation: allowReallocation, expectedAllocationVersion: store.summary?.allocationVersion)) } catch { errorMessage = error.localizedDescription } }
+    }.navigationTitle(member.displayName)
+        .toolbar { Button("Save") { Task { await save() } }.disabled(mutation == nil || isSaving) }
+        .onAppear { prepareDraft() }
+        .onChange(of: draftScope) { _, _ in prepareDraft() }
+        .onChange(of: store.summary?.allocationVersion) { _, _ in
+            if draft.expectedAllocationVersion == nil { prepareDraft(replacing: true) }
+        }
+        .alert("Unable to save delegated budget", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
+            Button("Keep Edits", role: .cancel) {}
+            Button("Reload Latest") { Task {
+                let scope = draftScope
+                await store.refresh()
+                if draftScope == scope { prepareDraft(replacing: true) }
+            } }
+        } message: { Text("\(errorMessage ?? "Unknown error")\nReload Latest replaces your unsaved edits with the current policy.") }
+    }
+    private var mutation: APIDelegatedBudgetUpsert? { draft.mutation(userID: member.userID, currencyCode: store.budget.currencyCode) }
+    private func prepareDraft(replacing: Bool = false) {
+        draft.prepare(scope: draftScope, policy: store.delegatedBudgets.first { $0.userID == member.userID },
+                      fallbackCategoryID: categories.first?.id, currencyCode: store.budget.currencyCode,
+                      allocationVersion: store.summary?.allocationVersion, replacing: replacing)
+    }
+    private func save() async {
+        guard !isSaving, let mutation else { return }
+        let scope = draftScope
+        isSaving = true; defer { isSaving = false }
+        do {
+            try await store.updateDelegatedPolicy(userID: member.userID, value: mutation)
+            guard draftScope == scope else { return }
+            prepareDraft(replacing: true)
+        } catch { if draftScope == scope { errorMessage = error.localizedDescription } }
+    }
 }
 
 private struct DelegatedPolicyHistoryView: View {

@@ -11,6 +11,49 @@ import UserNotifications
 @testable import Budget_App
 
 final class DemoStoreTests: XCTestCase {
+    func testDelegatedEditorPreservesDraftRulesAndReviewedVersionAcrossReappearance() throws {
+        let policy = try JSONDecoder().decode(APIDelegatedBudget.self, from: Data(#"{"id":"policy","budget_id":"budget","user_id":"member","pool_category_id":"pool","authority_minor":9007199254740993,"assigned_minor":0,"available_to_assign_minor":9007199254740993,"allow_category_creation":false,"allow_reallocation":true,"rules":[{"id":"rule","category_id":"private-category","rule_kind":"hard_limit","minimum_minor":1,"maximum_minor":12345}]}"#.utf8))
+        var draft = DelegatedPolicyEditorDraft()
+        draft.prepare(scope: "owner|budget|member", policy: policy, fallbackCategoryID: nil,
+                      currencyCode: "USD", allocationVersion: 7)
+        XCTAssertEqual(try XCTUnwrap(draft.mutation(userID: "member", currencyCode: "USD")).authorityMinor, 9_007_199_254_740_993)
+        draft.authority = "23.45"; draft.allowCreation = true; draft.allowReallocation = false
+        draft.prepare(scope: "owner|budget|member", policy: policy, fallbackCategoryID: nil,
+                      currencyCode: "USD", allocationVersion: 8)
+        let value = try XCTUnwrap(draft.mutation(userID: "member", currencyCode: "USD"))
+        XCTAssertEqual(value.authorityMinor, 2345); XCTAssertEqual(value.expectedAllocationVersion, 7)
+        XCTAssertTrue(value.allowCategoryCreation); XCTAssertFalse(value.allowReallocation)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(value)) as? [String: Any])
+        let rules = try XCTUnwrap(json["rules"] as? [[String: Any]])
+        XCTAssertEqual(rules.count, 1); XCTAssertEqual(rules[0]["category_id"] as? String, "private-category")
+        XCTAssertEqual(rules[0]["maximum_minor"] as? Int, 12345)
+        draft.prepare(scope: "owner|budget|member", policy: policy, fallbackCategoryID: nil,
+                      currencyCode: "USD", allocationVersion: 9, replacing: true)
+        XCTAssertEqual(draft.expectedAllocationVersion, 9); XCTAssertFalse(draft.allowCreation)
+        draft.prepare(scope: "other-owner|budget|member", policy: nil, fallbackCategoryID: "other-pool",
+                      currencyCode: "USD", allocationVersion: 10)
+        XCTAssertEqual(draft.poolCategoryID, "other-pool"); XCTAssertTrue(draft.rules.isEmpty)
+        XCTAssertEqual(draft.authority, "0.00")
+    }
+
+    func testDelegatedEditorRejectsMissingVersionInvalidAndNegativeMoney() throws {
+        var draft = DelegatedPolicyEditorDraft()
+        draft.prepare(scope: "owner", policy: nil, fallbackCategoryID: "pool", currencyCode: "USD", allocationVersion: nil)
+        XCTAssertNil(draft.mutation(userID: "member", currencyCode: "USD"))
+        draft.prepare(scope: "owner", policy: nil, fallbackCategoryID: "pool", currencyCode: "USD", allocationVersion: 1, replacing: true)
+        XCTAssertEqual(draft.mutation(userID: "member", currencyCode: "USD")?.authorityMinor, 0)
+        draft.authority = "-1.00"; XCTAssertNil(draft.mutation(userID: "member", currencyCode: "USD"))
+        draft.authority = "not money"; XCTAssertNil(draft.mutation(userID: "member", currencyCode: "USD"))
+        let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("BudgetApp/BudgetWorkspaceView.swift")
+        let source = try String(contentsOf: file)
+        let start = try XCTUnwrap(source.range(of: "struct LiveDelegatedPolicyView: View"))
+        let end = try XCTUnwrap(source.range(of: "private struct DelegatedPolicyHistoryView:"))
+        let view = String(source[start.lowerBound..<end.lowerBound])
+        XCTAssertTrue(view.contains("@State private var draft = DelegatedPolicyEditorDraft()"))
+        XCTAssertTrue(view.contains(".onAppear { prepareDraft() }"))
+        XCTAssertTrue(view.contains("guard !isSaving, let mutation else"))
+        XCTAssertFalse(view.contains("APIDelegatedBudgetUpsert("))
+    }
     @MainActor
     func testHouseholdAccessHistoryRefreshDepthDenialAndLateResponse() async throws {
         func event(_ id: String) throws -> APIHouseholdAccessEvent {
@@ -5846,14 +5889,15 @@ final class DemoStoreTests: XCTestCase {
         // Re-saving the exact same policy is a no-op decision and does not manufacture history.
         let currentSnapshot = try await source.snapshot(planMonth: BudgetWorkspaceStore.parseDate("2026-09-01"), report: query)
         let currentVersion = try XCTUnwrap(currentSnapshot.summary?.allocationVersion)
-        try await source.updateDelegatedPolicy(userID: "alex", value: .init(
-            userID: "alex", poolCategoryID: "alexallow", authorityMinor: 10_000,
-            allowCategoryCreation: false, allowReallocation: true,
-            expectedAllocationVersion: currentVersion,
-            rules: [.init(categoryID: "alexsave", ruleKind: "soft_target", minimumMinor: 1_000, maximumMinor: 5_000)]
-        ))
+        var editor = DelegatedPolicyEditorDraft()
+        editor.prepare(scope: "owner|budget|alex", policy: policy, fallbackCategoryID: nil,
+                       currencyCode: "USD", allocationVersion: currentVersion)
+        try await source.updateDelegatedPolicy(userID: "alex", value: XCTUnwrap(editor.mutation(userID: "alex", currencyCode: "USD")))
         let historyAfterNoOp = try await source.delegatedPolicyHistory(userID: "alex", limit: 50, offset: 0)
         XCTAssertEqual(historyAfterNoOp, history)
+        let reloaded = try await source.snapshot(planMonth: BudgetWorkspaceStore.parseDate("2026-09-01"), report: query)
+        XCTAssertEqual(reloaded.delegatedBudgets.first { $0.userID == "alex" }?.rules, policy.rules)
+        XCTAssertEqual(reloaded.summary?.readyToAssignMinor, currentSnapshot.summary?.readyToAssignMinor)
     }
 
     @MainActor
