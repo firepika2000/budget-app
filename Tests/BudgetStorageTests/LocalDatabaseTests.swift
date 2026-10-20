@@ -3,6 +3,52 @@ import XCTest
 @testable import BudgetStorage
 
 final class LocalDatabaseTests: XCTestCase {
+    func testLargeLocalSnapshotBatchesSplitReadsAndPreservesExactScopedLedger() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appendingPathComponent("batched.sqlite")
+        let database = try LocalDatabase(fileURL: file)
+        try await database.transaction(fixtureStatements)
+        let ids = (0..<1001).map { String(format: "t%04d", $0) }
+        let statements = LocalAuthorityStore.transactionSplitReadStatements(for: ids)
+        XCTAssertEqual(statements.count, 6)
+        XCTAssertTrue(statements.allSatisfy { (1...200).contains($0.values.count) })
+        XCTAssertEqual(statements.flatMap(\.values), ids.map(LocalSQLiteValue.text))
+        XCTAssertTrue(LocalAuthorityStore.transactionSplitReadStatements(for: []).isEmpty)
+        var inserts: [LocalSQLStatement] = []
+        for (index, id) in ids.enumerated() {
+            let amount: Int64 = index == 0 ? -9_007_199_254_740_993 : -101
+            inserts.append(.init("INSERT INTO transactions(id,budget_id,account_id,amount_minor,occurred_on,memo,is_cleared,is_reconciled,status,created_by_user_id,created_at) VALUES (?,'budget','checking',?,'2026-09-27',?,0,0,'posted','owner','2026-09-27T00:00:00Z')",
+                values: [.text(id), .integer(amount), .text("Record \(index)")]))
+            if index % 3 != 0 || index == 0 {
+                for (suffix, value) in [("z", Int64(-1)), ("a", amount + 1)] {
+                    inserts.append(.init("INSERT INTO transaction_splits(id,transaction_id,category_id,amount_minor,memo) VALUES (?,?,'groceries',?,?)",
+                        values: [.text("\(id)-\(suffix)"), .text(id), .integer(value), .text(suffix)]))
+                }
+            }
+        }
+        inserts.append(.init("INSERT INTO budgets(id,household_id,name,currency_code,cash_rollover_policy,created_at) VALUES ('other','household','Other','USD','absorb','now')"))
+        inserts.append(.init("INSERT INTO accounts(id,budget_id,name,kind,is_on_budget,is_closed,opening_balance_minor,created_at) VALUES ('other-account','other','Other','checking',1,0,0,'now')"))
+        inserts.append(.init("INSERT INTO transactions(id,budget_id,account_id,amount_minor,occurred_on,is_cleared,is_reconciled,status,created_by_user_id,created_at) VALUES ('hidden','other','other-account',-1,'2026-09-27',0,0,'posted','owner','now')"))
+        try await database.transaction(inserts)
+        let authority = try LocalAuthorityStore(fileURL: file)
+        let snapshot = try await authority.snapshot(budgetID: "budget")
+        XCTAssertEqual(snapshot.transactions.map(\.id), ids + ["transaction"])
+        for (index, row) in snapshot.transactions.prefix(ids.count).enumerated() {
+            XCTAssertEqual(row.amountMinor, index == 0 ? -9_007_199_254_740_993 : -101)
+            XCTAssertEqual(row.memo, "Record \(index)")
+            if index % 3 != 0 || index == 0 {
+                XCTAssertEqual(row.splits.map(\.id), ["\(row.id)-a", "\(row.id)-z"])
+                XCTAssertEqual(row.splits.map(\.amountMinor), [row.amountMinor + 1, -1])
+            } else { XCTAssertTrue(row.splits.isEmpty) }
+        }
+        let reopened = try LocalAuthorityStore(fileURL: file)
+        let again = try await reopened.snapshot(budgetID: "budget")
+        XCTAssertEqual(again.transactions, snapshot.transactions)
+        XCTAssertEqual(snapshot.accounts.first?.openingBalanceMinor, 9_007_199_254_740_991)
+        try await authority.integrityCheck()
+    }
+
     func testHistoricalPayeeRepairSkipsAmbiguousAndSystemRelationships() async throws {
         let database = try LocalDatabase(fileURL: temporaryDirectory().appendingPathComponent("excluded.sqlite"))
         try await database.transaction(fixtureStatements)

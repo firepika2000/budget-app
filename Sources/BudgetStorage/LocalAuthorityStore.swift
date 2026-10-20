@@ -1313,15 +1313,36 @@ public actor LocalAuthorityStore {
         }
     }
 
+    static func transactionSplitReadStatements(for ids: [String]) -> [LocalSQLStatement] {
+        stride(from: 0, to: ids.count, by: 200).map { start in
+            let batch = Array(ids[start..<min(start + 200, ids.count)])
+            let placeholders = Array(repeating: "?", count: batch.count).joined(separator: ",")
+            return .init("SELECT * FROM transaction_splits WHERE transaction_id IN (\(placeholders)) ORDER BY transaction_id,id",
+                         values: batch.map(LocalSQLiteValue.text))
+        }
+    }
+
     private func loadTransactions(budgetID: String) async throws -> [LocalTransactionRecord] {
         let rows = try await database.rows(.init("SELECT * FROM transactions WHERE budget_id=? ORDER BY occurred_on,id", values: [.text(budgetID)]))
+        let ids = try rows.map { try text($0, "id") }
         var result: [LocalTransactionRecord] = []
-        for row in rows {
-            let transactionID = try text(row, "id")
-            let splits = try await database.rows(.init("SELECT * FROM transaction_splits WHERE transaction_id=? ORDER BY id", values: [.text(transactionID)])).map {
-                try LocalTransactionSplitRecord(id: text($0, "id"), categoryID: text($0, "category_id"), amountMinor: integer($0, "amount_minor"), memo: text($0, "memo"), financialClassification: optionalText($0, "financial_classification"))
+        result.reserveCapacity(rows.count)
+        // Bound each split read while retaining the exact complete ledger required by local
+        // projections. Avoid one SQLite round trip for every historical transaction.
+        for (index, statement) in Self.transactionSplitReadStatements(for: ids).enumerated() {
+            var grouped: [String: [LocalTransactionSplitRecord]] = [:]
+            for split in try await database.rows(statement) {
+                let record = try LocalTransactionSplitRecord(id: text(split, "id"), categoryID: text(split, "category_id"),
+                    amountMinor: integer(split, "amount_minor"), memo: text(split, "memo"),
+                    financialClassification: optionalText(split, "financial_classification"))
+                grouped[try text(split, "transaction_id"), default: []].append(record)
             }
-            result.append(try .init(id: transactionID, budgetID: text(row, "budget_id"), accountID: text(row, "account_id"), payeeID: optionalText(row, "payee_id"), payeeName: text(row, "payee_name"), amountMinor: integer(row, "amount_minor"), occurredOn: text(row, "occurred_on"), memo: text(row, "memo"), isCleared: bool(row, "is_cleared"), isReconciled: bool(row, "is_reconciled"), status: text(row, "status"), transferID: optionalText(row, "transfer_id"), scheduledTransactionID: optionalText(row, "scheduled_transaction_id"), flag: optionalText(row, "flag"), tags: stringArray(row, "tags_json"), financialClassification: optionalText(row, "financial_classification"), voidReason: optionalText(row, "void_reason"), reversalOfTransactionID: optionalText(row, "reversal_of_transaction_id"), reversalTransactionID: optionalText(row, "reversal_transaction_id"), createdByUserID: text(row, "created_by_user_id"), createdAt: text(row, "created_at"), splits: splits))
+            let start = index * 200
+            for row in rows[start..<min(start + 200, rows.count)] {
+                let transactionID = try text(row, "id")
+                let splits = grouped[transactionID] ?? []
+                result.append(try .init(id: transactionID, budgetID: text(row, "budget_id"), accountID: text(row, "account_id"), payeeID: optionalText(row, "payee_id"), payeeName: text(row, "payee_name"), amountMinor: integer(row, "amount_minor"), occurredOn: text(row, "occurred_on"), memo: text(row, "memo"), isCleared: bool(row, "is_cleared"), isReconciled: bool(row, "is_reconciled"), status: text(row, "status"), transferID: optionalText(row, "transfer_id"), scheduledTransactionID: optionalText(row, "scheduled_transaction_id"), flag: optionalText(row, "flag"), tags: stringArray(row, "tags_json"), financialClassification: optionalText(row, "financial_classification"), voidReason: optionalText(row, "void_reason"), reversalOfTransactionID: optionalText(row, "reversal_of_transaction_id"), reversalTransactionID: optionalText(row, "reversal_transaction_id"), createdByUserID: text(row, "created_by_user_id"), createdAt: text(row, "created_at"), splits: splits))
+            }
         }
         return result
     }
