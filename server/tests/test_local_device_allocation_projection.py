@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from datetime import date, datetime, timezone
 
 from app.local_device_export import _allocation_rows
 
@@ -12,8 +13,8 @@ def posting(identifier: str, category_id: str, amount_minor: int):
 
 def test_many_to_many_allocation_is_decomposed_without_changing_category_observations():
     operation = SimpleNamespace(
-        id="operation", budget_id="budget", occurred_on="2026-10-07",
-        kind="move", actor_user_id="owner", note="Rebalance", created_at="2026-10-07T12:00:00Z",
+        id="operation", budget_id="budget", occurred_on=date(2026, 10, 7),
+        kind="move", actor_user_id="owner", note="Rebalance", created_at=datetime(2026, 10, 7, 12, tzinfo=timezone.utc),
     )
     values = [
         posting("source-a", "source-a", -700),
@@ -34,6 +35,7 @@ def test_many_to_many_allocation_is_decomposed_without_changing_category_observa
         net[row["source_category_id"]] = net.get(row["source_category_id"], 0) - row["amount_minor"]
         net[row["category_id"]] = net.get(row["category_id"], 0) + row["amount_minor"]
         assert row["operation_id"] == "operation"
+        assert row["occurred_on"] == "2026-10-07"
     assert net == {
         "source-a": -700, "source-b": -300,
         "destination-a": 400, "destination-b": 600,
@@ -42,8 +44,8 @@ def test_many_to_many_allocation_is_decomposed_without_changing_category_observa
 
 def test_unbalanced_allocation_still_fails_closed():
     operation = SimpleNamespace(
-        id="operation", budget_id="budget", occurred_on="2026-10-07",
-        kind="move", actor_user_id="owner", note="", created_at="2026-10-07T12:00:00Z",
+        id="operation", budget_id="budget", occurred_on=date(2026, 10, 7),
+        kind="move", actor_user_id="owner", note="", created_at=datetime(2026, 10, 7, 12, tzinfo=timezone.utc),
     )
     values = [posting("source", "source", -500), posting("destination", "destination", 499)]
 

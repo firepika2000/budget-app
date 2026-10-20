@@ -6,6 +6,8 @@ from pathlib import Path
 import sqlite3
 
 import pytest
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 
 from scripts.local_server import (
     LocalServerConfiguration, LocalServerError, backup_local, backup_status, exclusive_server_lock,
@@ -59,7 +61,10 @@ def test_non_loopback_binding_requires_explicit_allowed_hosts(tmp_path):
 def test_local_mode_runs_full_migration_graph_and_preserves_populated_database(tmp_path):
     configuration = LocalServerConfiguration.load_or_create(tmp_path / "local")
     migrate(configuration, SERVER_ROOT)
-    assert "0035_schedule_occurrence_limit (head)" in migration_state(configuration, SERVER_ROOT)
+    graph = ScriptDirectory.from_config(Config(str(SERVER_ROOT / "alembic.ini")))
+    head = graph.get_current_head()
+    assert head is not None
+    assert f"{head} (head)" in migration_state(configuration, SERVER_ROOT)
     with sqlite3.connect(configuration.database_path) as database:
         database.execute("INSERT INTO users(id,email,password_hash,display_name,created_at) VALUES (?,?,?,?,?)",
                          ("owner", "owner@example.test", "hash", "Owner", "2026-09-27 00:00:00"))
