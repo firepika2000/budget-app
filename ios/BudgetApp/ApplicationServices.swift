@@ -428,6 +428,37 @@ enum UserFileSelection {
     }
 }
 
+enum NativeImportFileReader {
+    static let maximumBytes = 10 * 1024 * 1024
+
+    static func read(_ url: URL, oversizedMessage: String) throws -> Data {
+        let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize
+        if let size, size > maximumBytes { throw BudgetApplicationError.invalidOperation(oversizedMessage) }
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+        return try boundedData(maximumBytes: maximumBytes, oversizedMessage: oversizedMessage) {
+            try handle.read(upToCount: $0)
+        }
+    }
+
+    /// Check the stream as well as its initial metadata: a provider can return short reads or
+    /// change the file after selection. Retained data never exceeds the import limit.
+    static func boundedData(maximumBytes: Int, oversizedMessage: String,
+                            read: (Int) throws -> Data?) throws -> Data {
+        guard maximumBytes > 0, maximumBytes < Int.max else {
+            throw BudgetApplicationError.invalidOperation("The import size limit is invalid.")
+        }
+        var result = Data()
+        while let chunk = try read(min(64 * 1024, maximumBytes - result.count + 1)), !chunk.isEmpty {
+            guard chunk.count <= maximumBytes - result.count else {
+                throw BudgetApplicationError.invalidOperation(oversizedMessage)
+            }
+            result.append(chunk)
+        }
+        return result
+    }
+}
+
 /// Display-only projection of local immutable audit snapshots. Never return raw snapshots or IDs.
 enum LocalTransactionHistoryProjection {
     static func changes(_ record: LocalTransactionChangeRecord, accounts: [String: String],

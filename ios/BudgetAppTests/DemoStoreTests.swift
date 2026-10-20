@@ -11,6 +11,52 @@ import UserNotifications
 @testable import Budget_App
 
 final class DemoStoreTests: XCTestCase {
+    func testNativeImportReaderHandlesShortReadsAndExactLimitWithoutTruncation() throws {
+        let expected = Data("abcde".utf8)
+        var offset = 0, requests: [Int] = []
+        let result = try NativeImportFileReader.boundedData(maximumBytes: 5, oversizedMessage: "Too large") { count in
+            requests.append(count)
+            guard offset < expected.count else { return nil }
+            let end = min(offset + 2, expected.count)
+            defer { offset = end }
+            return expected.subdata(in: offset..<end)
+        }
+        XCTAssertEqual(result, expected)
+        XCTAssertEqual(requests, [6, 4, 2, 1])
+    }
+
+    func testNativeImportReaderStopsAtLimitPlusOneAndPreservesReadErrors() {
+        var requested = 0, calls = 0
+        XCTAssertThrowsError(try NativeImportFileReader.boundedData(maximumBytes: 100_000, oversizedMessage: "Too large") { count in
+            calls += 1; requested += count
+            XCTAssertLessThanOrEqual(count, 64 * 1024)
+            return Data(repeating: 1, count: count)
+        }) { error in XCTAssertEqual(error.localizedDescription, "Too large") }
+        XCTAssertEqual(requested, 100_001); XCTAssertEqual(calls, 2)
+        XCTAssertThrowsError(try NativeImportFileReader.boundedData(maximumBytes: 10, oversizedMessage: "Too large") { _ in
+            throw CocoaError(.fileReadNoPermission)
+        }) { error in XCTAssertEqual((error as NSError).code, CocoaError.fileReadNoPermission.rawValue) }
+    }
+
+    func testNativeImportReaderChecksActualFileSizeAndBothProductionPaths() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("bounded-import-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appendingPathComponent("statement.csv")
+        let expected = Data("date,amount\n2026-10-20,1.00\n".utf8)
+        try expected.write(to: file)
+        XCTAssertEqual(try NativeImportFileReader.read(file, oversizedMessage: "Too large"), expected)
+        let handle = try FileHandle(forWritingTo: file)
+        try handle.truncate(atOffset: UInt64(NativeImportFileReader.maximumBytes + 1))
+        try handle.close()
+        XCTAssertThrowsError(try NativeImportFileReader.read(file, oversizedMessage: "Too large")) {
+            XCTAssertEqual($0.localizedDescription, "Too large")
+        }
+        let sourceURL = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("BudgetApp/BudgetWorkspaceView.swift")
+        let source = try String(contentsOf: sourceURL)
+        XCTAssertEqual(source.components(separatedBy: "NativeImportFileReader.read(url, oversizedMessage:").count - 1, 2)
+    }
+
     func testNativeFileSelectionCancellationPreservesDraftAndRealFailuresRemainErrors() throws {
         let chosen = URL(fileURLWithPath: "/private/tmp/selected-receipt.pdf")
         XCTAssertEqual(try UserFileSelection.url(from: .success(chosen)), chosen)

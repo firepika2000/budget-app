@@ -11507,7 +11507,7 @@ private struct TransactionAttachmentsView: View {
             try await store.transactionAttachments(id: transaction.id)
         }
     }
-    private func importFile(_ result: Result<URL, Error>) async { do { guard let url = try UserFileSelection.url(from: result) else { return }; let scoped = url.startAccessingSecurityScopedResource(); defer { if scoped { url.stopAccessingSecurityScopedResource() } }; let values = try url.resourceValues(forKeys: [.contentTypeKey]); let data = try Data(contentsOf: url, options: .mappedIfSafe); try await upload(data: data, filename: url.lastPathComponent, contentType: values.contentType?.preferredMIMEType ?? "application/octet-stream") } catch { self.error = error.localizedDescription } }
+    private func importFile(_ result: Result<URL, Error>) async { do { guard let url = try UserFileSelection.url(from: result) else { return }; let scoped = url.startAccessingSecurityScopedResource(); defer { if scoped { url.stopAccessingSecurityScopedResource() } }; let values = try url.resourceValues(forKeys: [.contentTypeKey]); let data = try NativeImportFileReader.read(url, oversizedMessage: "Attachments must be 10 MB or smaller."); try await upload(data: data, filename: url.lastPathComponent, contentType: values.contentType?.preferredMIMEType ?? "application/octet-stream") } catch { self.error = error.localizedDescription } }
     private func importPhoto(_ item: PhotosPickerItem) async {
         defer { selectedPhoto = nil }
         do {
@@ -12050,7 +12050,7 @@ private struct LiveReconcileView: View {
             if denied { observationID = UUID(); observedBalance = nil; observedDate = nil; observedReviewRevision = nil; loadingObservation = false }
         }
         .fileImporter(isPresented: $choosingStatement, allowedContentTypes: StatementImportFile.allowedTypes) { result in
-            do { guard let url = try UserFileSelection.url(from: result) else { return }; let access = url.startAccessingSecurityScopedResource(); defer { if access { url.stopAccessingSecurityScopedResource() } }; let data = try Data(contentsOf: url, options: .mappedIfSafe); statementFile = StatementImportFile(name: url.lastPathComponent, data: data) } catch { errorMessage = error.localizedDescription }
+            do { guard let url = try UserFileSelection.url(from: result) else { return }; let access = url.startAccessingSecurityScopedResource(); defer { if access { url.stopAccessingSecurityScopedResource() } }; let data = try NativeImportFileReader.read(url, oversizedMessage: "Statement files must be 10 MB or smaller."); statementFile = StatementImportFile(name: url.lastPathComponent, data: data) } catch { errorMessage = error.localizedDescription }
         }
         .sheet(item: $statementFile) { file in StatementImportFlowView(workspace: workspace, budget: budget, account: account, file: file) }
         .sheet(isPresented: $showingImportHistory) {
