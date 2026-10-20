@@ -11,6 +11,32 @@ import UserNotifications
 @testable import Budget_App
 
 final class DemoStoreTests: XCTestCase {
+    @MainActor
+    func testReportFilterDraftOnlyChangesCanonicalSelectionOnApply() async throws {
+        let store = BudgetWorkspaceStore.demo(); await store.refresh()
+        let original = store.reportFilters, context = store.reportContext
+        let summary = store.summary, transactions = store.transactions
+        var draft = original
+        draft.accountID = "checking"; draft.categoryID = "groceries"; draft.categoryGroup = "Essentials"
+        draft.payee = "Existing payee"; draft.memberID = "rey"; draft.transactionType = "spending"
+        draft.cleared = "cleared"; draft.flag = "orange"; draft.tag = "qa"; draft.includeTracking = true
+        XCTAssertTrue(draft.isActive); XCTAssertEqual(store.reportFilters, original); XCTAssertEqual(store.reportContext, context)
+        store.applyReportFilters(draft)
+        XCTAssertEqual(store.reportFilters, draft); XCTAssertNotEqual(store.reportContext, context)
+        draft = .init()
+        XCTAssertFalse(draft.isActive); XCTAssertTrue(store.reportFilters.isActive, "Reset is draft-only until Apply")
+        store.applyReportFilters(draft)
+        XCTAssertEqual(store.reportFilters, original); XCTAssertEqual(store.summary, summary)
+        XCTAssertEqual(store.transactions, transactions)
+        let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("BudgetApp/BudgetWorkspaceView.swift")
+        let source = try String(contentsOf: file)
+        let start = try XCTUnwrap(source.range(of: "private struct ReportFilterEditor: View"))
+        let end = try XCTUnwrap(source.range(of: "private struct ReportPeriodControls: View"))
+        let view = String(source[start.lowerBound..<end.lowerBound])
+        XCTAssertFalse(view.contains("selection: $store.")); XCTAssertFalse(view.contains("text: $store."))
+        XCTAssertTrue(view.contains("guard authority == store.authorityRevision"))
+        XCTAssertTrue(view.contains("PayeeSearchSelectionView")); XCTAssertTrue(view.contains("store.applyReportFilters(draft)"))
+    }
     func testReportDateDraftPreservesPendingDatesAndValidatesBeforeApply() throws {
         let start = BudgetWorkspaceStore.parseDate("2026-09-01"), end = BudgetWorkspaceStore.parseDate("2026-09-30")
         var draft = ReportDateRangeDraft()

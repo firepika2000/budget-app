@@ -13,6 +13,39 @@ private extension XCUIElement {
 }
 
 final class AuthenticationJourneyTests: XCTestCase {
+    func testProductionReportFiltersCancelApplyAndResetAreExplicit() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--demo-screen=insights"]
+        app.launch()
+        func open() {
+            let filters = app.buttons["insights-report-filters"]
+            XCTAssertTrue(filters.waitForExistence(timeout: 5)); filters.tap()
+            XCTAssertTrue(app.navigationBars["Report Filters"].waitForExistence(timeout: 5))
+        }
+        func tracking() -> XCUIElement {
+            let toggle = app.switches["Include tracking accounts"]
+            for _ in 0..<5 where !toggle.isHittable { app.swipeUp() }
+            XCTAssertTrue(toggle.isHittable); return toggle
+        }
+        open()
+        let first = tracking(); XCTAssertEqual(first.value as? String, "0")
+        first.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        XCTAssertEqual(first.value as? String, "1")
+        app.navigationBars.buttons["Cancel"].tap()
+        open()
+        let second = tracking(); XCTAssertEqual(second.value as? String, "0")
+        second.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        XCTAssertEqual(second.value as? String, "1")
+        app.navigationBars.buttons["Apply"].tap()
+        open()
+        XCTAssertEqual(tracking().value as? String, "1")
+        let reset = app.buttons["reset-report-filters"]
+        for _ in 0..<3 where !reset.isHittable { app.swipeUp() }
+        reset.tap(); app.navigationBars.buttons["Cancel"].tap()
+        open(); XCTAssertEqual(tracking().value as? String, "1")
+        app.navigationBars.buttons["Cancel"].tap()
+    }
     func testSystemKeyboardProbeRepeatedToolbars() { systemKeyboardProbe(mode: "repeated") }
     func testSystemKeyboardProbeFocusedToolbar() { systemKeyboardProbe(mode: "focused") }
     func testSystemKeyboardProbeWithoutToolbar() { systemKeyboardProbe(mode: "none") }

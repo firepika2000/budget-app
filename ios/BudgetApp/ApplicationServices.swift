@@ -596,6 +596,21 @@ final class AttachmentListObservation: ObservableObject {
     }
 }
 
+struct ReportFilterSelection: Equatable {
+    var accountID = ""
+    var categoryID = ""
+    var categoryGroup = ""
+    var payee = ""
+    var memberID = ""
+    var transactionType = ""
+    var cleared = "all"
+    var flag = ""
+    var tag = ""
+    var includeTracking = false
+
+    var isActive: Bool { self != Self() }
+}
+
 struct ReportDateRangeDraft {
     var start = Date()
     var end = Date()

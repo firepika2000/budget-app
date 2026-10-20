@@ -5243,6 +5243,20 @@ final class BudgetWorkspaceStore: ObservableObject {
         return page
     }
 
+    var reportFilters: ReportFilterSelection {
+        .init(accountID: reportAccountID, categoryID: reportCategoryID, categoryGroup: reportCategoryGroup,
+              payee: reportPayee, memberID: reportMemberID, transactionType: reportTransactionType,
+              cleared: reportCleared, flag: reportFlag, tag: reportTag, includeTracking: includeTrackingAccounts)
+    }
+
+    func applyReportFilters(_ filters: ReportFilterSelection) {
+        reportAccountID = filters.accountID; reportCategoryID = filters.categoryID
+        reportCategoryGroup = filters.categoryGroup; reportPayee = filters.payee
+        reportMemberID = filters.memberID; reportTransactionType = filters.transactionType
+        reportCleared = filters.cleared; reportFlag = filters.flag; reportTag = filters.tag
+        includeTrackingAccounts = filters.includeTracking
+    }
+
     var reportContext: WorkspaceReportContext {
         let range = reportRange()
         let query = WorkspaceReportQuery(start: range.0, end: range.1, accountID: reportAccountID, categoryID: reportCategoryID, categoryGroup: reportCategoryGroup, payee: reportPayee, memberID: reportMemberID, transactionType: reportTransactionType, cleared: reportCleared, flag: reportFlag, tag: reportTag, spendingTrendDimension: spendingTrendDimension, includeTracking: includeTrackingAccounts)
@@ -13152,7 +13166,6 @@ private struct LiveInsightsView: View {
     @State private var breakdownMode = SpendingBreakdownMode.category
     @State private var selectedAngle: Int64?
     @State private var selectedSlice: SpendingBreakdownSlice?
-    @State private var showReportPayeeSelector = false
     @State private var exportURL: URL?
     @State private var exportError: String?
     var body: some View {
@@ -13183,28 +13196,62 @@ private struct LiveInsightsView: View {
                 }.accessibilityIdentifier("insights-report-filters")
             }
         }
-        .sheet(isPresented: $showFilters) { filters.environmentObject(store) }
+        .sheet(isPresented: $showFilters) { ReportFilterEditor(store: store).environmentObject(store) }
         .alert("Unable to export reports", isPresented: Binding(get: { exportError != nil }, set: { if !$0 { exportError = nil } })) { Button("OK", role: .cancel) {} } message: { Text(exportError ?? "Unknown error") }
     }
     private func reportLink(_ title: String, _ explanation: String, _ symbol: String) -> some View { Label { VStack(alignment: .leading, spacing: 3) { Text(title); Text(explanation).font(.caption).foregroundStyle(.secondary) } } icon: { Image(systemName: symbol).foregroundStyle(Theme.accent) } }
-    private var hasFilters: Bool { !store.reportAccountID.isEmpty || !store.reportCategoryID.isEmpty || !store.reportCategoryGroup.isEmpty || !store.reportPayee.isEmpty || !store.reportMemberID.isEmpty || !store.reportTransactionType.isEmpty || store.reportCleared != "all" || !store.reportFlag.isEmpty || !store.reportTag.isEmpty || store.includeTrackingAccounts }
-    private var filters: some View { NavigationStack { Form {
-        Picker("Account", selection: $store.reportAccountID) { Text("All accounts").tag(""); ForEach(store.accounts) { Text($0.name).tag($0.id) } }
-        Picker("Category", selection: $store.reportCategoryID) { Text("All categories").tag(""); ForEach(store.categories.filter { !$0.isArchived }) { Text(store.categoryDisplayName($0)).tag($0.id) } }
-        Picker("Category group", selection: $store.reportCategoryGroup) { Text("All groups").tag(""); ForEach(store.groups) { Text($0.name).tag($0.name) } }
-        Button { showReportPayeeSelector = true } label: { LabeledContent("Payee", value: store.reportPayee.isEmpty ? "All payees" : store.reportPayee) }
-        if !store.reportPayee.isEmpty { Button("Clear Payee Filter", role: .destructive) { store.reportPayee = "" } }
-        if !store.householdMembers.isEmpty { Picker("Member", selection: $store.reportMemberID) { Text("All members").tag(""); ForEach(store.householdMembers.filter(\.isActive)) { Text($0.displayName).tag($0.userID) } } }
-        Picker("Type", selection: $store.reportTransactionType) { Text("All types").tag(""); Text("Spending").tag("spending"); Text("Refunds").tag("refund"); Text("Income").tag("income"); Text("Transfers").tag("transfer"); Text("Interest charges").tag("interest_charge") }
-        Picker("Status", selection: $store.reportCleared) { Text("All statuses").tag("all"); Text("Cleared").tag("cleared"); Text("Uncleared").tag("uncleared"); Text("Reconciled").tag("reconciled") }
-        TextField("Flag", text: $store.reportFlag).textInputAutocapitalization(.never)
-        TextField("Tag", text: $store.reportTag).textInputAutocapitalization(.never)
-        Toggle("Include tracking accounts", isOn: $store.includeTrackingAccounts)
-    }.navigationTitle("Report Filters").navigationBarTitleDisplayMode(.inline).toolbar { ToolbarItem(placement: .cancellationAction) { Button("Reset") { store.reportAccountID = ""; store.reportCategoryID = ""; store.reportCategoryGroup = ""; store.reportPayee = ""; store.reportMemberID = ""; store.reportTransactionType = ""; store.reportCleared = "all"; store.reportFlag = ""; store.reportTag = ""; store.includeTrackingAccounts = false } }; ToolbarItem(placement: .confirmationAction) { Button("Apply") { showFilters = false } } }.sheet(isPresented: $showReportPayeeSelector) { PayeeSearchSelectionView(title: "Filter by Payee") { store.reportPayee = $0.displayName } } } }
+    private var hasFilters: Bool { store.reportFilters.isActive }
     private func reload() async { await store.refresh() }
     private func prepareExport() async {
         do { exportURL = try await store.exportReports() }
         catch { exportError = error.localizedDescription }
+    }
+}
+
+private struct ReportFilterEditor: View {
+    @ObservedObject var store: BudgetWorkspaceStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var draft: ReportFilterSelection
+    @State private var showPayeeSelector = false
+    @State private var authority: Int
+
+    init(store: BudgetWorkspaceStore) {
+        self.store = store
+        _draft = State(initialValue: store.reportFilters)
+        _authority = State(initialValue: store.authorityRevision)
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Picker("Account", selection: $draft.accountID) { Text("All accounts").tag(""); ForEach(store.accounts) { Text($0.name).tag($0.id) } }
+                Picker("Category", selection: $draft.categoryID) { Text("All categories").tag(""); ForEach(store.categories.filter { !$0.isArchived }) { Text(store.categoryDisplayName($0)).tag($0.id) } }
+                Picker("Category group", selection: $draft.categoryGroup) { Text("All groups").tag(""); ForEach(store.groups) { Text($0.name).tag($0.name) } }
+                Button { showPayeeSelector = true } label: { LabeledContent("Payee", value: draft.payee.isEmpty ? "All payees" : draft.payee) }
+                if !draft.payee.isEmpty { Button("Clear Payee Filter", role: .destructive) { draft.payee = "" } }
+                if !store.householdMembers.isEmpty { Picker("Member", selection: $draft.memberID) { Text("All members").tag(""); ForEach(store.householdMembers.filter(\.isActive)) { Text($0.displayName).tag($0.userID) } } }
+                Picker("Type", selection: $draft.transactionType) { Text("All types").tag(""); Text("Spending").tag("spending"); Text("Refunds").tag("refund"); Text("Income").tag("income"); Text("Transfers").tag("transfer"); Text("Interest charges").tag("interest_charge") }
+                Picker("Status", selection: $draft.cleared) { Text("All statuses").tag("all"); Text("Cleared").tag("cleared"); Text("Uncleared").tag("uncleared"); Text("Reconciled").tag("reconciled") }
+                TextField("Flag", text: $draft.flag).textInputAutocapitalization(.never)
+                TextField("Tag", text: $draft.tag).textInputAutocapitalization(.never)
+                Toggle("Include tracking accounts", isOn: $draft.includeTracking)
+                Button("Reset Filters", role: .destructive) { draft = .init() }
+                    .accessibilityIdentifier("reset-report-filters")
+            }
+            .navigationTitle("Report Filters").navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) { Button("Apply") {
+                    guard authority == store.authorityRevision else { dismiss(); return }
+                    store.applyReportFilters(draft); dismiss()
+                } }
+            }
+            .sheet(isPresented: $showPayeeSelector) {
+                PayeeSearchSelectionView(title: "Filter by Payee") { draft.payee = $0.displayName }
+                    .environmentObject(store)
+            }
+        }
+        .onChange(of: store.authorityRevision) { _, _ in dismiss() }
     }
 }
 
