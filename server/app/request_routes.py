@@ -1,7 +1,12 @@
 from datetime import date, datetime, timedelta, timezone
+import hashlib
+import json
+from typing import Optional
+from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .access import can_access_resource, find_visible_budget, has_capability, visible_resource_ids
@@ -9,7 +14,7 @@ from .allocation import PostingInput, append_operation, category_available_balan
 from .clock import today
 from .database import get_db
 from .dependencies import get_current_user
-from .models import Category, FinancialRequest, RequestAction, User
+from .models import Category, FinancialRequest, RequestAction, User, WorkspaceCommandReceipt
 from .schemas import (
     FinancialRequestCancel,
     FinancialRequestCreate,
@@ -85,14 +90,43 @@ def expire_if_due(db: Session, item: FinancialRequest) -> bool:
     return True
 
 
+@router.get("/capabilities")
+def request_capabilities(
+    budget_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    require_request_capability(db, user, budget_id, "request_money")
+    # Clients must establish support before queuing intent: old servers ignore unknown headers.
+    return {"creation_replay_version": 1}
+
+
 @router.post("", response_model=FinancialRequestResponse, status_code=status.HTTP_201_CREATED)
 def create_request(
     budget_id: str,
     body: FinancialRequestCreate,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
+    operation_id: Optional[UUID] = Header(default=None, alias="X-Request-Operation-ID"),
 ) -> dict:
     budget = require_request_capability(db, user, budget_id, "request_money")
+    identity = str(operation_id) if operation_id is not None else None
+    digest = "v1:" + hashlib.sha256(json.dumps(
+        body.model_dump(mode="json"), sort_keys=True, separators=(",", ":"),
+    ).encode()).hexdigest()
+    # Serialize acceptance with its receipt, not just creation of the request row.
+    lock_budget(db, budget_id)
+    if identity is not None:
+        receipt = db.get(WorkspaceCommandReceipt, (budget_id, user.id, identity))
+        if receipt is not None:
+            if receipt.command_kind != "funding_request_create" or receipt.request_digest != digest:
+                raise HTTPException(status_code=409, detail="Saved request identity belongs to different intent")
+            existing = db.get(FinancialRequest, receipt.resource_id)
+            if (existing is None or existing.budget_id != budget_id or existing.requester_user_id != user.id
+                    or not can_access_resource(db, user, budget, "category", existing.destination_category_id)):
+                raise HTTPException(status_code=404, detail="Request not found")
+            # Acknowledge current authorized state; never recreate or undo a later decision.
+            return serialize_request(db, existing, reveal_source=False)
     destination = db.get(Category, body.destination_category_id)
     if (
         destination is None
@@ -118,7 +152,16 @@ def create_request(
         amount_minor=body.requested_amount_minor,
         note=body.reason,
     ))
-    db.commit()
+    if identity is not None:
+        db.add(WorkspaceCommandReceipt(budget_id=budget_id, actor_user_id=user.id,
+            operation_id=identity, command_kind="funding_request_create", request_digest=digest, resource_id=item.id))
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        if identity is None or db.get(WorkspaceCommandReceipt, (budget_id, user.id, identity)) is None:
+            raise
+        return create_request(budget_id, body, user, db, operation_id)
     db.refresh(item)
     return serialize_request(db, item, reveal_source=False)
 
