@@ -98,7 +98,7 @@ def request_capabilities(
 ) -> dict:
     require_request_capability(db, user, budget_id, "request_money")
     # Clients must establish support before queuing intent: old servers ignore unknown headers.
-    return {"creation_replay_version": 1}
+    return {"creation_replay_version": 1, "cancellation_replay_version": 1}
 
 
 @router.post("", response_model=FinancialRequestResponse, status_code=status.HTTP_201_CREATED)
@@ -287,14 +287,30 @@ def cancel_request(
     body: FinancialRequestCancel,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
+    operation_id: Optional[UUID] = Header(default=None, alias="X-Request-Operation-ID"),
 ) -> dict:
-    require_request_capability(db, user, budget_id, "request_money")
+    budget = require_request_capability(db, user, budget_id, "request_money")
     item = db.scalar(select(FinancialRequest).where(
         FinancialRequest.id == request_id,
         FinancialRequest.budget_id == budget_id,
     ).with_for_update())
-    if item is None or item.requester_user_id != user.id:
+    if (item is None or item.requester_user_id != user.id
+            or not can_access_resource(db, user, budget, "category", item.destination_category_id)):
         raise HTTPException(status_code=404, detail="Request not found")
+    identity = str(operation_id) if operation_id is not None else None
+    digest = "v1:" + hashlib.sha256(json.dumps(
+        {"request_id": request_id, **body.model_dump(mode="json")},
+        sort_keys=True, separators=(",", ":"),
+    ).encode()).hexdigest()
+    # The request row lock serializes cancellation with decisions. Replay acknowledges only an
+    # existing acceptance; it never repeats the transition or resets later request state/history.
+    if identity is not None:
+        receipt = db.get(WorkspaceCommandReceipt, (budget_id, user.id, identity))
+        if receipt is not None:
+            if (receipt.command_kind != "funding_request_cancel" or receipt.request_digest != digest
+                    or receipt.resource_id != request_id):
+                raise HTTPException(status_code=409, detail="Saved request identity belongs to different intent")
+            return serialize_request(db, item, reveal_source=False)
     if expire_if_due(db, item):
         db.commit()
         raise HTTPException(status_code=409, detail="Request has expired")
@@ -309,7 +325,16 @@ def cancel_request(
         action="cancelled",
         note=body.note,
     ))
-    db.commit()
+    if identity is not None:
+        db.add(WorkspaceCommandReceipt(budget_id=budget_id, actor_user_id=user.id,
+            operation_id=identity, command_kind="funding_request_cancel", request_digest=digest, resource_id=item.id))
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        if identity is None or db.get(WorkspaceCommandReceipt, (budget_id, user.id, identity)) is None:
+            raise
+        return cancel_request(budget_id, request_id, body, user, db, operation_id)
     db.refresh(item)
     return serialize_request(db, item, reveal_source=False)
 
