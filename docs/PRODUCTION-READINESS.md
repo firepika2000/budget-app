@@ -2,10 +2,39 @@
 
 ## Current workspace checkpoint
 
-Inspected implementation: `5985280` on `codex/development`, plus the offline request checkpoint below. App and widget remain `0.11.0`
+Inspected implementation: `0f6bf2c` on `codex/development`, plus the reviewed request-version correction below. App and widget remain `0.11.0`
 build `7`; TestFlight is held. Regular Xcode 27.1 (`27A9275`) builds and executes focused tests
 on preserved iPhone 17 Pro Max `3ABD861E-D38D-4AFD-A356-959266051564`, iOS 27.0 (`24A434`).
 No Simulator or Live data reset, merge, tag, or release is part of these checkpoints.
+
+### Saved workspace and reviewed funding decisions
+
+Live workspaces publish a saved, authorized core observation before network refresh (`1ad9151`),
+including a valid zero-account budget. The existing scoped cache now retains accepted funding
+requests and their action history (`613e82e`), separately from unconfirmed outbox intent. Old cache
+files remain readable; exact minor units, access-revision checks and durable denial quarantine remain
+intact. Four native cache/replay tests, one API encoding test and the simulator build passed for the
+request-history checkpoint.
+
+Funding decisions retain their amount, source and note across view reappearance (`0f6bf2c`). Decision
+and cancellation handlers claim submission before suspension. The follow-through correction binds
+the draft to the request ID and version actually reviewed rather than silently adopting a newer
+version from background refresh. Changed requests disable actions until Reload Latest Request
+explicitly discards the old draft. Submitted commands still pass through the canonical application
+service and server version/permission checks; approval, revision and cancellation remain online.
+
+The reviewed-version checkpoint passed four native tests and the production delegated-cancellation
+UI test in `Test-BudgetApp-2026.10.20_09-24-12--0400.xcresult`, plus the backend single-winner
+approval regression. Native coverage executes the draft model with exact large money, preserved
+input, changed/missing/wrong request identity and explicit reload; a source-wiring assertion connects
+it to the production handlers. The regular Xcode 27.1 simulator build and diff check passed. This
+does not claim a two-device runtime acceptance pass.
+
+Focused human acceptance: begin a partial approval without submitting, leave and return, and confirm
+the draft remains. In a disposable request workflow, revise the request from another device; after
+the approver refreshes, confirm actions require explicit reload before reviewing and submitting the
+new terms. This is a new concurrency/draft acceptance flow, not a repeat of accepted clearing tests.
+These app-only changes require a rebuild, not a server restart or migration.
 
 ### Offline funding requests and independent read refresh
 

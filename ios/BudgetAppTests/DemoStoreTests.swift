@@ -11,6 +11,31 @@ import UserNotifications
 @testable import Budget_App
 
 final class DemoStoreTests: XCTestCase {
+    func testFundingDecisionDraftRequiresExplicitReloadAfterAuthoritativeRevision() throws {
+        func request(_ version: Int, amount: Int64 = 9_007_199_254_740_993, id: String = "r1") throws -> APIFinancialRequest {
+            try JSONDecoder().decode(APIFinancialRequest.self, from: Data("""
+            {"id":"\(id)","requester_user_id":"member","request_type":"additional_allocation","destination_category_id":"food","requested_amount_minor":\(amount),"reason":"Reviewed","status":"pending","version":\(version),"actions":[]}
+            """.utf8))
+        }
+        var draft = FundingRequestDecisionDraft()
+        let original = try request(3), revised = try request(4, amount: 500)
+        XCTAssertFalse(draft.matches(original))
+        draft.load(original, currencyCode: "USD", sourceCategoryID: "buffer")
+        XCTAssertEqual(CurrencyText.parseMinorUnits(draft.amount, currencyCode: "USD"), original.requestedAmountMinor)
+        draft.amount = "1.25"; draft.note = "Partial approval"; draft.sourceCategoryID = "savings"
+        draft.load(original, currencyCode: "USD", sourceCategoryID: "buffer")
+        XCTAssertEqual(draft.amount, "1.25"); XCTAssertEqual(draft.note, "Partial approval")
+        XCTAssertEqual(draft.sourceCategoryID, "savings")
+        draft.load(revised, currencyCode: "USD", sourceCategoryID: "buffer")
+        XCTAssertEqual(draft.expectedVersion, 3)
+        XCTAssertFalse(draft.matches(revised)); XCTAssertFalse(draft.matches(nil))
+        XCTAssertFalse(draft.matches(try request(3, id: "another")))
+        XCTAssertEqual(draft.amount, "1.25", "Background changes must not discard or silently rebase the reviewed draft")
+        draft.load(revised, currencyCode: "USD", sourceCategoryID: "buffer", replacing: true)
+        XCTAssertTrue(draft.matches(revised)); XCTAssertEqual(draft.expectedVersion, 4)
+        XCTAssertEqual(draft.amount, "5.00"); XCTAssertEqual(draft.note, "")
+        XCTAssertEqual(draft.sourceCategoryID, "buffer")
+    }
     func testFundingRequestDetailPreservesDraftAndClaimsDecisionBeforeSuspension() throws {
         let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("BudgetApp/BudgetWorkspaceView.swift")
@@ -18,17 +43,16 @@ final class DemoStoreTests: XCTestCase {
         let start = try XCTUnwrap(source.range(of: "private struct LiveRequestDetailView: View"))
         let end = try XCTUnwrap(source.range(of: "private struct MoveMoneyPresentation:"))
         let view = String(source[start.lowerBound..<end.lowerBound])
-        XCTAssertTrue(view.contains("@State private var initialized = false"))
-        let appear = try XCTUnwrap(view.range(of: ".onAppear {"))
-        let initialization = String(view[appear.lowerBound...].prefix(450))
-        XCTAssertTrue(initialization.contains("guard !initialized else { return }"))
-        XCTAssertTrue(initialization.contains("initialized = true"))
+        XCTAssertTrue(view.contains("@State private var draft = FundingRequestDecisionDraft()"))
+        XCTAssertTrue(view.contains(".onAppear { loadDraft() }"))
+        XCTAssertTrue(view.contains("Button(\"Reload Latest Request\") { loadDraft(replacing: true) }"))
         for signature in ["private func cancel() async {", "private func decide(_ decision: String) async {"] {
             let handler = try XCTUnwrap(view.range(of: signature))
-            let prefix = String(view[handler.upperBound...].prefix(180))
-            XCTAssertTrue(prefix.hasPrefix(" guard !isSaving, let request else { return }; isSaving = true; defer { isSaving = false }"))
+            let prefix = String(view[handler.upperBound...].prefix(250))
+            XCTAssertTrue(prefix.hasPrefix(" guard !isSaving, draft.matches(request), let request, let version = draft.expectedVersion else { return }; isSaving = true; defer { isSaving = false }"))
         }
-        XCTAssertTrue(view.contains(".disabled(isSaving)"))
+        XCTAssertFalse(view.contains("version: request.version"))
+        XCTAssertTrue(view.contains(".disabled(isSaving || !draft.matches(request))"))
     }
     func testEditingSaveHandlersClaimSubmissionBeforeFirstSuspension() throws {
         let directory = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("BudgetApp")

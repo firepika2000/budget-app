@@ -8926,9 +8926,9 @@ private struct LiveRequestDetailView: View {
     @EnvironmentObject private var session: AppSession
     @EnvironmentObject private var store: BudgetWorkspaceStore
     let requestID: String
-    @State private var amount = ""; @State private var sourceCategoryID = ""; @State private var note = ""; @State private var isSaving = false; @State private var errorMessage: String?
+    @State private var draft = FundingRequestDecisionDraft()
+    @State private var isSaving = false; @State private var errorMessage: String?
     @State private var showRevise = false; @State private var confirmCancel = false
-    @State private var initialized = false
     private var request: APIFinancialRequest? { store.requests.first(where: { $0.id == requestID }) }
     private var sources: [APICategoryMonth] { (store.summary?.categories ?? []).filter { $0.availableMinor > 0 && $0.categoryID != request?.destinationCategoryID } }
     var body: some View {
@@ -8944,24 +8944,32 @@ private struct LiveRequestDetailView: View {
                 }
                 if store.budget.can("approve_request") && request.status == "pending" {
                     Section("Decision") {
-                        Picker("Fund from", selection: $sourceCategoryID) {
+                        Picker("Fund from", selection: $draft.sourceCategoryID) {
                             ForEach(sources) { Text("\(store.categoryDisplayName($0)) · \(store.format($0.availableMinor))").tag($0.categoryID) }
                         }
-                        CurrencyAmountField("Approved amount", text: $amount, currencyCode: store.budget.currencyCode)
-                        TextField("Note", text: $note)
+                        CurrencyAmountField("Approved amount", text: $draft.amount, currencyCode: store.budget.currencyCode)
+                        TextField("Note", text: $draft.note)
                     }
+                    .disabled(isSaving || !draft.matches(request))
                     Section {
-                        Button("Approve") { Task { await decide("approve") } }.disabled(parsed == nil || sourceCategoryID.isEmpty || isSaving)
-                        Button("Request changes") { Task { await decide("changes_requested") } }.disabled(note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSaving)
+                        Button("Approve") { Task { await decide("approve") } }.disabled(parsed == nil || draft.sourceCategoryID.isEmpty || isSaving)
+                        Button("Request changes") { Task { await decide("changes_requested") } }.disabled(draft.note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSaving)
                         Button("Reject", role: .destructive) { Task { await decide("reject") } }.disabled(isSaving)
                     }
+                    .disabled(!draft.matches(request))
                 }
                 if store.isRequestOwner(request.requesterUserID, authenticatedUserID: session.profile?.id) && ["pending", "changes_requested"].contains(request.status) {
                     Section("Your request") {
                         if request.status == "changes_requested" { Button("Revise and Resubmit") { showRevise = true } }
                         Button("Cancel Request", role: .destructive) { confirmCancel = true }
                     }
-                    .disabled(isSaving)
+                    .disabled(isSaving || !draft.matches(request))
+                }
+                if !draft.matches(request) && ["pending", "changes_requested"].contains(request.status) {
+                    Section {
+                        Text("This request changed since you began reviewing it. Reload its latest details before taking action. Reloading discards your decision draft.")
+                        Button("Reload Latest Request") { loadDraft(replacing: true) }.disabled(isSaving)
+                    }
                 }
                 Section("History") {
                     ForEach(request.actions) { action in
@@ -8982,14 +8990,8 @@ private struct LiveRequestDetailView: View {
             }
         }
         .navigationTitle("Funding Request")
-        .onAppear {
-            guard !initialized else { return }
-            if let request {
-                initialized = true
-                amount = CurrencyText.editable(request.requestedAmountMinor, currencyCode: store.budget.currencyCode)
-                sourceCategoryID = sources.first?.categoryID ?? ""
-            }
-        }
+        .onAppear { loadDraft() }
+        .onChange(of: request?.id) { _, _ in loadDraft() }
         .alert("Unable to decide request", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
             Button("OK", role: .cancel) {}
         } message: { Text(errorMessage ?? "Unknown error") }
@@ -8999,10 +9001,14 @@ private struct LiveRequestDetailView: View {
             Button("Cancel Request", role: .destructive) { Task { await cancel() } }
         } message: { Text("The request and its decision history remain visible, but it can no longer be approved.") }
     }
-    private var parsed: Int64? { guard let value = CurrencyText.parseMinorUnits(amount, currencyCode: store.budget.currencyCode), value > 0, value <= (request?.requestedAmountMinor ?? 0) else { return nil }; return value }
+    private func loadDraft(replacing: Bool = false) {
+        guard let request else { return }
+        draft.load(request, currencyCode: store.budget.currencyCode, sourceCategoryID: sources.first?.categoryID ?? "", replacing: replacing)
+    }
+    private var parsed: Int64? { guard let value = CurrencyText.parseMinorUnits(draft.amount, currencyCode: store.budget.currencyCode), value > 0, value <= (request?.requestedAmountMinor ?? 0) else { return nil }; return value }
     private func requesterName(_ id: String) -> String { store.householdMembers.first(where: { $0.userID == id })?.displayName ?? "Household member" }
-    private func cancel() async { guard !isSaving, let request else { return }; isSaving = true; defer { isSaving = false }; do { try await store.cancelRequest(id: request.id, version: request.version, note: note) } catch { errorMessage = error.localizedDescription } }
-    private func decide(_ decision: String) async { guard !isSaving, let request else { return }; isSaving = true; defer { isSaving = false }; do { try await store.decideRequest(id: request.id, decision: decision, version: request.version, amount: decision == "approve" ? parsed : nil, sourceCategoryID: decision == "approve" ? sourceCategoryID : nil, note: note) } catch { errorMessage = error.localizedDescription } }
+    private func cancel() async { guard !isSaving, draft.matches(request), let request, let version = draft.expectedVersion else { return }; isSaving = true; defer { isSaving = false }; do { try await store.cancelRequest(id: request.id, version: version, note: draft.note) } catch { errorMessage = error.localizedDescription } }
+    private func decide(_ decision: String) async { guard !isSaving, draft.matches(request), let request, let version = draft.expectedVersion else { return }; isSaving = true; defer { isSaving = false }; do { try await store.decideRequest(id: request.id, decision: decision, version: version, amount: decision == "approve" ? parsed : nil, sourceCategoryID: decision == "approve" ? draft.sourceCategoryID : nil, note: draft.note) } catch { errorMessage = error.localizedDescription } }
 }
 
 private struct MoveMoneyPresentation: Identifiable {

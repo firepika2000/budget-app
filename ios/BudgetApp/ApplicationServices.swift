@@ -619,6 +619,28 @@ struct ReportFilterSelection: Equatable {
     var isActive: Bool { self != Self() }
 }
 
+struct FundingRequestDecisionDraft {
+    var amount = ""
+    var sourceCategoryID = ""
+    var note = ""
+    private(set) var requestID: String?
+    private(set) var expectedVersion: Int?
+
+    mutating func load(_ request: APIFinancialRequest, currencyCode: String, sourceCategoryID: String, replacing: Bool = false) {
+        guard expectedVersion == nil || replacing else { return }
+        requestID = request.id
+        expectedVersion = request.version
+        amount = CurrencyText.editable(request.requestedAmountMinor, currencyCode: currencyCode)
+        self.sourceCategoryID = sourceCategoryID
+        note = ""
+    }
+
+    func matches(_ request: APIFinancialRequest?) -> Bool {
+        guard let request, let expectedVersion else { return false }
+        return request.id == requestID && request.version == expectedVersion
+    }
+}
+
 struct ReportDateRangeDraft {
     var start = Date()
     var end = Date()
