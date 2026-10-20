@@ -3,6 +3,37 @@ import XCTest
 @testable import BudgetStorage
 
 final class LocalDeviceBackupTests: XCTestCase {
+    func testRestoreRejectsLinkedPackageAndPayloadDirectoriesWithoutPublishing() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (authority, attachments, attachmentKey, _) = try await fixture(in: root.appendingPathComponent("source"))
+        let recovery = try LocalDeviceBackupRecoveryKey(data: Data(repeating: 7, count: 32))
+        let package = root.appendingPathComponent("generation.clearpocketbackup")
+        _ = try await LocalDeviceBackupService.create(authority: authority, budgetID: "budget",
+            attachmentsDirectory: attachments, attachmentKey: attachmentKey, destinationURL: package, recoveryKey: recovery)
+        let alias = root.appendingPathComponent("linked.clearpocketbackup")
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: package)
+        let first = root.appendingPathComponent("rejected-package")
+        do {
+            _ = try await LocalDeviceBackupService.restore(packageURL: alias, destinationRootURL: first, recoveryKey: recovery)
+            XCTFail("Linked package must be rejected")
+        } catch { XCTAssertTrue(error is LocalStorageError) }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: first.path))
+        let external = root.appendingPathComponent("external")
+        try FileManager.default.moveItem(at: package.appendingPathComponent("payload"), to: external)
+        try FileManager.default.createSymbolicLink(at: package.appendingPathComponent("payload"), withDestinationURL: external)
+        let second = root.appendingPathComponent("rejected-payload")
+        do {
+            _ = try await LocalDeviceBackupService.restore(packageURL: package, destinationRootURL: second, recoveryKey: recovery)
+            XCTFail("Linked payload directory must be rejected")
+        } catch { XCTAssertTrue(error is LocalStorageError) }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: second.path))
+        XCTAssertFalse(try FileManager.default.contentsOfDirectory(atPath: root.path).contains { $0.hasPrefix(".clearpocket-restore-") })
+        let source = try await authority.snapshot(budgetID: "budget")
+        XCTAssertEqual(source.accounts.first?.name, "Checking")
+        XCTAssertFalse(try FileManager.default.contentsOfDirectory(atPath: external.path).isEmpty)
+    }
+
     func testRestoreRejectsSymlinkToOtherwiseValidAuthenticatedManifest() async throws {
         let root = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }

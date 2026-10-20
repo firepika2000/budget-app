@@ -177,6 +177,14 @@ public enum LocalDeviceBackupService {
             throw LocalStorageError.destinationExists
         }
         let manifestURL = package.appendingPathComponent(manifestName)
+        // Leaf-file checks do not detect a directory link that redirects the entire payload.
+        // Reject package-controlled links before reading/decrypting or creating restore staging.
+        for directory in [package, package.appendingPathComponent(payloadDirectoryName, isDirectory: true)] {
+            let values = try directory.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+            guard values.isDirectory == true, values.isSymbolicLink != true else {
+                throw LocalStorageError.invalidSnapshot("The local backup contains a linked or invalid directory")
+            }
+        }
         let rawManifest = try BackupManifestIO.read(manifestURL)
         let manifest = try JSONDecoder().decode(LocalDeviceBackupManifest.self, from: rawManifest)
         guard manifest.format == LocalDeviceBackupManifest.format,
