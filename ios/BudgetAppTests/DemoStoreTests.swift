@@ -11,6 +11,48 @@ import UserNotifications
 @testable import Budget_App
 
 final class DemoStoreTests: XCTestCase {
+    func testStatementHeaderDiscoveryStopsAtFirstRecordButPreviewStillRejectsInvalidTail() throws {
+        let rows = (0..<10_000).map { "2026-09-15,-1.23,Merchant \($0)" }
+        let data = Data((["Date,Amount,Payee"] + rows + ["\"unfinished private value"]).joined(separator: "\n").utf8)
+        XCTAssertEqual(LocalDelimitedStatementParser.headers(data: data, delimiter: ","), ["Date", "Amount", "Payee"])
+        XCTAssertThrowsError(try LocalDelimitedStatementParser.parse(data: data, mapping: .init(
+            sourceFormat: "csv", currencyCode: "USD", dateColumn: "Date", amountColumn: "Amount",
+            payeeColumn: "Payee", dateOrder: "ymd")))
+        let quoted = Data("\n\"Posted\nDate\",\"Amount\",\"Payee\"\r\nignored".utf8)
+        XCTAssertEqual(LocalDelimitedStatementParser.headers(data: quoted, delimiter: ","), ["Posted\nDate", "Amount", "Payee"])
+    }
+
+    @MainActor
+    func testStatementHeaderObservationRejectsSupersededAndInvalidatedResults() async {
+        let observation = StatementHeaderObservation()
+        await observation.load { ["Old"] }
+        XCTAssertEqual(observation.headers, ["Old"])
+        await observation.load {
+            XCTAssertTrue(observation.headers.isEmpty); XCTAssertTrue(observation.loading)
+            await observation.load { ["New"] }
+            return ["Stale"]
+        }
+        XCTAssertEqual(observation.headers, ["New"]); XCTAssertFalse(observation.loading)
+        await observation.load { observation.invalidate(); return ["Revoked"] }
+        XCTAssertTrue(observation.headers.isEmpty); XCTAssertFalse(observation.loading)
+        await observation.load { throw URLError(.cancelled) }
+        XCTAssertTrue(observation.headers.isEmpty); XCTAssertFalse(observation.loading)
+    }
+
+    func testProductionStatementMappingUsesCachedWorkerHeaders() throws {
+        let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("BudgetApp/BudgetWorkspaceView.swift")
+        let source = try String(contentsOf: file)
+        let start = try XCTUnwrap(source.range(of: "private struct StatementImportFlowView: View"))
+        let end = try XCTUnwrap(source.range(of: "private struct ReportLoadModifier:"))
+        let view = source[start.lowerBound..<end.lowerBound]
+        XCTAssertTrue(view.contains("private var headers: [String] { headerObservation.headers }"))
+        XCTAssertTrue(view.contains(".task(id: delimiter) { await loadHeaders() }"))
+        XCTAssertTrue(view.contains("NativeStatementParsing.run { LocalDelimitedStatementParser.headers"))
+        XCTAssertTrue(view.contains("headerObservation.invalidate()"))
+        XCTAssertTrue(view.contains("Reading statement columns…"))
+        XCTAssertFalse(view.contains("Self.csvHeaders"))
+    }
+
     @MainActor
     func testStatementParsingWorkerRunsOffMainAndPreservesExactParserResults() async throws {
         let onMain = try await NativeStatementParsing.run { Thread.isMainThread }

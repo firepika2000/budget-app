@@ -12203,6 +12203,32 @@ private struct StatementImportFile: Identifiable {
     var suggestedDelimiter: String { fileExtension == "tsv" ? "\t" : "," }
 }
 
+@MainActor
+final class StatementHeaderObservation: ObservableObject {
+    @Published private(set) var headers: [String] = []
+    @Published private(set) var loading = false
+    private var requestID = UUID()
+
+    func invalidate() { requestID = UUID(); headers = []; loading = false }
+
+    func load(read: () async throws -> [String]) async {
+        let request = UUID(); requestID = request
+        headers = []; loading = true
+        defer { if requestID == request { loading = false } }
+        do {
+            let next = try await read()
+            try Task.checkCancellation()
+            guard requestID == request else { return }
+            headers = next
+        } catch {
+            // Invalid or canceled discovery never manufactures mapping choices. Preview still
+            // applies complete file validation before staging any recognized transactions.
+            guard requestID == request else { return }
+            headers = []
+        }
+    }
+}
+
 enum NativeStatementParsing {
     static func run<Value: Sendable>(_ operation: @escaping @Sendable () throws -> Value) async throws -> Value {
         try Task.checkCancellation()
@@ -12295,7 +12321,7 @@ enum LocalDelimitedStatementParser {
 
     static func headers(data: Data, delimiter: Character) -> [String] {
         guard data.count <= 10 * 1024 * 1024, let text = decodedText(data), !text.contains("\0"),
-              let first = try? records(text, delimiter: delimiter).first else { return [] }
+              let first = try? records(text, delimiter: delimiter, firstRecordOnly: true).first else { return [] }
         return validatedHeaders(first) ?? []
     }
     private static func validatedHeaders(_ header: [String]) -> [String]? {
@@ -12336,7 +12362,7 @@ enum LocalDelimitedStatementParser {
         }
         return String(decoding: units, as: UTF16.self)
     }
-    private static func records(_ text: String, delimiter: Character) throws -> [[String]] {
+    private static func records(_ text: String, delimiter: Character, firstRecordOnly: Bool = false) throws -> [[String]] {
         var rows: [[String]] = [], row: [String] = [], field = "", quoted = false, index = text.startIndex
         while index < text.endIndex {
             let char = text[index]
@@ -12347,6 +12373,7 @@ enum LocalDelimitedStatementParser {
             else if (char == "\n" || char == "\r" || char == "\r\n") && !quoted {
                 if char == "\r" { let next = text.index(after: index); if next < text.endIndex && text[next] == "\n" { index = next } }
                 row.append(field); field = ""; if row.contains(where: { !$0.isEmpty }) { rows.append(row) }; row = []
+                if firstRecordOnly, !rows.isEmpty { return rows }
             } else { field.append(char) }
             index = text.index(after: index)
         }
@@ -12827,6 +12854,7 @@ private struct StatementImportFlowView: View {
     @State private var accessChanged = false
     @State private var reviewSearch = ""
     @State private var reviewFilter: StatementImportReviewFilter = .all
+    @StateObject private var headerObservation = StatementHeaderObservation()
     private var canUseCurrentAccess: Bool {
         !accessChanged && workspace.historyResourceVisible(.account(account.id))
             && workspace.budget.can("reconcile_account")
@@ -12846,7 +12874,7 @@ private struct StatementImportFlowView: View {
             row.suggestedCategoryID.map { categoryID in (row.sourceRow, categoryID) }
         }))
     }
-    private var headers: [String] { guard let file, file.sourceFormat == "csv" else { return [] }; return Self.csvHeaders(file.data, delimiter: delimiter) }
+    private var headers: [String] { headerObservation.headers }
     private var reviewable: Bool { staged?.status == "review" }
     var body: some View {
         Group {
@@ -12860,6 +12888,7 @@ private struct StatementImportFlowView: View {
         }
         .onChange(of: workspace.authorityRevision) { _, _ in
             accessChanged = true; staged = nil; postRows = []; categoryByRow = [:]; reviewSearch = ""
+            headerObservation.invalidate()
             confirmingCancel = false; confirmingUndo = false; errorMessage = nil
         }
     }
@@ -12877,8 +12906,9 @@ private struct StatementImportFlowView: View {
             Button("Undo Import", role: .destructive) { if let staged { Task { await undo(staged) } } }
             Button("Keep Transactions", role: .cancel) {}
         } message: { Text("Every unreconciled transaction posted by this import will be voided with an auditable reversal. If any row cannot be reversed, nothing changes.") }
-        .onAppear { if let file { delimiter = file.suggestedDelimiter; configureDefaults() } }
-        .onChange(of: delimiter) { _, _ in configureDefaults(reset: true) }
+        .onAppear { if let file { delimiter = file.suggestedDelimiter } }
+        .task(id: delimiter) { await loadHeaders() }
+        .onDisappear { headerObservation.invalidate() }
     } }
     @ViewBuilder private var setup: some View {
         if let file {
@@ -12891,7 +12921,9 @@ private struct StatementImportFlowView: View {
                 Picker("Money columns", selection: $csvAmountLayout) { Text("One signed amount").tag("amount"); Text("Separate debit and credit").tag("debit-credit") }
             }
             Section("CSV columns") {
-                if headers.isEmpty {
+                if headerObservation.loading {
+                    ProgressView("Reading statement columns…")
+                } else if headers.isEmpty {
                     Label("No valid columns", systemImage: "exclamationmark.triangle")
                     Text("Check the separator. The file needs unique, nonempty column names and at most 100 columns.")
                         .font(.footnote).foregroundStyle(.secondary)
@@ -13005,6 +13037,16 @@ private struct StatementImportFlowView: View {
         return required.allSatisfy { !$0.isEmpty } && Set(selected).count == selected.count
             && selected.allSatisfy { headers.contains($0) }
     }
+    private func loadHeaders() async {
+        guard canUseCurrentAccess, let file, file.sourceFormat == "csv", let separator = delimiter.first else { return }
+        let observedDelimiter = delimiter
+        let data = file.data
+        await headerObservation.load {
+            try await NativeStatementParsing.run { LocalDelimitedStatementParser.headers(data: data, delimiter: separator) }
+        }
+        guard !Task.isCancelled, canUseCurrentAccess, observedDelimiter == delimiter else { return }
+        configureDefaults(reset: true)
+    }
     private func configureDefaults(reset: Bool = false) {
         guard file?.sourceFormat == "csv", !headers.isEmpty else { return }
         if reset { dateColumn = ""; amountColumn = ""; debitColumn = ""; creditColumn = ""; payeeColumn = ""; memoColumn = "" }
@@ -13021,10 +13063,6 @@ private struct StatementImportFlowView: View {
     private func cancel(_ batch: APIStatementImport) async { isWorking = true; defer { isWorking = false }; do { _ = try await workspace.cancelStatementImport(accountID: account.id, batchID: batch.id, expectedVersion: batch.version); dismiss() } catch { errorMessage = error.localizedDescription } }
     private func undo(_ batch: APIStatementImport) async { isWorking = true; defer { isWorking = false }; do { staged = try await workspace.undoStatementImport(accountID: account.id, batchID: batch.id, expectedVersion: batch.version) } catch { errorMessage = error.localizedDescription } }
     private static func preferred(_ headers: [String], _ names: [String]) -> String { for name in names { if let match = headers.first(where: { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == name }) { return match } }; return "" }
-    private static func csvHeaders(_ data: Data, delimiter: String) -> [String] {
-        guard let separator = delimiter.first else { return [] }
-        return LocalDelimitedStatementParser.headers(data: data, delimiter: separator)
-    }
 }
 
 private struct ReportLoadModifier: ViewModifier {
