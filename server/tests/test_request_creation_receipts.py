@@ -76,7 +76,7 @@ def test_request_acknowledgement_rechecks_current_scope(client, owner_token, ses
 def test_request_identity_validation_and_legacy_contract(client, owner_token, session_factory):
     _, _, _, path, body, headers = setup(client, owner_token, session_factory)
     capability = client.get(path + "/capabilities", headers=auth(owner_token))
-    assert capability.status_code == 200 and capability.json() == {"creation_replay_version": 1, "cancellation_replay_version": 1}
+    assert capability.status_code == 200 and capability.json() == {"creation_replay_version": 1, "cancellation_replay_version": 1, "revision_replay_version": 1}
     assert client.get(path + "/capabilities").status_code == 401
     assert client.post(path, headers={**headers, "X-Request-Operation-ID": "invalid"}, json=body).status_code == 422
     for _ in range(2):
