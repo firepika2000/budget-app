@@ -12,6 +12,46 @@ import UserNotifications
 
 final class DemoStoreTests: XCTestCase {
     @MainActor
+    func testHistoryRefreshRetainsDepthAndStopsAtShortOrEmptyPage() async throws {
+        struct Row: Identifiable, Sendable { let id: Int }
+        var offsets: [Int] = []
+        let rows = try await HistoryRefreshReader.read(retainingCount: 5, pageSize: 2) { limit, offset in
+            XCTAssertEqual(limit, 2); offsets.append(offset)
+            return (offset..<min(offset + 2, 5)).map { Row(id: $0) }
+        }
+        XCTAssertEqual(offsets, [0, 2, 4]); XCTAssertEqual(rows.map(\.id), [0, 1, 2, 3, 4])
+        let empty: [Row] = try await HistoryRefreshReader.read(retainingCount: 100, pageSize: 50) { _, offset in
+            XCTAssertEqual(offset, 0); return []
+        }
+        XCTAssertTrue(empty.isEmpty)
+        var clamped = 0
+        let _: [Row] = try await HistoryRefreshReader.read(retainingCount: 0, pageSize: 1000) { limit, _ in
+            clamped = limit; return []
+        }
+        XCTAssertEqual(clamped, 100)
+    }
+
+    @MainActor
+    func testHistoryRefreshRejectsOverlapFailureAndCancellationWithoutPartialReturn() async throws {
+        struct Row: Identifiable, Sendable { let id: Int }
+        do {
+            let _: [Row] = try await HistoryRefreshReader.read(retainingCount: 3, pageSize: 2) { _, offset in
+                offset == 0 ? [Row(id: 1), Row(id: 2)] : [Row(id: 2)]
+            }
+            XCTFail("Overlapping authoritative pages must not publish")
+        } catch { XCTAssertEqual((error as NSError).domain, "HistoryRefresh") }
+        do {
+            let _: [Row] = try await HistoryRefreshReader.read(retainingCount: 3, pageSize: 2) { _, offset in
+                if offset > 0 { throw URLError(.timedOut) }; return [Row(id: 1), Row(id: 2)]
+            }
+            XCTFail("A failed later page must not return a partial replacement")
+        } catch { XCTAssertEqual((error as? URLError)?.code, .timedOut) }
+        do {
+            let _: [Row] = try await HistoryRefreshReader.read(retainingCount: 3, pageSize: 2) { _, _ in throw CancellationError() }
+            XCTFail("Cancellation must propagate")
+        } catch { XCTAssertTrue(error is CancellationError) }
+    }
+    @MainActor
     func testReportFilterDraftOnlyChangesCanonicalSelectionOnApply() async throws {
         let store = BudgetWorkspaceStore.demo(); await store.refresh()
         let original = store.reportFilters, context = store.reportContext
@@ -1925,6 +1965,8 @@ final class DemoStoreTests: XCTestCase {
         let firstPublication = try XCTUnwrap(detail.range(of: "history = issuanceRows"))
         XCTAssertLessThan(pair.lowerBound, firstPublication.lowerBound, "Neither half publishes until both reads succeed")
         XCTAssertFalse(detail.contains("history = try await issuances"))
+        XCTAssertTrue(detail.contains("HistoryRefreshReader.read(retainingCount: history.count"))
+        XCTAssertTrue(detail.contains("HistoryRefreshReader.read(retainingCount: policyHistory.count"))
         for intent in ["refresh", "policy", "issuances"] {
             XCTAssertTrue(detail.contains("historyRetry = .\(intent)"))
         }

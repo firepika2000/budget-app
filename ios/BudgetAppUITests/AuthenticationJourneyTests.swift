@@ -1926,12 +1926,13 @@ final class AuthenticationJourneyTests: XCTestCase {
     }
 
     func testProductionDemoAllowanceIssuePauseAndReopenUsesSharedHouseholdFlow() {
+        continueAfterFailure = false
         let app = XCUIApplication()
-        app.launchArguments = ["--demo", "--demo-screen=home"]
+        app.launchArguments = ["--demo", "--demo-screen=household", "--skip-guided-onboarding"]
         app.launch()
-        app.buttons["profile-settings-button"].tap()
-        app.buttons["Household and access"].tap()
+        XCTAssertTrue(app.navigationBars["Household"].waitForExistence(timeout: 5))
         let allowances = app.buttons["allowance-management"]
+        for _ in 0..<6 where !allowances.isHittable { app.swipeUp() }
         XCTAssertTrue(allowances.waitForExistence(timeout: 5)); allowances.tap()
         XCTAssertTrue(app.navigationBars["Allowances"].waitForExistence(timeout: 5))
         app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Alex weekly allowance")).firstMatch.tap()

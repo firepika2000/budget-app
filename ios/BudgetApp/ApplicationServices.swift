@@ -777,6 +777,28 @@ struct DelegatedPolicyEditorDraft {
 }
 
 @MainActor
+enum HistoryRefreshReader {
+    static func read<Row: Identifiable & Sendable>(retainingCount: Int, pageSize: Int,
+        fetch: @MainActor (Int, Int) async throws -> [Row]) async throws -> [Row] {
+        let limit = max(1, min(pageSize, 100)), desired = max(1, retainingCount)
+        var rows: [Row] = []
+        repeat {
+            try Task.checkCancellation()
+            let page = try await fetch(limit, rows.count)
+            try Task.checkCancellation()
+            let ids = rows.map(\.id) + page.map(\.id)
+            guard page.count <= limit, Set(ids).count == ids.count else {
+                throw NSError(domain: "HistoryRefresh", code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: "History returned an invalid page. Refresh to try again."])
+            }
+            rows += page
+            if page.count < limit { break }
+        } while rows.count < desired
+        return rows
+    }
+}
+
+@MainActor
 final class DecisionHistoryPager<Row: Identifiable & Sendable>: ObservableObject {
     @Published private(set) var rows: [Row] = []
     @Published private(set) var loading = false

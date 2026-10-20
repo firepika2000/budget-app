@@ -14806,7 +14806,7 @@ private struct LiveHouseholdOverviewView: View {
                     Text("Choose a member above to review exactly what they can see and change.").font(.footnote).foregroundStyle(.secondary)
                 }
             }
-            if session.sourceMode == .liveServer && store.budget.can("manage_allowances") {
+            if session.sourceMode != .localDevice && store.budget.can("manage_allowances") {
                 Section("Shared money") {
                     NavigationLink { AllowanceManagementView(store: store) } label: { Label("Allowances", systemImage: "calendar.badge.clock") }
                         .accessibilityIdentifier("allowance-management")
@@ -15126,17 +15126,20 @@ private struct AllowanceDetailView: View {
         loadingHistory = true; loadingOlderPolicy = false; loadingOlderIssuances = false
         defer { if historyRequestID == id { loadingHistory = false } }
         do {
-            async let issuances = store.allowanceIssuances(id: planID, limit: historyPageSize, offset: 0)
-            async let changes = store.allowancePlanHistory(id: planID, limit: historyPageSize, offset: 0)
+            async let issuances = HistoryRefreshReader.read(retainingCount: history.count, pageSize: historyPageSize) { limit, offset in
+                let page = try await store.allowanceIssuances(id: planID, limit: limit, offset: offset)
+                guard historyRequestID == id, context == historyContext else { throw CancellationError() }
+                return page
+            }
+            async let changes = HistoryRefreshReader.read(retainingCount: policyHistory.count, pageSize: historyPageSize) { limit, offset in
+                let page = try await store.allowancePlanHistory(id: planID, limit: limit, offset: offset)
+                guard historyRequestID == id, context == historyContext else { throw CancellationError() }
+                return page
+            }
             let (issuanceRows, policyRows) = try await (issuances, changes)
             guard historyRequestID == id, context == historyContext, !Task.isCancelled else { return }
-            guard issuanceRows.count <= historyPageSize, policyRows.count <= historyPageSize,
-                  Set(issuanceRows.map(\.id)).count == issuanceRows.count,
-                  Set(policyRows.map(\.id)).count == policyRows.count else {
-                throw workspaceRepositoryError("Allowance history returned an invalid page. Refresh to try again.")
-            }
-            history = issuanceRows; hasOlderIssuances = history.count == historyPageSize
-            policyHistory = policyRows; hasOlderPolicy = policyHistory.count == historyPageSize
+            history = issuanceRows; hasOlderIssuances = !history.isEmpty && history.count % historyPageSize == 0
+            policyHistory = policyRows; hasOlderPolicy = !policyHistory.isEmpty && policyHistory.count % historyPageSize == 0
             historyError = nil
         } catch {
             if historyRequestID == id, context == historyContext, !(error is CancellationError) {
