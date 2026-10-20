@@ -14,6 +14,56 @@ import CryptoKit
 /// recovered the session. These tests lock in the single-flight fix and the clean sign-in transition.
 final class AppSessionRefreshTests: XCTestCase {
     @MainActor
+    func testColdWorkspaceShowsSavedObservationsBeforeNetworkAndHonorsDenialQuarantine() async throws {
+        for hasAccount in [true, false] {
+            let phase = Counter(), gate = Gate(), deniedGate = Gate()
+            RefreshMockURLProtocol.handler = { request in
+                let path = request.url!.path
+                if path.hasSuffix("/accounts") {
+                    if phase.value == 1 { gate.signalArrived(); gate.waitForRelease() }
+                    if phase.value == 3 { deniedGate.signalArrived(); deniedGate.waitForRelease() }
+                    if phase.value >= 2 { return Self.json(403, #"{"detail":"Revoked"}"#) }
+                    if !hasAccount { return Self.json(200, "[]") }
+                }
+                if path.hasSuffix("/account-balances"), !hasAccount { return Self.json(200, "[]") }
+                if path.contains("/months/"), !hasAccount {
+                    return Self.json(200, #"{"month":"2026-10-01","currency_code":"USD","ready_to_assign_minor":0,"total_assigned_minor":0,"total_overspent_minor":0,"allocation_version":0,"categories":[]}"#)
+                }
+                return Self.workspaceResponse(path)
+            }
+            let configuration = URLSessionConfiguration.ephemeral; configuration.protocolClasses = [RefreshMockURLProtocol.self]
+            let transport = URLSession(configuration: configuration)
+            let url = URL(string: "https://cache-first-\(UUID().uuidString.lowercased()).example.com")!
+            func workspace() -> BudgetWorkspaceStore {
+                BudgetWorkspaceStore.production(context: .live(budget: .init(id: "b1", householdID: "h1", name: "Home", currencyCode: "USD"), serverURL: url, token: "current-token"),
+                    clientFactory: { try APIClient(baseURL: $0, session: transport) })
+            }
+            let seed = workspace(); await seed.refresh()
+            XCTAssertNil(seed.errorMessage)
+            let saved = try XCTUnwrap(seed.summary)
+            _ = phase.increment()
+            let reopened = workspace()
+            let refresh = Task { await reopened.refresh() }
+            await gate.awaitArrival()
+            XCTAssertEqual(reopened.summary, saved, "Saved data must render before the blocked network response")
+            XCTAssertEqual(reopened.accounts, seed.accounts)
+            XCTAssertEqual(reopened.accountBalances, seed.accountBalances)
+            XCTAssertFalse(reopened.isLoading); XCTAssertTrue(reopened.isBackgroundSyncing)
+            XCTAssertEqual(reopened.syncStatusMessage, "Saved data · connecting to your server…")
+            gate.releaseNow(); await refresh.value
+            _ = phase.increment(); await reopened.refresh()
+            XCTAssertTrue(reopened.workspaceAccessDenied); XCTAssertNil(reopened.summary)
+            _ = phase.increment()
+            let revokedCold = workspace()
+            let deniedRefresh = Task { await revokedCold.refresh() }
+            await deniedGate.awaitArrival()
+            XCTAssertNil(revokedCold.summary, "A durable denial must block cache-first publication")
+            XCTAssertTrue(revokedCold.accounts.isEmpty)
+            deniedGate.releaseNow(); await deniedRefresh.value
+            XCTAssertTrue(revokedCold.workspaceAccessDenied)
+        }
+    }
+    @MainActor
     func testLiveFundingRequestNeverPostsToUnsupportedServerAndRetainsReview() async throws {
         let posts = FundingRequestPostRecorder()
         FundingRequestMockURLProtocol.handler = { request in

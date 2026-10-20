@@ -4547,19 +4547,22 @@ private final class LiveWorkspaceDataSource: WorkspaceDataSource {
             return snapshot
         } catch where isTransientConnectivityFailure(error) {
             guard revision == budgetAuthorityRevision else { throw CancellationError() }
-            let cached = try readCache.load(planMonth: month)
-            try LiveCoreObservations.requireBalanceCoverage(accounts: cached.accounts, balances: Array(cached.accountBalances.values), canView: budget.can("view_account_balances"))
+            let snapshot = try savedCoreSnapshot(planMonth: planMonth)
             lastReadWasCached = true
-            return WorkspaceSnapshot(
-                accounts: cached.accounts, accountBalances: cached.accountBalances,
-                categories: cached.categories, groups: cached.groups,
-                transactions: cached.transactions, summary: cached.summary,
-                requests: [], allowances: [], spending: nil, spendingTrends: nil, income: nil,
-                netWorth: nil, debt: nil, planPerformance: nil, resilience: nil,
-                delegated: nil, forecast: cached.forecast, members: [], delegatedBudgets: [],
-                targets: cached.targets, schedules: cached.schedules
-            )
+            return snapshot
         }
+    }
+
+    func savedCoreSnapshot(planMonth: Date) throws -> WorkspaceSnapshot {
+        let month = String(BudgetWorkspaceStore.dateString(planMonth).prefix(7)) + "-01"
+        let cached = try readCache.load(planMonth: month)
+        try LiveCoreObservations.requireBalanceCoverage(accounts: cached.accounts,
+            balances: Array(cached.accountBalances.values), canView: budget.can("view_account_balances"))
+        return WorkspaceSnapshot(accounts: cached.accounts, accountBalances: cached.accountBalances,
+            categories: cached.categories, groups: cached.groups, transactions: cached.transactions, summary: cached.summary,
+            requests: [], allowances: [], spending: nil, spendingTrends: nil, income: nil, netWorth: nil, debt: nil,
+            planPerformance: nil, resilience: nil, delegated: nil, forecast: cached.forecast, members: [],
+            delegatedBudgets: [], targets: cached.targets, schedules: cached.schedules)
     }
 
     private func loadSnapshot(planMonth: Date, report: WorkspaceReportQuery, kinds: Set<WorkspaceReportKind>) async throws -> WorkspaceSnapshot {
@@ -5042,7 +5045,8 @@ final class BudgetWorkspaceStore: ObservableObject {
     private func loadSnapshot() async {
         let operationID = UUID()
         snapshotOperationID = operationID
-        let hasVisibleWorkspace = !accounts.isEmpty || !categories.isEmpty || !transactions.isEmpty
+        primeSavedWorkspace()
+        let hasVisibleWorkspace = summary != nil || !accounts.isEmpty || !categories.isEmpty || !transactions.isEmpty
         let isLiveBackgroundRefresh = dataSource is LiveWorkspaceDataSource && hasVisibleWorkspace
         isLoading = !isLiveBackgroundRefresh
         if isLiveBackgroundRefresh { isBackgroundSyncing = true }
@@ -5109,7 +5113,7 @@ final class BudgetWorkspaceStore: ObservableObject {
                 (dataSource as? LiveWorkspaceDataSource)?.evictAuthorizedCache()
                 evictUnauthorizedObservations()
             }
-            if isTransientConnectivityFailure(error), (!accounts.isEmpty || !categories.isEmpty || !transactions.isEmpty) {
+            if isTransientConnectivityFailure(error), (summary != nil || !accounts.isEmpty || !categories.isEmpty || !transactions.isEmpty) {
                 isWorkingOffline = true
                 pendingSyncCount = (commandRepository as? LiveWorkspaceCommandRepository)?.pendingTransactionCount ?? pendingSyncCount
                 syncStatusMessage = pendingSyncCount > 0
@@ -5121,6 +5125,20 @@ final class BudgetWorkspaceStore: ObservableObject {
                 errorMessage = error.localizedDescription
             }
         }
+    }
+
+    private func primeSavedWorkspace() {
+        guard !workspaceAccessDenied, summary == nil, accounts.isEmpty, categories.isEmpty, transactions.isEmpty,
+              let live = dataSource as? LiveWorkspaceDataSource,
+              let value = try? live.savedCoreSnapshot(planMonth: planMonth) else { return }
+        // The cache enforces the existing server/actor/access scope, denial quarantine and month.
+        // It is a saved observation, never a local projection of unaccepted commands.
+        accounts = value.accounts; accountBalances = value.accountBalances
+        categories = value.categories; groups = value.groups; transactions = value.transactions
+        summary = value.summary; forecast = value.forecast; scheduledTransactions = value.schedules
+        targets = Dictionary(uniqueKeysWithValues: value.targets.map { ($0.categoryID, $0) })
+        isWorkingOffline = true
+        syncStatusMessage = "Saved data · connecting to your server…"
     }
 
     static func scopeShrank(previous: [String], current: [String]) -> Bool {
