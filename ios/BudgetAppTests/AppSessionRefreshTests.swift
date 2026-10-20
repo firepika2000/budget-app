@@ -1967,6 +1967,49 @@ final class AppSessionRefreshTests: XCTestCase {
         XCTAssertLessThanOrEqual(try FileManager.default.contentsOfDirectory(atPath: directory.path).count, 50)
     }
 
+    func testLiveCoreHydrationRequestsOnlyGrantedResources() async throws {
+        for (capabilities, expected) in [
+            (["view_budget"], Set<String>()),
+            (["view_budget", "view_accounts"], Set(["/api/v1/budgets/b/accounts"])),
+            (["view_budget", "view_categories"], Set(["/api/v1/budgets/b/categories", "/api/v1/budgets/b/category-groups"])),
+            (["view_budget", "view_transactions"], Set(["/api/v1/budgets/b/transactions/search"]))
+        ] {
+            let recorder = CredentialRequestRecorder()
+            RefreshMockURLProtocol.handler = { request in
+                let path = request.url!.path
+                recorder.append(path: path, authorization: request.value(forHTTPHeaderField: "Authorization") ?? "")
+                XCTAssertTrue(expected.contains(path), "Forbidden resource was requested: \(path)")
+                return Self.json(200, path.hasSuffix("/search") ? #"{"items":[],"next_cursor":null,"total_count":0}"# : "[]")
+            }
+            let configuration = URLSessionConfiguration.ephemeral
+            configuration.protocolClasses = [RefreshMockURLProtocol.self]
+            let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: URLSession(configuration: configuration))
+            let budget = APIBudget(id: "b", householdID: "h", name: "Scoped", currencyCode: "USD", effectivePermission: .view, capabilities: capabilities)
+            let value = try await LiveCoreObservations.load(budget: budget, month: "2026-10-01", client: client, credential: { "current" })
+            XCTAssertEqual(Set(recorder.paths), expected)
+            XCTAssertTrue(recorder.authorizations.allSatisfy { $0 == "Bearer current" })
+            XCTAssertTrue(value.accounts.isEmpty)
+            XCTAssertTrue(value.transactions.isEmpty)
+            XCTAssertNil(value.summary)
+        }
+        let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("BudgetApp/BudgetWorkspaceView.swift")
+        XCTAssertTrue(try String(contentsOf: file).contains("async let loadedCore = LiveCoreObservations.load"))
+    }
+
+    func testLiveCoreHydrationDoesNotHideFailureOfGrantedResource() async throws {
+        RefreshMockURLProtocol.handler = { _ in Self.json(403, #"{"detail":"Permission revoked"}"#) }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [RefreshMockURLProtocol.self]
+        let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: URLSession(configuration: configuration))
+        let budget = APIBudget(id: "b", householdID: "h", name: "Scoped", currencyCode: "USD", effectivePermission: .view, capabilities: ["view_budget", "view_accounts"])
+        do {
+            _ = try await LiveCoreObservations.load(budget: budget, month: "2026-10-01", client: client, credential: { "current" })
+            XCTFail("A granted resource failure must propagate")
+        } catch let error as APIClientError {
+            guard case .server(status: 403, message: _) = error else { return XCTFail("Unexpected error: \(error)") }
+        }
+    }
+
     @MainActor
     func testLiveWorkspaceReadCacheSurvivesRelaunchWithoutInventingAuthority() throws {
         let directory = FileManager.default.temporaryDirectory

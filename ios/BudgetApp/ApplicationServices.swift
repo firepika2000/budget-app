@@ -4,6 +4,24 @@ import Foundation
 import CryptoKit
 import Combine
 
+struct LiveCoreObservations {
+    let accounts: [APIAccount]
+    let transactions: [APITransaction]
+    let categories: [APICategory]
+    let groups: [APICategoryGroup]
+    let summary: APIMonthSummary?
+
+    static func load(budget: APIBudget, month: String, client: APIClient,
+                     credential: @escaping @Sendable () async throws -> String) async throws -> Self {
+        async let accounts: [APIAccount] = budget.can("view_accounts") ? client.accounts(budgetID: budget.id, token: try await credential()) : []
+        async let transactions: [APITransaction] = budget.can("view_transactions") ? client.transactionHistory(budgetID: budget.id, credential: credential) : []
+        async let categories: [APICategory] = budget.can("view_categories") ? client.categories(budgetID: budget.id, token: try await credential()) : []
+        async let groups: [APICategoryGroup] = budget.can("view_categories") ? client.categoryGroups(budgetID: budget.id, token: try await credential()) : []
+        async let summary: APIMonthSummary? = budget.can("view_reports") ? client.monthSummary(budgetID: budget.id, month: month, token: try await credential()) : nil
+        return try await Self(accounts: accounts, transactions: transactions, categories: categories, groups: groups, summary: summary)
+    }
+}
+
 func normalizedCategoryName(_ value: String) -> String {
     value.trimmingCharacters(in: .whitespacesAndNewlines)
         .lowercased(with: Locale(identifier: "en_US_POSIX"))

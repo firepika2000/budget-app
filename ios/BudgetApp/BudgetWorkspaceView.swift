@@ -4535,14 +4535,11 @@ private final class LiveWorkspaceDataSource: WorkspaceDataSource {
         try await credentials.prepare()
         let client = try credentials.client()
         let month = BudgetWorkspaceStore.dateString(planMonth).prefix(7) + "-01"
-        async let loadedAccounts = client.accounts(budgetID: budget.id, token: token)
-        async let loadedTransactions = client.transactionHistory(budgetID: budget.id, credential: { await self.token })
-        async let loadedCategories = client.categories(budgetID: budget.id, token: token)
-        async let loadedGroups = client.categoryGroups(budgetID: budget.id, token: token)
-        async let loadedSummary = client.monthSummary(budgetID: budget.id, month: String(month), token: token)
+        async let loadedCore = LiveCoreObservations.load(budget: budget, month: String(month), client: client, credential: { await self.token })
         async let loadedReports = self.reports(planMonth: planMonth, query: report, kinds: kinds)
-        let (accounts, transactions, categories, groups, summary, reports) = try await
-            (loadedAccounts, loadedTransactions, loadedCategories, loadedGroups, loadedSummary, loadedReports)
+        let (core, reports) = try await (loadedCore, loadedReports)
+        let accounts = core.accounts, transactions = core.transactions, categories = core.categories, groups = core.groups
+        let summary = core.summary
         let spending = reports.spending, spendingTrends = reports.spendingTrends, income = reports.income
         let netWorth = reports.netWorth, debt = reports.debt, planPerformance = reports.planPerformance, resilience = reports.resilience
         let allocationPage = budget.can("view_allocation_history")
