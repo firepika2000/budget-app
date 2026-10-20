@@ -1,6 +1,77 @@
 # Production readiness mission ledger
 
-## Current import and payee checkpoint
+## Current workspace checkpoint
+
+Inspected implementation: `31b6c01` on `codex/development`. App and widget remain `0.11.0`
+build `7`; TestFlight is held. Regular Xcode 27.1 (`27A9275`) builds and executes focused tests
+on preserved iPhone 17 Pro Max `3ABD861E-D38D-4AFD-A356-959266051564`, iOS 27.0 (`24A434`).
+No Simulator or Live data reset, merge, tag, or release is part of these checkpoints.
+
+Account registers now use shared, validated 50-row pagination (`84da61e`). Three native paging
+checks and the production register Clear/Unclear/reconciliation XCUITest executed and passed.
+Category and payee previews fetch at most 20 and 10 authorized rows respectively (`a099636`),
+preserving split attribution and View All navigation; two focused native checks passed. Transaction
+and transfer detail can fetch missing identities without reloading all history (`0f696b4`,
+`363f802`). Transfer lookup preserves budget/account scope and rejects an older server ignoring
+the filter. Verification included 17 backend, 125 API, and two native checks.
+
+Exact server-returned transaction pages survive temporary connectivity failures (`3a89b29`). The
+protected cache is scoped to server/user/budget, access revision, filters and cursor, with a
+50-page, 20 MB retention budget and 2 MB per-page ceiling. Previously unvisited searches still
+need connectivity. Authorization denial persists quarantine across relaunch, even if an old page
+file remains. Three focused native cache tests and 125 API tests passed. This cache neither
+recomputes financial semantics nor turns queued edits into accepted transactions.
+
+Account balance presentation requires its explicit capability, including dismissal of open
+reconciliation sheets when that capability is revoked (`b94d00b`). Core hydration requests only
+granted accounts, transactions, categories/groups and month summary (`31b6c01`), while failures of
+granted resources still propagate. Each checkpoint passed two focused native tests. These checks
+do not establish complete human acceptance of every custom household profile.
+
+Server payee observations stream exact scalar values instead of hydrating transaction/split
+objects (`941cbcb`). Rename and merge bound both loaded and dirty transaction entities to batches
+of 500 without intermediate commits (`cc94eca`). The populated fixture preserves every audit,
+amount and unrelated field, and rolls back an injected later-batch failure. The latter focused
+payee/access/migration run passed 31 tests. Payee-driven changes also append canonical schedule
+history, including paused schedules, without realizing money (`4362ca6`): 53 focused backend checks
+and one native lifecycle test passed. Test counts describe overlapping focused runs, not a full
+release-wide suite or a new human acceptance pass.
+
+### Remaining startup memory work
+
+Live core hydration still calls complete `transactionHistory`; paged screens alone do not close
+that memory gap. Reducing the startup array must also preserve:
+
+- pending-command detail visibility, which currently checks transaction IDs and transfer pairs
+  against loaded observations; these are presentation checks, not server replay authorization;
+- historical payee category suggestions, which currently inspect the latest eligible transactions
+  in that array;
+- exact account balance observations, without deriving balances from a partial page;
+- recent Home activity ordering, offline observations and current permission scope.
+
+No fixed-size truncation is an acceptable substitute for those contracts. Live Dropbox acceptance,
+deployment recovery, Windows runtime/signing, accessibility/platform acceptance and the commercial
+product decision remain separate open gates.
+
+### Consolidated checks for the new workspace paths
+
+Use existing disposable fixtures; retain all previously recorded human acceptance.
+
+1. In a register with more than 50 entries, load another page, open an older transaction and its
+   transfer counterpart if applicable, then return. Check category split and payee previews and
+   their View All destinations. Existing clearing/reconciliation acceptance need not restart from zero.
+2. Visit an Activity query and detail online, disconnect, and reopen the same query after relaunch.
+   Confirm the saved-results notice and retained data. An unvisited query must request connectivity,
+   not fabricate matches. Restore connectivity and refresh through the normal session lifecycle.
+3. With an existing restricted member, verify permitted transaction access without account totals,
+   and that revoked balance access closes any reconciliation sheet. With a disposable linked payee
+   and paused schedule, inspect rename/merge history without realizing a scheduled transaction.
+
+These flows remain human checks, not completed results. The independent live Dropbox recovery flow
+and deployment gates remain required. Current app changes require a rebuild; server payee/history
+and transfer-filter changes require deployment, but no new migration was introduced.
+
+## Import and local payee checkpoints
 
 Implementation checkpoint `f1ae5c6` includes Local Device import ownership checks, exact financial
 batch rollback, atomic approval/undo publication, conditional stale-review rejection, explicit
@@ -11,7 +82,7 @@ that their subsequently resolved gaps remain unimplemented.
 
 The current app/widget identity is `0.11.0` build `7`, on `codex/development`; TestFlight remains
 held. Regular Xcode 27.1 (`27A9275`) at `/Applications/Xcode.app/Contents/Developer` compiled the
-app and native tests. The final two alias/payee tests executed successfully on preserved simulator
+app and native tests. The alias/payee checkpoint's two native tests executed successfully on preserved simulator
 `3ABD861E-D38D-4AFD-A356-959266051564`, iOS 27.0 build `24A434`. CoreSimulator's stale service
 was replaced by the authorized tool's normal version-change handling; no device erase was used.
 
@@ -20,10 +91,6 @@ hydration in one SQLite transaction. It preserves original transaction text and 
 columns, reuses archived and merged identities without reactivation, and skips ambiguous names,
 transfers, reversals and known system entries. Twenty-four database tests and two native tests
 passed, including production hydration and reopening. No schema migration is required.
-
-Live core hydration still materializes the complete authorized transaction history. Bounded
-network pages do not close that memory-scaling gap; a redesign must preserve complete authoritative
-balances without silently truncating the ledger.
 
 Live Dropbox acceptance, deployment-specific recovery, Windows runtime/signing, broader accessibility
 and human platform acceptance remain separate gates. StoreKit still requires the documented
