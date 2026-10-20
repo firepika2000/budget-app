@@ -1755,6 +1755,7 @@ struct LiveWorkspaceCachePayload: Codable {
     let targets: [APICategoryTarget]
     let schedules: [APIScheduledTransaction]
     let forecast: APIForecast?
+    let requests: [APIFinancialRequest]?
 }
 
 /// File-protected last-known authorized observation. It is display-only: permissions and all
@@ -1786,7 +1787,8 @@ final class LiveWorkspaceReadCache {
             savedAt: Date(), accessRevision: accessRevision, planMonth: planMonth, accounts: snapshot.accounts,
             accountBalances: snapshot.accountBalances, categories: snapshot.categories,
             groups: snapshot.groups, transactions: snapshot.transactions, summary: snapshot.summary,
-            targets: snapshot.targets, schedules: snapshot.schedules, forecast: snapshot.forecast
+            targets: snapshot.targets, schedules: snapshot.schedules, forecast: snapshot.forecast,
+            requests: snapshot.requests
         )
         try FileManager.default.createDirectory(
             at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true

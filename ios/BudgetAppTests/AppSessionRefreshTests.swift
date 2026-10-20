@@ -14,11 +14,41 @@ import CryptoKit
 /// recovered the session. These tests lock in the single-flight fix and the clean sign-in transition.
 final class AppSessionRefreshTests: XCTestCase {
     @MainActor
+    func testAuthorizedRequestCachePreservesHistoryAndLegacyCompatibility() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("request-cache-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("cache.json")
+        let request = try JSONDecoder().decode(APIFinancialRequest.self, from: Data(#"{"id":"r1","requester_user_id":"member","requester_display_name":"Member","request_type":"additional_allocation","destination_category_id":"c1","requested_amount_minor":9007199254740993,"reason":"Saved authorized reason","status":"pending","version":0,"actions":[{"id":"decision","actor_user_id":"member","actor_display_name":"Member","action":"submitted","amount_minor":9007199254740993,"note":"Reviewed","created_at":"2026-10-20T12:00:00Z"}]}"#.utf8))
+        let cache = LiveWorkspaceReadCache(fileURL: file, accessRevision: "scope-a")
+        let snapshot = WorkspaceSnapshot(accounts: [], accountBalances: [:], categories: [], groups: [], transactions: [],
+            summary: nil, requests: [request], allowances: [], spending: nil, spendingTrends: nil, income: nil,
+            netWorth: nil, debt: nil, planPerformance: nil, resilience: nil, delegated: nil, forecast: nil,
+            members: [], delegatedBudgets: [])
+        try cache.save(snapshot)
+        let restored = try LiveWorkspaceReadCache(fileURL: file, accessRevision: "scope-a").load()
+        XCTAssertEqual(restored.requests, [request])
+        XCTAssertEqual(restored.requests?.first?.actions.first?.amountMinor, 9_007_199_254_740_993)
+        XCTAssertThrowsError(try LiveWorkspaceReadCache(fileURL: file, accessRevision: "scope-b").load())
+        let saved = try Data(contentsOf: file)
+        var legacy = try XCTUnwrap(JSONSerialization.jsonObject(with: saved) as? [String: Any])
+        legacy.removeValue(forKey: "requests")
+        try JSONSerialization.data(withJSONObject: legacy).write(to: file)
+        XCTAssertNil(try cache.load().requests, "Old cache files remain readable without inventing request history")
+        cache.remove()
+        try saved.write(to: file)
+        XCTAssertThrowsError(try LiveWorkspaceReadCache(fileURL: file, accessRevision: "scope-a").load(),
+                             "Restoring cached bytes cannot bypass the durable denial marker")
+    }
+
+    @MainActor
     func testColdWorkspaceShowsSavedObservationsBeforeNetworkAndHonorsDenialQuarantine() async throws {
         for hasAccount in [true, false] {
             let phase = Counter(), gate = Gate(), deniedGate = Gate()
             RefreshMockURLProtocol.handler = { request in
                 let path = request.url!.path
+                if path.hasSuffix("/requests"), hasAccount {
+                    return Self.json(200, #"[{"id":"r1","requester_user_id":"member","request_type":"additional_allocation","destination_category_id":"c1","requested_amount_minor":100,"reason":"Authorized request","status":"pending","version":0,"actions":[]}]"#)
+                }
                 if path.hasSuffix("/accounts") {
                     if phase.value == 1 { gate.signalArrived(); gate.waitForRelease() }
                     if phase.value == 3 { deniedGate.signalArrived(); deniedGate.waitForRelease() }
@@ -48,17 +78,21 @@ final class AppSessionRefreshTests: XCTestCase {
             XCTAssertEqual(reopened.summary, saved, "Saved data must render before the blocked network response")
             XCTAssertEqual(reopened.accounts, seed.accounts)
             XCTAssertEqual(reopened.accountBalances, seed.accountBalances)
+            XCTAssertEqual(reopened.requests, seed.requests)
+            XCTAssertEqual(reopened.requests.count, hasAccount ? 1 : 0)
             XCTAssertFalse(reopened.isLoading); XCTAssertTrue(reopened.isBackgroundSyncing)
             XCTAssertEqual(reopened.syncStatusMessage, "Saved data · connecting to your server…")
             gate.releaseNow(); await refresh.value
             _ = phase.increment(); await reopened.refresh()
             XCTAssertTrue(reopened.workspaceAccessDenied); XCTAssertNil(reopened.summary)
+            XCTAssertTrue(reopened.requests.isEmpty)
             _ = phase.increment()
             let revokedCold = workspace()
             let deniedRefresh = Task { await revokedCold.refresh() }
             await deniedGate.awaitArrival()
             XCTAssertNil(revokedCold.summary, "A durable denial must block cache-first publication")
             XCTAssertTrue(revokedCold.accounts.isEmpty)
+            XCTAssertTrue(revokedCold.requests.isEmpty)
             deniedGate.releaseNow(); await deniedRefresh.value
             XCTAssertTrue(revokedCold.workspaceAccessDenied)
         }

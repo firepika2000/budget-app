@@ -2514,7 +2514,7 @@ struct APIFinancialRequestRevision: Encodable {
     enum CodingKeys: String, CodingKey { case reason; case requestType = "request_type", destinationCategoryID = "destination_category_id", requestedAmountMinor = "requested_amount_minor", expectedRequestVersion = "expected_request_version" }
 }
 
-public struct APIRequestAction: Identifiable, Decodable, Equatable, Sendable {
+public struct APIRequestAction: Identifiable, Codable, Equatable, Sendable {
     public let id: String
     public let actorUserID: String?
     public let actorDisplayName: String?
@@ -2532,7 +2532,7 @@ public struct APIRequestAction: Identifiable, Decodable, Equatable, Sendable {
     }
 }
 
-public struct APIFinancialRequest: Identifiable, Decodable, Equatable, Sendable {
+public struct APIFinancialRequest: Identifiable, Codable, Equatable, Sendable {
     public let id: String
     public let requesterUserID: String
     public let requesterDisplayName: String?

@@ -4560,7 +4560,7 @@ private final class LiveWorkspaceDataSource: WorkspaceDataSource {
             balances: Array(cached.accountBalances.values), canView: budget.can("view_account_balances"))
         return WorkspaceSnapshot(accounts: cached.accounts, accountBalances: cached.accountBalances,
             categories: cached.categories, groups: cached.groups, transactions: cached.transactions, summary: cached.summary,
-            requests: [], allowances: [], spending: nil, spendingTrends: nil, income: nil, netWorth: nil, debt: nil,
+            requests: cached.requests ?? [], allowances: [], spending: nil, spendingTrends: nil, income: nil, netWorth: nil, debt: nil,
             planPerformance: nil, resilience: nil, delegated: nil, forecast: cached.forecast, members: [],
             delegatedBudgets: [], targets: cached.targets, schedules: cached.schedules)
     }
@@ -5135,7 +5135,7 @@ final class BudgetWorkspaceStore: ObservableObject {
         // It is a saved observation, never a local projection of unaccepted commands.
         accounts = value.accounts; accountBalances = value.accountBalances
         categories = value.categories; groups = value.groups; transactions = value.transactions
-        summary = value.summary; forecast = value.forecast; scheduledTransactions = value.schedules
+        summary = value.summary; forecast = value.forecast; scheduledTransactions = value.schedules; requests = value.requests
         targets = Dictionary(uniqueKeysWithValues: value.targets.map { ($0.categoryID, $0) })
         isWorkingOffline = true
         syncStatusMessage = "Saved data · connecting to your server…"
