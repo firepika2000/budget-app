@@ -417,6 +417,43 @@ final class DemoStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testScopedHistoryRefreshDropsEditedFilterMismatchWithoutChangingMoney() async throws {
+        let source = DemoWorkspaceDataSource()
+        let operation = RecordTransactionOperation(accountID: "checking", categoryID: "groceries", amountMinor: -100,
+            occurredOn: "2026-09-15", payeeName: "Unique refresh merchant", memo: "", isCleared: false,
+            splits: [], flag: nil, tags: [], attachmentMetadata: [])
+        try await source.recordTransaction(operation)
+        let query = APITransactionQuery(search: "Unique refresh merchant", limit: 50)
+        let pager = TransactionHistoryPager()
+        await pager.load(query: query, reset: true) { try await source.browseTransactions(query: $0) }
+        let row = try XCTUnwrap(pager.rows.first)
+        XCTAssertEqual(pager.totalCount, 1)
+        let accounts = source.demo.accounts
+        let edited = RecordTransactionOperation(accountID: "checking", categoryID: "groceries", amountMinor: -100,
+            occurredOn: "2026-09-15", payeeName: "Unique refresh merchant", memo: "Updated in shared editor", isCleared: false,
+            splits: [], flag: nil, tags: [], attachmentMetadata: [])
+        try await source.updateTransaction(id: row.id, operation: edited)
+        await pager.load(query: query, reset: true, preserveDepth: true) { try await source.browseTransactions(query: $0) }
+        XCTAssertEqual(pager.rows.first?.memo, "Updated in shared editor")
+        let renamed = RecordTransactionOperation(accountID: "checking", categoryID: "groceries", amountMinor: -100,
+            occurredOn: "2026-09-15", payeeName: "Different merchant", memo: "Updated in shared editor", isCleared: false,
+            splits: [], flag: nil, tags: [], attachmentMetadata: [])
+        try await source.updateTransaction(id: row.id, operation: renamed)
+        await pager.load(query: query, reset: true, preserveDepth: true) { try await source.browseTransactions(query: $0) }
+        XCTAssertTrue(pager.rows.isEmpty)
+        XCTAssertEqual(pager.totalCount, 0)
+        XCTAssertEqual(source.demo.accounts, accounts)
+        let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("BudgetApp/BudgetWorkspaceView.swift")
+        let text = try String(contentsOf: file)
+        let start = try XCTUnwrap(text.range(of: "private struct ScopedTransactionHistoryView: View"))
+        let end = try XCTUnwrap(text.range(of: "private struct TransactionHistoryRows: View"))
+        let view = String(text[start.lowerBound..<end.lowerBound])
+        XCTAssertTrue(view.contains("\\(filter.description)|\\(store.reportRevision)"))
+        XCTAssertTrue(view.contains("preserveDepth: true"))
+        XCTAssertTrue(view.contains("if loadedFilter != filter.description"))
+    }
+
+    @MainActor
     func testRegisterRefreshPreservesOpenedDepthAndPublishesAtomically() async throws {
         let store = BudgetWorkspaceStore.demo()
         await store.refresh()

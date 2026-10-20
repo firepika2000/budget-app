@@ -10627,13 +10627,20 @@ private struct ScopedTransactionHistoryView: View {
     let title: String
     let filter: TransactionBrowserFilter
     @StateObject private var history = TransactionHistoryPager()
+    @State private var loadedFilter: String?
 
     var body: some View {
         List { TransactionHistoryRows(history: history, onLoad: load) }
             .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
             .accessibilityIdentifier("scoped-transaction-history")
-            .task(id: filter.description) { await load(true) }
+            .task(id: "\(filter.description)|\(store.reportRevision)") {
+                if loadedFilter != filter.description {
+                    history.clear()
+                    loadedFilter = filter.description
+                }
+                await load(true)
+            }
             .refreshable { await load(true) }
             .onChange(of: store.authorityRevision) { _, _ in
                 history.clear()
@@ -10641,7 +10648,7 @@ private struct ScopedTransactionHistoryView: View {
             }
     }
     private func load(_ reset: Bool) async {
-        await history.load(query: filter.query(search: "", currencyCode: store.budget.currencyCode, cursor: nil), reset: reset) {
+        await history.load(query: filter.query(search: "", currencyCode: store.budget.currencyCode, cursor: nil), reset: reset, preserveDepth: true) {
             try await store.browseTransactions($0)
         }
     }
