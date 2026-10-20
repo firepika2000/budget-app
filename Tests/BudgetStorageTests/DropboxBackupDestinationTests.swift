@@ -2,6 +2,45 @@ import XCTest
 @testable import BudgetStorage
 
 final class DropboxBackupDestinationTests: XCTestCase {
+    func testCancelledUploadNeverPublishesOrPrunesCommittedGenerations() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        for stage in ["manifest.json", "000000.cpenc", "start", "append", "finish"] {
+            let payload = Data(repeating: 0xa5, count: ["start", "append", "finish"].contains(stage) ? 17 * 1_024 * 1_024 : 20)
+            let package = try makePackage(root: root.appendingPathComponent(stage), name: "Cancelled.clearpocketbackup", payloads: [payload])
+            let transport = FakeDropboxBackupTransport()
+            let existing = "/Backups/Existing.clearpocketbackup"
+            await transport.seedFolder(existing)
+            await transport.cancelUpload(at: stage)
+            let destination = try DropboxBackupDestination(transport: transport, retention: 1)
+            let task = Task { try await destination.publish(packageURL: package) }
+            do { _ = try await task.value; XCTFail("Cancelled \(stage) must not publish") }
+            catch is CancellationError {}
+            let paths = await transport.paths()
+            XCTAssertTrue(paths.contains(existing))
+            XCTAssertFalse(paths.contains("/Backups/Cancelled.clearpocketbackup"))
+            XCTAssertFalse(paths.contains { $0.contains("/.upload-") })
+            let moves = await transport.moveCount()
+            XCTAssertEqual(moves, 0)
+            XCTAssertTrue(FileManager.default.fileExists(atPath: package.path))
+        }
+    }
+
+    func testCancellationAfterPublicationRetainsCommittedBackup() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let package = try makePackage(root: root, name: "Committed.clearpocketbackup", payloads: [Data("ciphertext".utf8)])
+        let transport = FakeDropboxBackupTransport()
+        await transport.cancelUpload(at: "move")
+        let destination = try DropboxBackupDestination(transport: transport)
+        let task = Task { try await destination.publish(packageURL: package) }
+        let result = try await task.value
+        XCTAssertEqual(result.remotePath, "/Backups/Committed.clearpocketbackup")
+        XCTAssertTrue(result.retentionCleanupPending)
+        let paths = await transport.paths()
+        XCTAssertTrue(paths.contains(result.remotePath))
+    }
+
     func testCancellationDuringDownloadNeverPublishesAndPreservesRemoteBackup() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("dropbox-cancel-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
@@ -345,6 +384,13 @@ private actor FakeDropboxBackupTransport: DropboxBackupTransport {
     private var downloads: [String] = []
     private var forcedPages: [DropboxBackupPage]?
     private var cancelledDownload: String?
+    private var cancelledUpload: String?
+    private var moves = 0
+    func cancelUpload(at stage: String) { cancelledUpload = stage }
+    func moveCount() -> Int { moves }
+    private func cancelIfRequested(_ stage: String) {
+        if cancelledUpload == stage { withUnsafeCurrentTask { $0?.cancel() } }
+    }
 
     init(pageSize: Int = 100, corruptUploadMetadata: Bool = false, failListing: Bool = false, loseMoveResponse: Bool = false) {
         self.pageSize = pageSize; self.corruptUploadMetadata = corruptUploadMetadata
@@ -367,29 +413,35 @@ private actor FakeDropboxBackupTransport: DropboxBackupTransport {
     func createFolder(path: String) { folders.insert(path) }
 
     func upload(path: String, data: Data) -> DropboxBackupMetadata {
+        cancelIfRequested((path as NSString).lastPathComponent)
         maximumChunk = max(maximumChunk, data.count)
         files[path] = data
         return metadata(path, data)
     }
 
     func startUploadSession(data: Data) -> String {
+        cancelIfRequested("start")
         sessionStarts += 1; maximumChunk = max(maximumChunk, data.count)
         let id = UUID().uuidString; sessions[id] = data; return id
     }
 
     func appendUploadSession(id: String, offset: Int64, data: Data) throws {
+        cancelIfRequested("append")
         maximumChunk = max(maximumChunk, data.count)
         guard Int64(sessions[id]?.count ?? -1) == offset else { throw TestError.invalidOffset }
         sessions[id, default: Data()].append(data)
     }
 
     func finishUploadSession(id: String, offset: Int64, data: Data, path: String) throws -> DropboxBackupMetadata {
+        cancelIfRequested("finish")
         try appendUploadSession(id: id, offset: offset, data: data)
         let result = sessions.removeValue(forKey: id) ?? Data(); files[path] = result
         return metadata(path, result)
     }
 
     func move(from: String, to: String) throws {
+        moves += 1
+        cancelIfRequested("move")
         guard folders.contains(from), !folders.contains(to) else { throw TestError.conflict }
         let childFolders = folders.filter { $0 == from || $0.hasPrefix(from + "/") }
         let childFiles = files.filter { $0.key.hasPrefix(from + "/") }

@@ -96,6 +96,7 @@ public actor DropboxBackupDestination {
     }
 
     public func publish(packageURL: URL) async throws -> DropboxBackupPublication {
+        try Task.checkCancellation()
         let package = packageURL.standardizedFileURL
         let packageName = package.lastPathComponent
         guard packageName.hasSuffix(".clearpocketbackup") else {
@@ -105,11 +106,14 @@ public actor DropboxBackupDestination {
         let temporaryPath = "\(folder)/.upload-\(UUID().uuidString)"
         let finalPath = "\(folder)/\(packageName)"
         try await transport.createFolder(path: folder)
-        try await transport.createFolder(path: temporaryPath)
+        try Task.checkCancellation()
         do {
+            try await transport.createFolder(path: temporaryPath)
+            try Task.checkCancellation()
             var total: Int64 = 0
             var createdParents: Set<String> = []
             for file in files {
+                try Task.checkCancellation()
                 let relative = file.path.replacingOccurrences(of: package.path + "/", with: "")
                 let remote = "\(temporaryPath)/\(relative)"
                 if relative.contains("/") {
@@ -121,11 +125,15 @@ public actor DropboxBackupDestination {
                 let expectedSize = Int64(try file.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0)
                 let expectedHash = try Self.contentHash(file)
                 let metadata = try await upload(file, to: remote, size: expectedSize)
+                try Task.checkCancellation()
                 guard metadata.size == expectedSize, metadata.contentHash.lowercased() == expectedHash else {
                     throw DropboxBackupDestinationError.integrityFailure(remote)
                 }
                 total += expectedSize
             }
+            // Cancellation before this commit point must never publish a generation.
+            // Once the move succeeds, report the committed backup even if maintenance is cancelled.
+            try Task.checkCancellation()
             do { try await transport.move(from: temporaryPath, to: finalPath) }
             catch {
                 let existing = try await allEntries(path: folder, recursive: false)
@@ -249,6 +257,7 @@ public actor DropboxBackupDestination {
     }
 
     private func upload(_ file: URL, to remote: String, size: Int64) async throws -> DropboxBackupMetadata {
+        try Task.checkCancellation()
         let handle = try FileHandle(forReadingFrom: file)
         defer { try? handle.close() }
         if size <= Int64(Self.uploadChunkBytes) {
@@ -256,14 +265,17 @@ public actor DropboxBackupDestination {
         }
         let first = try handle.read(upToCount: Self.uploadChunkBytes) ?? Data()
         let id = try await transport.startUploadSession(data: first)
+        try Task.checkCancellation()
         var offset = Int64(first.count)
         while size - offset > Int64(Self.uploadChunkBytes) {
             let chunk = try handle.read(upToCount: Self.uploadChunkBytes) ?? Data()
             guard !chunk.isEmpty else { throw DropboxBackupDestinationError.integrityFailure(remote) }
             try await transport.appendUploadSession(id: id, offset: offset, data: chunk)
+            try Task.checkCancellation()
             offset += Int64(chunk.count)
         }
         let final = try handle.readToEnd() ?? Data()
+        try Task.checkCancellation()
         return try await transport.finishUploadSession(id: id, offset: offset, data: final, path: remote)
     }
 
@@ -307,7 +319,10 @@ public actor DropboxBackupDestination {
     private func prune(excluding current: String) async throws {
         let existing = try await generations().filter { $0.path != current }
         let excess = max(0, existing.count - (retention - 1))
-        for generation in existing.suffix(excess) { try await transport.delete(path: generation.path) }
+        for generation in existing.suffix(excess) {
+            try Task.checkCancellation()
+            try await transport.delete(path: generation.path)
+        }
     }
 
     private static func validatedPackageFiles(_ package: URL) throws -> [URL] {

@@ -15,17 +15,30 @@ app and native tests. The final two alias/payee tests executed successfully on p
 `3ABD861E-D38D-4AFD-A356-959266051564`, iOS 27.0 build `24A434`. CoreSimulator's stale service
 was replaced by the authorized tool's normal version-change handling; no device erase was used.
 
-Next engineering audits remain substantive: older Local Device authorities may retain unlinked
-merchant text from before the identity correction, and Live core hydration still materializes
-the complete authorized transaction history. Neither gap is closed by searchable new payees or
-bounded network pages. Any repair must preserve stored identities, archived/merged semantics and
-exact money; any performance redesign must keep complete authoritative balances without truncation.
+Checkpoint `d80f9b0` repairs missing historical Local Device payee relationships during production
+hydration in one SQLite transaction. It preserves original transaction text and all financial
+columns, reuses archived and merged identities without reactivation, and skips ambiguous names,
+transfers, reversals and known system entries. Twenty-four database tests and two native tests
+passed, including production hydration and reopening. No schema migration is required.
+
+Live core hydration still materializes the complete authorized transaction history. Bounded
+network pages do not close that memory-scaling gap; a redesign must preserve complete authoritative
+balances without silently truncating the ledger.
 
 Live Dropbox acceptance, deployment-specific recovery, Windows runtime/signing, broader accessibility
 and human platform acceptance remain separate gates. StoreKit still requires the documented
 commercial product decision. The milestone goal is active; no merge, tag or release is implied.
 
 ## Portable recovery and Dropbox reliability
+
+Dropbox upload cancellation now stops before publication, including cancellation during a
+successful transport response, multipart start, append or finish. A successful remote move remains
+the commit point: subsequent cancellation retains the committed backup and marks retention cleanup
+pending. Temporary-folder cleanup is best effort when connectivity or cancellation prevents remote
+deletion; committed generations and the local retry package are never deleted by that cleanup.
+The regression failed at all five pre-publication stages before the fix. All 27 focused Dropbox
+destination, transport and OAuth tests now pass, and the regular Xcode 27.1 simulator test build
+passes. Real Dropbox account acceptance remains a separate gate.
 
 Portable recovery checkpoints `213caaf` and `1a80225` preserve decision histories, reconciliation
 observations, saved payoff plans and accepted command identities. The populated fixture verifies
