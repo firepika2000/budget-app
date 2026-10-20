@@ -7432,6 +7432,7 @@ private struct LocalDeviceBackupRecoveryView: View {
                     Button("Discard Pending Generation", role: .destructive) {
                         confirmingPendingBackupDeletion = true
                     }
+                    .disabled(creating || !dropbox.canDiscardPendingGeneration)
                 }
                 if dropbox.isWorking { ProgressView().accessibilityLabel("Dropbox backup in progress") }
                 if let dropboxMessage {
@@ -7727,8 +7728,7 @@ private struct LocalDeviceBackupRecoveryView: View {
                 let pending = dropbox.pendingLocalGenerationURL
                 guard let pending else { return }
                 do {
-                    try store.deletePendingLocalDeviceBackup(pending)
-                    dropbox.clearPendingLocalGeneration()
+                    try dropbox.discardPendingGeneration { try store.deletePendingLocalDeviceBackup($0) }
                     if backup?.packageURL == pending { backup = nil }
                 } catch { errorMessage = error.localizedDescription }
             }

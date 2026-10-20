@@ -3752,6 +3752,43 @@ final class DemoStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testPendingDropboxDiscardIsBlockedDuringCaptureAndRetainsCustodyOnFailure() throws {
+        let suite = "BudgetAppTests.DropboxDiscard.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let pending = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).clearpocketbackup", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: pending) }
+        try FileManager.default.createDirectory(at: pending, withIntermediateDirectories: true)
+        let coordinator = DropboxBackupCoordinator(appKey: "", defaults: defaults)
+        let now = Date()
+        coordinator.retainPendingLocalGeneration(pending, at: now)
+        coordinator.automaticBackupEnabled = true
+        XCTAssertTrue(coordinator.claimAutomaticBackupIfDue(at: now.addingTimeInterval(DropboxBackupCoordinator.pendingRetryInterval)))
+        XCTAssertFalse(coordinator.canDiscardPendingGeneration)
+        var deletions = 0
+        XCTAssertThrowsError(try coordinator.discardPendingGeneration { _ in deletions += 1 })
+        XCTAssertEqual(deletions, 0)
+        XCTAssertEqual(coordinator.pendingLocalGenerationURL, pending)
+        coordinator.finishAutomaticBackupAttempt()
+        XCTAssertTrue(coordinator.canDiscardPendingGeneration)
+        XCTAssertThrowsError(try coordinator.discardPendingGeneration { _ in throw CocoaError(.fileWriteNoPermission) })
+        let reopened = DropboxBackupCoordinator(appKey: "", defaults: defaults)
+        XCTAssertEqual(reopened.pendingLocalGenerationURL, pending, "Failed removal must retain durable recovery custody")
+        try reopened.discardPendingGeneration { url in
+            XCTAssertEqual(url, pending)
+            deletions += 1
+            try FileManager.default.removeItem(at: url)
+        }
+        XCTAssertEqual(deletions, 1)
+        XCTAssertNil(reopened.pendingLocalGenerationURL)
+        XCTAssertNil(DropboxBackupCoordinator(appKey: "", defaults: defaults).pendingLocalGenerationURL)
+        let sourceURL = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("BudgetApp/BudgetWorkspaceView.swift")
+        let source = try String(contentsOf: sourceURL)
+        XCTAssertTrue(source.contains(".disabled(creating || !dropbox.canDiscardPendingGeneration)"))
+        XCTAssertTrue(source.contains("try dropbox.discardPendingGeneration { try store.deletePendingLocalDeviceBackup($0) }"))
+    }
+
+    @MainActor
     func testDropboxAutomaticBackupSchedulePersistsAndUsesLastVerifiedSuccess() throws {
         let suite = "BudgetAppTests.DropboxAutomatic.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!

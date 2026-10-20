@@ -49,7 +49,7 @@ final class DropboxBackupCoordinator: NSObject, ObservableObject, ASWebAuthentic
     private var automaticRetryAt: Date?
     static let pendingRetryInterval: TimeInterval = 30 * 60
     static let supportedAutomaticIntervals = [1, 7]
-    private var automaticBackupClaimed = false
+    @Published private var automaticBackupClaimed = false
     private var automaticBackupStartedAt: Date?
     private let credential: DropboxOAuthCredential?
     private var authenticationSession: ASWebAuthenticationSession?
@@ -299,6 +299,17 @@ final class DropboxBackupCoordinator: NSObject, ObservableObject, ASWebAuthentic
         defaults.removeObject(forKey: pendingLocalGenerationKey)
         pendingRetryAt = nil
         defaults.removeObject(forKey: pendingRetryAtKey)
+    }
+
+    var canDiscardPendingGeneration: Bool { !isWorking && !automaticBackupClaimed }
+
+    /// Keep custody metadata until deletion succeeds. The synchronous deletion and state update
+    /// form one MainActor operation, so upload/capture cannot start between the guard and removal.
+    func discardPendingGeneration(remove: (URL) throws -> Void) throws {
+        guard canDiscardPendingGeneration else { throw DropboxBackupOperationError.alreadyWorking }
+        guard let pendingLocalGenerationURL else { return }
+        try remove(pendingLocalGenerationURL)
+        clearPendingLocalGeneration()
     }
 
     private static func isValidPendingGeneration(_ url: URL) -> Bool {
