@@ -424,6 +424,42 @@ enum HistoryRetryIntent {
 }
 
 @MainActor
+final class BackupDownloadCustody: ObservableObject {
+    @Published private(set) var packageURL: URL?
+    private var reading = false
+    private var discardRequested = false
+    private let remove: (URL) throws -> Void
+
+    init(remove: @escaping (URL) throws -> Void = { url in
+        if FileManager.default.fileExists(atPath: url.path) { try FileManager.default.removeItem(at: url) }
+    }) { self.remove = remove }
+
+    func retain(_ url: URL) throws {
+        guard !reading else { throw BudgetApplicationError.invalidOperation("Wait for backup verification to finish.") }
+        if packageURL == url { return }
+        try discard()
+        packageURL = url
+    }
+
+    func beginReading(_ url: URL) -> Bool {
+        guard !reading, packageURL == url else { return false }
+        reading = true
+        return true
+    }
+
+    func finishReading() {
+        reading = false
+        if discardRequested { try? discard() }
+    }
+
+    func discard() throws {
+        if reading { discardRequested = true; return }
+        if let packageURL { try remove(packageURL) }
+        packageURL = nil; discardRequested = false
+    }
+}
+
+@MainActor
 final class StatementImportHistoryPager: ObservableObject {
     @Published private(set) var rows: [APIStatementImportSummary] = []
     @Published private(set) var nextOffset: Int?

@@ -11,6 +11,49 @@ import UniformTypeIdentifiers
 
 final class DemoStoreTests: XCTestCase {
     @MainActor
+    func testDownloadedBackupCustodyDefersCleanupUntilVerificationFinishes() throws {
+        var removed: [URL] = []
+        var failRemoval = false
+        let custody = BackupDownloadCustody { url in
+            if failRemoval { throw URLError(.cannotRemoveFile) }
+            removed.append(url)
+        }
+        let first = URL(fileURLWithPath: "/private/tmp/download-one", isDirectory: true)
+        let second = URL(fileURLWithPath: "/private/tmp/download-two", isDirectory: true)
+        try custody.retain(first)
+        try custody.retain(first)
+        XCTAssertTrue(removed.isEmpty, "Reobserving the same package must not unlink it")
+        XCTAssertTrue(custody.beginReading(first))
+        XCTAssertFalse(custody.beginReading(first))
+        XCTAssertThrowsError(try custody.retain(second))
+        try custody.discard(); try custody.discard()
+        XCTAssertEqual(custody.packageURL, first); XCTAssertTrue(removed.isEmpty)
+        custody.finishReading()
+        XCTAssertNil(custody.packageURL); XCTAssertEqual(removed, [first])
+        custody.finishReading(); try custody.discard()
+        XCTAssertEqual(removed, [first], "Cleanup executes exactly once")
+        try custody.retain(second); XCTAssertTrue(custody.beginReading(second))
+        try custody.discard(); failRemoval = true; custody.finishReading()
+        XCTAssertEqual(custody.packageURL, second, "Failed cleanup must retain custody for retry")
+        failRemoval = false; try custody.discard()
+        XCTAssertNil(custody.packageURL); XCTAssertEqual(removed, [first, second])
+    }
+
+    func testProductionDropboxRestoreClaimsOperationAndRetainsActiveReadSource() throws {
+        let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("BudgetApp/BudgetWorkspaceView.swift")
+        let source = try String(contentsOf: file)
+        let start = try XCTUnwrap(source.range(of: "private struct LocalDeviceBackupRecoveryView"))
+        let end = try XCTUnwrap(source.range(of: "private struct BackupRecoverySettingsView"))
+        let view = String(source[start.lowerBound..<end.lowerBound])
+        XCTAssertTrue(view.contains("@StateObject private var downloadCustody = BackupDownloadCustody()"))
+        XCTAssertTrue(view.contains("downloadCustody.beginReading(restorePackage)"))
+        XCTAssertTrue(view.contains("defer { if isDownloaded { downloadCustody.finishReading() } }"))
+        XCTAssertTrue(view.contains("guard recoveryVisible else"))
+        XCTAssertTrue(view.contains("let restorePackage, dropbox.claimManualTransfer()"))
+        XCTAssertTrue(view.contains("try? downloadCustody.discard()"))
+    }
+
+    @MainActor
     func testStatementImportPagerRetriesPreservesRowsAndRejectsInvalidPages() async throws {
         func row(_ id: String, account: String = "a") -> APIStatementImportSummary {
             .init(id: id, budgetID: "b", accountID: account, status: "review", version: 1,

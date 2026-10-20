@@ -7305,7 +7305,8 @@ private struct LocalDeviceBackupRecoveryView: View {
     @State private var dropboxMessage: String?
     @State private var confirmingDropboxDisconnect = false
     @State private var deletingDropboxGeneration: DropboxBackupEntry?
-    @State private var dropboxRestorePackage: URL?
+    @StateObject private var downloadCustody = BackupDownloadCustody()
+    @State private var recoveryVisible = false
     @State private var dropboxRecoveryKey: String?
     @State private var dropboxKeyCopied = false
     @State private var confirmingPendingBackupDeletion = false
@@ -7327,7 +7328,7 @@ private struct LocalDeviceBackupRecoveryView: View {
                         .font(.footnote).foregroundStyle(.secondary)
                 } else if !dropbox.isConnected {
                     Button("Connect Dropbox", systemImage: "link") { dropbox.connect() }
-                        .disabled(dropbox.isWorking)
+                        .disabled(!dropbox.canStartManualTransfer)
                         .accessibilityIdentifier("connect-dropbox-backup")
                     Text("Dropbox receives only immutable encrypted backup generations. Your live budget database never runs from Dropbox.")
                         .font(.footnote).foregroundStyle(.secondary)
@@ -7382,7 +7383,7 @@ private struct LocalDeviceBackupRecoveryView: View {
                                 Label(generation.name, systemImage: "externaldrive.badge.icloud")
                                     .lineLimit(2)
                             }
-                            .disabled(dropbox.isWorking || preparedRestore != nil)
+                            .disabled(!dropbox.canStartManualTransfer || preparedRestore != nil)
                             .accessibilityLabel("Choose Dropbox backup \(generation.name)")
                             .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                                 Button("Delete", role: .destructive) {
@@ -7391,7 +7392,7 @@ private struct LocalDeviceBackupRecoveryView: View {
                                 .accessibilityIdentifier("delete-dropbox-generation-\(generation.name)")
                             }
                             .accessibilityAction(named: "Delete Dropbox backup") {
-                                if !dropbox.isWorking, preparedRestore == nil {
+                                if dropbox.canStartManualTransfer, preparedRestore == nil {
                                     deletingDropboxGeneration = generation
                                 }
                             }
@@ -7531,7 +7532,7 @@ private struct LocalDeviceBackupRecoveryView: View {
                 Button("Choose Encrypted Backup", systemImage: "folder.badge.plus") {
                     choosingRestore = true
                 }
-                .disabled(preparingRestore || preparedRestore != nil)
+                .disabled(preparingRestore || !dropbox.canStartManualTransfer || preparedRestore != nil)
                 .accessibilityIdentifier("choose-local-device-restore")
                 if let restorePackage {
                     LabeledContent("Selected", value: restorePackage.lastPathComponent)
@@ -7544,7 +7545,7 @@ private struct LocalDeviceBackupRecoveryView: View {
                     Button("Verify and Prepare Restore", systemImage: "checkmark.shield") {
                         confirmingRestore = true
                     }
-                    .disabled(preparingRestore || restoreKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(preparingRestore || !dropbox.canStartManualTransfer || restoreKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     .accessibilityIdentifier("prepare-local-device-restore")
                 }
                 if let preparedRestore {
@@ -7574,10 +7575,12 @@ private struct LocalDeviceBackupRecoveryView: View {
                             HStack {
                                 Button("Switch Back") { selectedRollback = generation }
                                     .buttonStyle(.borderless)
+                                    .disabled(!dropbox.canStartManualTransfer || preparedRestore != nil)
                                     .accessibilityIdentifier("prepare-local-device-rollback")
                                 Spacer()
                                 Button("Delete", role: .destructive) { deletingRollback = generation }
                                     .buttonStyle(.borderless)
+                                    .disabled(!dropbox.canStartManualTransfer)
                                     .accessibilityLabel("Delete rollback generation")
                             }
                         }
@@ -7597,6 +7600,7 @@ private struct LocalDeviceBackupRecoveryView: View {
         }
         .navigationTitle("Backup & Recovery")
         .navigationBarTitleDisplayMode(.inline)
+        .onAppear { recoveryVisible = true }
         .task {
             refreshRollbacks()
             await dropbox.refresh()
@@ -7611,6 +7615,7 @@ private struct LocalDeviceBackupRecoveryView: View {
             Task { await store.performAutomaticDropboxBackup(using: dropbox) }
         }
         .onDisappear {
+            recoveryVisible = false
             removeDropboxRestoreDownload()
             removeTemporaryBackup()
         }
@@ -7657,7 +7662,8 @@ private struct LocalDeviceBackupRecoveryView: View {
             titleVisibility: .visible
         ) {
             Button("Prepare Switch Back") {
-                guard let generation = selectedRollback else { return }
+                guard let generation = selectedRollback, dropbox.claimManualTransfer() else { return }
+                defer { dropbox.finishManualTransfer() }
                 do {
                     preparedRestore = try store.prepareLocalDeviceRollback(generation)
                     selectedRollback = nil
@@ -7676,7 +7682,8 @@ private struct LocalDeviceBackupRecoveryView: View {
             titleVisibility: .visible
         ) {
             Button("Delete Rollback", role: .destructive) {
-                guard let generation = deletingRollback else { return }
+                guard let generation = deletingRollback, dropbox.claimManualTransfer() else { return }
+                defer { dropbox.finishManualTransfer() }
                 do {
                     try store.deleteLocalDeviceRollback(generation)
                     deletingRollback = nil
@@ -7819,7 +7826,11 @@ private struct LocalDeviceBackupRecoveryView: View {
     }
 
     private func prepareRestore() async {
-        guard !preparingRestore, let restorePackage else { return }
+        guard !preparingRestore, let restorePackage, dropbox.claimManualTransfer() else { return }
+        defer { dropbox.finishManualTransfer() }
+        let isDownloaded = downloadCustody.packageURL == restorePackage
+        if isDownloaded, !downloadCustody.beginReading(restorePackage) { return }
+        defer { if isDownloaded { downloadCustody.finishReading() } }
         preparingRestore = true
         errorMessage = nil
         defer { preparingRestore = false }
@@ -7831,7 +7842,7 @@ private struct LocalDeviceBackupRecoveryView: View {
                 recoveryKey: restoreKey.trimmingCharacters(in: .whitespacesAndNewlines)
             )
             restoreKey = ""
-            if dropboxRestorePackage == restorePackage {
+            if isDownloaded {
                 removeDropboxRestoreDownload()
                 self.restorePackage = nil
             }
@@ -7841,10 +7852,17 @@ private struct LocalDeviceBackupRecoveryView: View {
     }
 
     private func chooseDropboxGeneration(_ generation: DropboxBackupEntry) async {
+        guard dropbox.claimManualTransfer() else { return }
+        defer { dropbox.finishManualTransfer() }
         do {
             removeDropboxRestoreDownload()
             let downloaded = try await dropbox.download(generation)
-            dropboxRestorePackage = downloaded
+            guard recoveryVisible else {
+                try? FileManager.default.removeItem(at: downloaded)
+                return
+            }
+            do { try downloadCustody.retain(downloaded) }
+            catch { try? FileManager.default.removeItem(at: downloaded); throw error }
             restorePackage = downloaded
             restoreKey = dropboxRecoveryKey ?? ""
             preparedRestore = nil
@@ -7852,10 +7870,12 @@ private struct LocalDeviceBackupRecoveryView: View {
             dropboxMessage = dropboxRecoveryKey == nil
                 ? "Downloaded and verified. Enter its separate recovery key below."
                 : "Downloaded and verified. This iPhone's Dropbox recovery key is ready below."
-        } catch { dropboxMessage = nil }
+        } catch { dropboxMessage = nil; errorMessage = error.localizedDescription }
     }
 
     private func deleteDropboxGeneration(_ generation: DropboxBackupEntry) async {
+        guard dropbox.claimManualTransfer() else { return }
+        defer { dropbox.finishManualTransfer() }
         do {
             try await dropbox.delete(generation)
             dropboxMessage = "Deleted \(generation.name) from Dropbox."
@@ -7865,10 +7885,9 @@ private struct LocalDeviceBackupRecoveryView: View {
     }
 
     private func removeDropboxRestoreDownload() {
-        guard let dropboxRestorePackage else { return }
-        try? FileManager.default.removeItem(at: dropboxRestorePackage)
-        self.dropboxRestorePackage = nil
-        if restorePackage == dropboxRestorePackage { restorePackage = nil }
+        let downloaded = downloadCustody.packageURL
+        try? downloadCustody.discard()
+        if let downloaded, restorePackage == downloaded { restorePackage = nil }
     }
 
     private func removeTemporaryBackup() {
