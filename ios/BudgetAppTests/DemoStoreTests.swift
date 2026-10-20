@@ -12,6 +12,33 @@ import UserNotifications
 
 final class DemoStoreTests: XCTestCase {
     @MainActor
+    func testAccountHistorySharedPagerRefreshesCanonicalRenameWithoutChangingMoney() async throws {
+        let store = BudgetWorkspaceStore.demo()
+        await store.refresh()
+        let account = try XCTUnwrap(store.accounts.first { $0.id == "checking" })
+        let balances = store.accountBalances, transactions = store.transactions
+        let revision = store.reportRevision, authority = store.authorityRevision
+        let history = DecisionHistoryPager<APIAccountRevision>(pageSize: 25)
+        let scope = "\(authority)|\(store.budget.id)|account|\(account.id)"
+        history.prepare(scope: scope)
+        await history.load(reset: true) { limit, offset in
+            XCTAssertEqual(limit, 25)
+            return try await store.accountHistory(accountID: account.id, limit: limit, offset: offset)
+        }
+        let beforeCount = history.rows.count
+        try await store.updateAccount(.init(accountID: account.id, name: "Renamed checking", currentKind: "checking",
+            kind: "checking", isOnBudget: account.isOnBudget, isClosed: false))
+        XCTAssertGreaterThan(store.reportRevision, revision); XCTAssertEqual(store.authorityRevision, authority)
+        history.prepare(scope: scope)
+        await history.load(reset: true) { limit, offset in
+            try await store.accountHistory(accountID: account.id, limit: limit, offset: offset)
+        }
+        XCTAssertEqual(history.rows.count, beforeCount + 1)
+        XCTAssertEqual(history.rows.first?.afterSnapshot.name, "Renamed checking")
+        XCTAssertEqual(store.accountBalances, balances); XCTAssertEqual(store.transactions, transactions)
+    }
+
+    @MainActor
     func testDecisionHistoryRefreshPreservesDepthAtomicallyAndRetryIntent() async {
         struct Row: Identifiable, Sendable, Equatable { let id: Int; var value = "old" }
         let history = DecisionHistoryPager<Row>(pageSize: 2)
@@ -1134,7 +1161,11 @@ final class DemoStoreTests: XCTestCase {
         let directory = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("BudgetApp")
         let account = try String(contentsOf: directory.appendingPathComponent("EditingViews.swift"))
         let transaction = try String(contentsOf: directory.appendingPathComponent("BudgetWorkspaceView.swift"))
-        XCTAssertTrue(account.contains("if HistoryObservationPolicy.mustDiscard(after: error) { items = []; hasMore = false }"))
+        XCTAssertTrue(account.contains("DecisionHistoryPager<APIAccountRevision>(pageSize: 25)"))
+        XCTAssertTrue(account.contains(".task(id: historyContext)"))
+        XCTAssertTrue(account.contains("workspace.authorityRevision"))
+        XCTAssertTrue(account.contains("history.retryIntent.shouldReset(hasLoadedRows: !items.isEmpty)"))
+        XCTAssertTrue(account.contains("history.invalidate()"))
         XCTAssertTrue(transaction.contains("if HistoryObservationPolicy.mustDiscard(after: error) { changes = []; hasMore = false }"))
     }
     func testIndependentDecisionHistoriesDiscardDeniedObservations() throws {

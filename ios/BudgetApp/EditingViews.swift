@@ -1143,17 +1143,19 @@ struct AccountHistoryView: View {
     @EnvironmentObject private var workspace: BudgetWorkspaceStore
     @Environment(\.dismiss) private var dismiss
     let account: APIAccount
-    @State private var items: [APIAccountRevision] = []
-    @State private var isLoading = false
-    @State private var isLoadingMore = false
-    @State private var hasMore = false
-    @State private var errorMessage: String?
-    private let pageSize = 25
+    @StateObject private var history = DecisionHistoryPager<APIAccountRevision>(pageSize: 25)
+    private var items: [APIAccountRevision] { history.rows }
+    private var isLoading: Bool { history.loading }
+    private var isLoadingMore: Bool { history.loadingOlder }
+    private var hasMore: Bool { history.canLoadOlder }
+    private var errorMessage: String? { history.errorMessage }
+    private var historyScope: String { "\(workspace.authorityRevision)|\(workspace.budget.id)|account|\(account.id)" }
+    private var historyContext: String { "\(historyScope)|\(workspace.reportRevision)" }
 
     var body: some View {
         NavigationStack {
             Group {
-                if isLoading { ProgressView("Loading history…") }
+                if isLoading && items.isEmpty { ProgressView("Loading history…") }
                 else if let errorMessage, items.isEmpty {
                     ContentUnavailableView("History unavailable", systemImage: "exclamationmark.triangle",
                                            description: Text(errorMessage))
@@ -1166,8 +1168,9 @@ struct AccountHistoryView: View {
                         if let errorMessage {
                             Section {
                                 Text(errorMessage).foregroundStyle(.secondary)
-                                Button("Retry Earlier Changes") { Task { await load(reset: false) } }
-                                    .disabled(isLoadingMore)
+                                Button(history.retryIntent == .older ? "Retry Earlier Changes" : "Retry Refresh") {
+                                    Task { await load(reset: history.retryIntent.shouldReset(hasLoadedRows: !items.isEmpty)) }
+                                }.disabled(isLoading || isLoadingMore)
                             }
                         }
                         ForEach(items) { revision in
@@ -1191,7 +1194,7 @@ struct AccountHistoryView: View {
                         if hasMore {
                             Button(isLoadingMore ? "Loading…" : "Load Earlier Changes") {
                                 Task { await load(reset: false) }
-                            }.disabled(isLoadingMore)
+                            }.disabled(isLoading || isLoadingMore)
                         }
                     }
                 }
@@ -1199,23 +1202,15 @@ struct AccountHistoryView: View {
             .navigationTitle("Account History")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
-            .task { await load(reset: true) }
+            .task(id: historyContext) { history.prepare(scope: historyScope); await load(reset: true) }
+            .refreshable { await load(reset: true) }
+            .onDisappear { history.invalidate() }
         }
     }
 
     private func load(reset: Bool) async {
-        guard !isLoading, !isLoadingMore, reset || hasMore else { return }
-        errorMessage = nil
-        if reset { isLoading = true; errorMessage = nil } else { isLoadingMore = true }
-        defer { isLoading = false; isLoadingMore = false }
-        do {
-            let next = try await workspace.accountHistory(accountID: account.id, limit: pageSize,
-                                                          offset: reset ? 0 : items.count)
-            if reset { items = next } else { items.append(contentsOf: next) }
-            hasMore = next.count == pageSize
-        } catch {
-            if HistoryObservationPolicy.mustDiscard(after: error) { items = []; hasMore = false }
-            errorMessage = error.localizedDescription
+        await history.load(reset: reset) { limit, offset in
+            try await workspace.accountHistory(accountID: account.id, limit: limit, offset: offset)
         }
     }
 
