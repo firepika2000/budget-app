@@ -11,6 +11,22 @@ import UserNotifications
 @testable import Budget_App
 
 final class DemoStoreTests: XCTestCase {
+    func testReconciliationHistoryInitialLoadAndRecoveryAreReachable() throws {
+        let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("BudgetApp/BudgetWorkspaceView.swift")
+        let source = try String(contentsOf: file)
+        let start = try XCTUnwrap(source.range(of: "private struct ReconciliationHistoryView: View"))
+        let end = try XCTUnwrap(source.range(of: "private struct TransferPresentation:"))
+        let view = String(source[start.lowerBound..<end.lowerBound])
+        XCTAssertTrue(view.contains("@State private var loading = false"))
+        XCTAssertTrue(view.contains("if loading && rows.isEmpty"))
+        XCTAssertTrue(view.contains("rows.isEmpty && errorMessage == nil"))
+        XCTAssertTrue(view.contains("retryIntent.shouldReset(hasLoadedRows: !rows.isEmpty)"))
+        XCTAssertTrue(view.contains(".task(id: context)"))
+        XCTAssertTrue(view.contains("requestID == id, observedContext == context"))
+        XCTAssertTrue(view.contains("Set(ids).count == ids.count"))
+        XCTAssertTrue(view.contains("reconciliation-history-row-"))
+    }
+
     @MainActor
     func testCurrentCoalescedBrowserPublishesWhenOriginalWaiterCancels() async throws {
         let store = BudgetWorkspaceStore.demo()

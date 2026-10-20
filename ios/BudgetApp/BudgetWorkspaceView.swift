@@ -734,7 +734,7 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
         if ProcessInfo.processInfo.arguments.contains("--demo-reconciliation-activity"),
            let account = store.accounts.first(where: { $0.id == "checking" }) {
             _ = store.reconcile(accountID: account.id, statementBalance: account.cleared,
-                                throughDate: "2026-09-30", createAdjustment: true,
+                                throughDate: BudgetWorkspaceStore.dateString(Date.demo(monthsAgo: 0, day: 30)), createAdjustment: true,
                                 reason: "UI regression fixture")
         }
         demo = store
@@ -11819,17 +11819,20 @@ private struct ReconciliationHistoryView: View {
     @Environment(\.dismiss) private var dismiss
     let account: APIAccount
     @State private var rows: [APIReconciliationHistory] = []
-    @State private var loading = true
+    @State private var loading = false
     @State private var loadingOlder = false
     @State private var errorMessage: String?
     @State private var hasMore = false
+    @State private var requestID = UUID()
+    @State private var retryIntent: HistoryRetryIntent = .refresh
+    private var context: String { "\(store.authorityRevision)|\(store.reportRevision)|\(account.id)" }
 
     var body: some View {
         NavigationStack {
             List {
-                if loading {
+                if loading && rows.isEmpty {
                     ProgressView("Loading reconciliation history…")
-                } else if rows.isEmpty {
+                } else if rows.isEmpty && errorMessage == nil {
                     ContentUnavailableView("No reconciliation history", systemImage: "checkmark.seal", description: Text("Completed reconciliations will remain here as an audit trail."))
                 } else {
                     ForEach(rows) { row in
@@ -11847,31 +11850,49 @@ private struct ReconciliationHistoryView: View {
                             }
                         }
                         .accessibilityElement(children: .combine)
+                        .accessibilityIdentifier("reconciliation-history-row-\(row.id)")
                     }
-                    if hasMore {
+                    if hasMore && errorMessage == nil {
                         Button(loadingOlder ? "Loading…" : "Load Older") { Task { await load(append: true) } }.disabled(loadingOlder)
                     }
+                }
+                if let errorMessage {
+                    Section {
+                        Text(errorMessage).font(.caption).foregroundStyle(.secondary)
+                        Button(retryIntent == .older ? "Try Loading Older Again" : "Try Refreshing Again") {
+                            Task { await load(append: !retryIntent.shouldReset(hasLoadedRows: !rows.isEmpty)) }
+                        }.disabled(loading || loadingOlder)
+                    } header: { Text("History Unavailable") }
                 }
             }
             .navigationTitle("Reconciliation History")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
-            .task { await load(append: false) }
+            .task(id: context) { await load(append: false) }
+            .onDisappear { requestID = UUID(); loading = false; loadingOlder = false }
             .refreshable { await load(append: false) }
-            .alert("Unable to load history", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) { Button("OK", role: .cancel) {} } message: { Text(errorMessage ?? "Unknown error") }
         }
     }
 
     private func load(append: Bool) async {
-        guard !loading, !loadingOlder else { return }
-        if append { loadingOlder = true } else { loading = true }
-        defer { loading = false; loadingOlder = false }
+        guard !append || (!loading && !loadingOlder && hasMore) else { return }
+        let id = UUID(), observedContext = context
+        requestID = id
+        loadingOlder = append; loading = !append
+        defer { if requestID == id { loading = false; loadingOlder = false } }
         do {
             let next = try await store.reconciliationHistory(accountID: account.id, offset: append ? rows.count : 0)
+            guard requestID == id, observedContext == context, !Task.isCancelled else { return }
+            let ids = (append ? rows.map(\.id) : []) + next.map(\.id)
+            guard next.count <= 50, Set(ids).count == ids.count else {
+                throw workspaceRepositoryError("Reconciliation history returned an invalid page. Refresh to try again.")
+            }
             rows = append ? rows + next : next
             hasMore = next.count == 50
             errorMessage = nil
         } catch {
+            guard requestID == id, observedContext == context, !(error is CancellationError) else { return }
+            retryIntent = append ? .older : .refresh
             if HistoryObservationPolicy.mustDiscard(after: error) { rows = []; hasMore = false }
             errorMessage = error.localizedDescription
         }

@@ -1486,20 +1486,22 @@ final class AuthenticationJourneyTests: XCTestCase {
 
     func testActivityShowsRecentReconciliationAndOpensCanonicalHistory() {
         let app = XCUIApplication()
-        app.launchArguments = ["--demo", "--demo-screen=activity", "--demo-reconciliation-activity"]
+        app.launchArguments = ["--demo", "--demo-screen=activity", "--demo-reconciliation-activity", "--skip-guided-onboarding"]
         app.launch()
         XCTAssertTrue(app.navigationBars["Activity"].waitForExistence(timeout: 5))
         let event = app.buttons.matching(
             NSPredicate(format: "identifier BEGINSWITH %@", "activity-reconciliation-")
         ).firstMatch
+        for _ in 0..<8 where !event.exists || !event.isHittable { app.swipeUp() }
         XCTAssertTrue(event.waitForExistence(timeout: 5))
-        for _ in 0..<4 where !event.isHittable { app.swipeUp() }
         XCTAssertTrue(event.isHittable)
         event.tap()
         XCTAssertTrue(app.navigationBars["Reconciliation History"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.descendants(matching: .any).matching(
-            NSPredicate(format: "label CONTAINS %@", "Reconciled by")
-        ).firstMatch.exists)
+        let historyRow = app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", "reconciliation-history-row-")
+        ).firstMatch
+        XCTAssertTrue(historyRow.waitForExistence(timeout: 5), "The history destination must actually fetch and render its rows")
+        XCTAssertTrue(historyRow.label.contains("Reconciled by"))
     }
 
     func testActivityShowsAttributedTransactionChangesAndOpensCanonicalTransaction() {
