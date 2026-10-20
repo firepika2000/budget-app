@@ -492,6 +492,33 @@ final class DemoStoreTests: XCTestCase {
         }
     }
 
+    @MainActor
+    func testAccountBalancePresentationRequiresExplicitCapabilityDespiteCachedLedger() async throws {
+        let owner = BudgetWorkspaceStore.demo()
+        await owner.refresh()
+        XCTAssertTrue(owner.canViewAccountBalances)
+        let budget = APIBudget(id: owner.budget.id, householdID: owner.budget.householdID, name: "Restricted",
+            currencyCode: "USD", effectivePermission: .view, capabilities: ["view_budget", "view_accounts", "view_transactions"])
+        let restricted = BudgetWorkspaceStore(budget: budget)
+        restricted.accounts = owner.accounts
+        restricted.transactions = owner.transactions
+        restricted.accountBalances = owner.accountBalances
+        XCTAssertTrue(restricted.budget.can("view_accounts"))
+        XCTAssertTrue(restricted.budget.can("view_transactions"))
+        XCTAssertFalse(restricted.canViewAccountBalances, "Neither visible transactions nor old balance observations grant balance authority")
+        restricted.accountBalances = [:]
+        XCTAssertFalse(restricted.canViewAccountBalances, "Missing server observations must not enable a local aggregate fallback")
+        let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("BudgetApp/BudgetWorkspaceView.swift")
+        let text = try String(contentsOf: file)
+        let start = try XCTUnwrap(text.range(of: "private struct LiveAccountsView: View"))
+        let end = try XCTUnwrap(text.range(of: "private struct ReconciliationHistoryView: View"))
+        let accounts = String(text[start.lowerBound..<end.lowerBound])
+        XCTAssertGreaterThanOrEqual(accounts.components(separatedBy: "if store.canViewAccountBalances").count - 1, 3)
+        XCTAssertTrue(accounts.contains("if store.canViewAccountBalances && store.budget.can(\"reconcile_account\")"))
+        XCTAssertTrue(accounts.contains("if !allowed { showReconcile = false; showReconciliationHistory = false }"))
+        XCTAssertTrue(accounts.contains("TransactionHistoryRows(history: history"), "Granted transaction visibility remains usable")
+    }
+
     func testActivityOnlyPublishesAndFinishesLatestRefresh() throws {
         let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("BudgetApp/BudgetWorkspaceView.swift")
         let source = try String(contentsOf: file)

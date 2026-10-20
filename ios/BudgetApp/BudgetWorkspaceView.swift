@@ -6131,6 +6131,7 @@ final class BudgetWorkspaceStore: ObservableObject {
     func balance(for account: APIAccount) -> Int64 {
         accountBalances[account.id]?.workingBalanceMinor ?? transactions.filter { $0.accountID == account.id }.reduce(0) { $0 + $1.amountMinor }
     }
+    var canViewAccountBalances: Bool { budget.can("view_account_balances") }
     func clearedBalance(for account: APIAccount) -> Int64 { accountBalances[account.id]?.clearedBalanceMinor ?? transactions.filter { $0.accountID == account.id && $0.isCleared }.reduce(0) { $0 + $1.amountMinor } }
     func unclearedBalance(for account: APIAccount) -> Int64 { accountBalances[account.id]?.unclearedBalanceMinor ?? transactions.filter { $0.accountID == account.id && !$0.isCleared }.reduce(0) { $0 + $1.amountMinor } }
     func transactions(for account: APIAccount) -> [APITransaction] {
@@ -11636,7 +11637,7 @@ private struct LiveAccountsView: View {
         List {
             Section("Open") { ForEach(store.accounts.filter { !$0.isClosed }) { account in
                 NavigationLink { HistoryAuthorityBoundary(.account(account.id), unavailableTitle: "Account unavailable") { LiveAccountRegisterView(initialAccount: account) } } label: {
-                    HStack { Label { VStack(alignment: .leading) { Text(account.name); Text(account.accountType.capitalized).font(.caption).foregroundStyle(.secondary) } } icon: { Image(systemName: accountIcon(account.accountType)) }; Spacer(); VStack(alignment: .trailing) { Text(store.format(store.balance(for: account))).monospacedDigit(); Text("Current").font(.caption).foregroundStyle(.secondary) } }
+                    HStack { Label { VStack(alignment: .leading) { Text(account.name); Text(account.accountType.capitalized).font(.caption).foregroundStyle(.secondary) } } icon: { Image(systemName: accountIcon(account.accountType)) }; if store.canViewAccountBalances { Spacer(); VStack(alignment: .trailing) { Text(store.format(store.balance(for: account))).monospacedDigit(); Text("Current").font(.caption).foregroundStyle(.secondary) } } }
                 }
                 .accessibilityIdentifier("account-row-\(account.id)")
             } }
@@ -11707,6 +11708,7 @@ struct LiveAccountRegisterView: View {
 
     var body: some View {
         List {
+            if store.canViewAccountBalances {
             Section {
                 LabeledContent("Working", value: store.format(store.balance(for: account)))
                 LabeledContent("Cleared", value: store.format(store.clearedBalance(for: account)))
@@ -11725,6 +11727,7 @@ struct LiveAccountRegisterView: View {
             } header: {
                 Text(account.name)
             }
+            }
 
             Section("Register") {
                 TransactionHistoryRows(history: history, showsRegisterBadges: true, onLoad: loadHistory)
@@ -11736,7 +11739,7 @@ struct LiveAccountRegisterView: View {
             ToolbarItemGroup(placement: .topBarTrailing) {
                 if store.budget.can("create_transaction") && !account.isClosed { Button("Add Transaction", systemImage: "plus") { showAdd = true } }
                 if store.budget.can("create_transaction") && !account.isClosed { Button("Transfer", systemImage: "arrow.left.arrow.right") { transferPresentation = TransferPresentation(sourceID: account.id) } }
-                if store.budget.can("reconcile_account") && !account.isClosed { Button("Reconcile", systemImage: "checkmark.seal") { showReconcile = true } }
+                if store.canViewAccountBalances && store.budget.can("reconcile_account") && !account.isClosed { Button("Reconcile", systemImage: "checkmark.seal") { showReconcile = true } }
                 if store.budget.can("manage_budget_structure") { Button("Account Settings", systemImage: "gearshape") { showSettings = true }.accessibilityIdentifier("account-settings-action") }
             }
         }
@@ -11747,6 +11750,9 @@ struct LiveAccountRegisterView: View {
         .sheet(isPresented: $showReconciliationHistory) { HistoryAuthorityBoundary(.account(account.id)) { ReconciliationHistoryView(account: account) } }
         .refreshable { await store.refresh() }
         .task(id: store.reportRevision) { await loadHistory(true) }
+        .onChange(of: store.canViewAccountBalances) { _, allowed in
+            if !allowed { showReconcile = false; showReconciliationHistory = false }
+        }
         .onChange(of: store.authorityRevision) { _, _ in
             history.clear()
             Task { await loadHistory(true) }
