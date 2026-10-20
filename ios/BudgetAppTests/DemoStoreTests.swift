@@ -11,6 +11,52 @@ import UserNotifications
 @testable import Budget_App
 
 final class DemoStoreTests: XCTestCase {
+    private func directoryProfile(_ id: String, version: Int = 1) throws -> APIAccessProfile {
+        try JSONDecoder().decode(APIAccessProfile.self, from: Data("""
+        {"budget_id":"budget","user_id":"\(id)","capabilities":["view_budget"],"restrict_accounts":false,"account_ids":[],"restrict_categories":false,"category_ids":[],"grant_permission":"view","is_custom":false,"version":\(version)}
+        """.utf8))
+    }
+
+    @MainActor
+    func testHouseholdDirectoryBoundsRequestsAndRecoversPartialFailures() async throws {
+        let directory = HouseholdDirectoryObservation()
+        directory.prepare(scope: "owner|budget")
+        var active = 0, maximum = 0, calls: [String] = []
+        let profiles = try Dictionary(uniqueKeysWithValues: (0..<9).map { (String($0), try directoryProfile(String($0))) })
+        await directory.load(memberIDs: Array(profiles.keys) + ["0"], invitations: { [] }) { id in
+            active += 1; maximum = max(maximum, active); calls.append(id)
+            await Task.yield(); active -= 1
+            return try XCTUnwrap(profiles[id])
+        }
+        XCTAssertEqual(calls.count, 9); XCTAssertLessThanOrEqual(maximum, 4)
+        XCTAssertEqual(directory.profiles.count, 9); XCTAssertFalse(directory.loading)
+        await directory.load(memberIDs: ["0", "1"], invitations: { throw URLError(.timedOut) }) { id in
+            if id == "0" { throw URLError(.notConnectedToInternet) }
+            throw APIClientError.server(status: 403, message: "Denied")
+        }
+        XCTAssertEqual(Set(directory.profiles.keys), ["0"])
+        XCTAssertEqual(directory.failedMembers, ["0", "1"]); XCTAssertNotNil(directory.invitationError)
+        await directory.load(memberIDs: ["0", "1"], invitations: { [] }) { id in try XCTUnwrap(profiles[id]) }
+        XCTAssertEqual(directory.profiles.count, 2); XCTAssertTrue(directory.failedMembers.isEmpty)
+        XCTAssertNil(directory.invitationError)
+    }
+
+    @MainActor
+    func testHouseholdDirectoryDoesNotOverwriteSavedProfileOrChangedScope() async throws {
+        let old = try directoryProfile("member"), saved = try directoryProfile("member", version: 2)
+        let directory = HouseholdDirectoryObservation()
+        directory.prepare(scope: "owner|budget")
+        await directory.load(memberIDs: ["member"], invitations: { [] }) { _ in
+            directory.record(saved); return old
+        }
+        XCTAssertEqual(directory.profiles["member"]?.version, 2)
+        await directory.load(memberIDs: ["member"], invitations: { [] }) { _ in
+            directory.prepare(scope: "different-owner|budget"); return old
+        }
+        XCTAssertTrue(directory.profiles.isEmpty); XCTAssertFalse(directory.loading)
+        await directory.load(memberIDs: ["different-member"], invitations: { [] }) { _ in old }
+        XCTAssertTrue(directory.profiles.isEmpty); XCTAssertEqual(directory.failedMembers, ["different-member"])
+    }
     @MainActor
     func testMemberAccessReadRetryScopeAndDenial() async throws {
         let profile = try JSONDecoder().decode(APIAccessProfile.self, from: Data(#"{"budget_id":"budget","user_id":"member","capabilities":["view_budget"],"restrict_accounts":false,"account_ids":[],"restrict_categories":false,"category_ids":[],"grant_permission":"view","is_custom":false,"version":4}"#.utf8))

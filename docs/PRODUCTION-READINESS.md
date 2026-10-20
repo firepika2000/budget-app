@@ -2,10 +2,45 @@
 
 ## Current workspace checkpoint
 
-Inspected implementation: `ce298d8` on `codex/development`, plus the keyboard diagnostic checkpoint below. App and widget remain `0.11.0`
+Inspected implementation: `acfc35c` on `codex/development`, plus the household directory checkpoint below. App and widget remain `0.11.0`
 build `7`; TestFlight is held. Regular Xcode 27.1 (`27A9275`) builds and executes focused tests
 on preserved iPhone 17 Pro Max `3ABD861E-D38D-4AFD-A356-959266051564`, iOS 27.0 (`24A434`).
 No Simulator or Live data reset, merge, tag, or release is part of these checkpoints.
+
+### Household editing and history recovery
+
+Access Activity now uses the shared scoped history pager (`8330328`), retaining opened depth on
+refresh and the correct refresh-versus-older-page retry. Late responses cannot repopulate a changed
+scope. Five focused native checks passed; the production remove-confirmation, re-invite and return
+navigation UI flow also passed in the preceding mixed run. Source assertions were updated for the
+existing shared reconciliation pager, destination model and multiline attachment modifiers.
+
+The delegated-authority editor retains unsaved inputs when returning from Authority History and
+preserves category rules that its form does not edit (`4734fcc`). Previously its upsert omitted
+rules, which the canonical replacement contract interpreted as an empty rule set. The draft now
+retains the reviewed allocation version rather than adopting a newer version silently at Save.
+Reload Latest explicitly discards the draft. Five native checks passed, including exact large money,
+rule-preserving canonical no-op save, unchanged audit/RTA, stale-version rejection and rendering the
+shared view dependencies. The new navigation-draft behavior still requires human visual acceptance.
+
+Member-access editing now provides an initial-read Retry action and explicit Reload Latest after a
+save failure (`acfc35c`). Scoped observations reject late reads, preserve reviewed data on transient
+failure and discard it on definitive denial. Three focused native checks and the final production
+edit, account/category selection, save and reopen UI test passed. The UI test now scrolls to reachable
+switches before tapping rather than assuming an offscreen element's existence makes it tappable.
+
+These app-only corrections use canonical authorization and mutation services; no server restart or
+migration is required. Rebuild for acceptance. They do not establish a new human pass or close the
+real Dropbox, camera, deployment recovery or broader platform acceptance gates.
+
+The household overview now loads visibility profiles with at most four concurrent authenticated
+reads, observes workspace changes and offers explicit retry for partial failures. Transient failures
+retain prior details with a stale-data notice; definitive per-member denials remove that profile.
+Successful member edits supersede older overview reads, and authority changes clear retained
+directory observations. Three focused native tests and the production household edit/save/reopen UI
+test passed in the directory checkpoint; the simulator build and diff check passed. The bounded
+test used nine distinct profiles plus a repeated identifier, not a production-scale performance
+benchmark. Initial failures now say visibility is unavailable rather than loading indefinitely.
 
 ### Forecast observation and scenario continuity
 

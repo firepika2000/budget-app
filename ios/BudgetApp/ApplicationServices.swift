@@ -597,6 +597,70 @@ final class AttachmentListObservation: ObservableObject {
 }
 
 @MainActor
+final class HouseholdDirectoryObservation: ObservableObject {
+    @Published private(set) var profiles: [String: APIAccessProfile] = [:]
+    @Published private(set) var invitations: [APIInvitationSummary] = []
+    @Published private(set) var failedMembers: Set<String> = []
+    @Published private(set) var invitationError: String?
+    @Published private(set) var loading = false
+    private var scope: String?
+    private var requestID = UUID()
+
+    func prepare(scope: String) {
+        guard self.scope != scope else { return }
+        invalidate(); self.scope = scope; profiles = [:]; invitations = []; failedMembers = []; invitationError = nil
+    }
+    func invalidate() { requestID = UUID(); loading = false }
+    func record(_ profile: APIAccessProfile) {
+        // A successful edit is newer than any overview read already in flight.
+        invalidate(); profiles[profile.userID] = profile; failedMembers.remove(profile.userID)
+    }
+
+    func load(memberIDs: [String], invitations fetchInvitations: () async throws -> [APIInvitationSummary],
+              profile fetchProfile: @escaping @MainActor @Sendable (String) async throws -> APIAccessProfile) async {
+        let observed = UUID(); requestID = observed; loading = true
+        defer { if requestID == observed { loading = false } }
+        var nextInvitations = invitations
+        var nextInvitationError: String?
+        do { nextInvitations = try await fetchInvitations() }
+        catch {
+            if error is CancellationError { return }
+            if HistoryObservationPolicy.mustDiscard(after: error) { nextInvitations = [] }
+            nextInvitationError = error.localizedDescription
+        }
+        guard requestID == observed, !Task.isCancelled else { return }
+        let ids = Array(Set(memberIDs)).sorted()
+        var nextProfiles = profiles.filter { ids.contains($0.key) }
+        var failures: Set<String> = []
+        // Bound concurrent authenticated reads even for a large household directory.
+        for start in stride(from: 0, to: ids.count, by: 4) {
+            let batch = ids[start..<min(start + 4, ids.count)]
+            await withTaskGroup(of: (String, Result<APIAccessProfile, Error>).self) { group in
+                for id in batch {
+                    group.addTask {
+                        do { return (id, .success(try await fetchProfile(id))) }
+                        catch { return (id, .failure(error)) }
+                    }
+                }
+                for await (id, result) in group {
+                    switch result {
+                    case .success(let profile):
+                        if profile.userID == id { nextProfiles[id] = profile }
+                        else { nextProfiles[id] = nil; failures.insert(id) }
+                    case .failure(let error):
+                        failures.insert(id)
+                        if HistoryObservationPolicy.mustDiscard(after: error) { nextProfiles[id] = nil }
+                    }
+                }
+            }
+            guard requestID == observed, !Task.isCancelled else { return }
+        }
+        profiles = nextProfiles; invitations = nextInvitations
+        failedMembers = failures; invitationError = nextInvitationError
+    }
+}
+
+@MainActor
 final class MemberAccessProfileObservation: ObservableObject {
     @Published private(set) var value: APIAccessProfile?
     @Published private(set) var loading = false

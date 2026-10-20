@@ -14658,15 +14658,17 @@ private struct LiveHouseholdOverviewView: View {
     @State private var showInvite = false
     @State private var invitationSecret: APIInvitationSecret?
     @State private var pendingInvitationSecret: APIInvitationSecret?
-    @State private var invitations: [APIInvitationSummary] = []
-    @State private var memberProfiles: [String: APIAccessProfile] = [:]
-    @State private var invitationError: String?
+    @StateObject private var directory = HouseholdDirectoryObservation()
+    private var invitations: [APIInvitationSummary] { directory.invitations }
+    private var memberProfiles: [String: APIAccessProfile] { directory.profiles }
     private var activeMembers: [APIHouseholdMember] { store.householdMembers.filter(\.isActive) }
     private var otherMembers: [APIHouseholdMember] { activeMembers.filter { $0.role != "owner" } }
     private var openInvitations: [APIInvitationSummary] { invitations.filter { $0.status == "pending" || $0.status == "expired" } }
     private var canManageMembers: Bool {
         store.budget.effectivePermission == .owner && session.sourceMode != .localDevice
     }
+    private var directoryScope: String { "\(store.authorityRevision)|\(store.budget.id)|\(canManageMembers)" }
+    private var directoryContext: String { "\(directoryScope)|\(store.reportRevision)|\(otherMembers.map(\.userID).sorted().joined(separator: ","))" }
 
     var body: some View {
         List {
@@ -14695,7 +14697,7 @@ private struct LiveHouseholdOverviewView: View {
             Section("People") {
                 ForEach(activeMembers) { member in
                     if canManageMembers && member.role != "owner" {
-                        NavigationLink { LiveMemberAccessView(store: store, member: member) { memberProfiles[member.userID] = $0 } } label: { memberRow(member) }
+                        NavigationLink { LiveMemberAccessView(store: store, member: member) { directory.record($0) } } label: { memberRow(member) }
                             .accessibilityIdentifier("member-access-\(member.userID)")
                     } else { memberRow(member) }
                 }
@@ -14704,6 +14706,15 @@ private struct LiveHouseholdOverviewView: View {
                 }
             }
             if canManageMembers {
+                if directory.invitationError != nil || !directory.failedMembers.isEmpty {
+                    Section {
+                        Label("Some household details could not be updated", systemImage: "wifi.exclamationmark")
+                        Text("Previously loaded details may be out of date. Retry to check current visibility and invitations.")
+                            .font(.caption).foregroundStyle(.secondary)
+                        Button("Try Again") { Task { await loadHouseholdManagement() } }.disabled(directory.loading)
+                            .accessibilityIdentifier("household-directory-retry")
+                    }
+                }
                 if !openInvitations.isEmpty {
                     Section("Pending invitations") {
                         ForEach(openInvitations) { invitation in
@@ -14750,7 +14761,11 @@ private struct LiveHouseholdOverviewView: View {
             }
         }
         .navigationTitle("Household")
-        .task { if canManageMembers { await loadHouseholdManagement() } }
+        .task(id: directoryContext) {
+            directory.prepare(scope: directoryScope)
+            if canManageMembers { await loadHouseholdManagement() }
+        }
+        .onDisappear { directory.invalidate() }
         .refreshable { if canManageMembers { await loadHouseholdManagement() } }
         .sheet(isPresented: $showInvite, onDismiss: {
             invitationSecret = pendingInvitationSecret
@@ -14759,9 +14774,6 @@ private struct LiveHouseholdOverviewView: View {
             HouseholdInvitationCreateView(store: store, recoveredSecret: $pendingInvitationSecret, onCreated: loadInvitations)
         }
         .sheet(item: $invitationSecret) { value in HouseholdInvitationSecretView(secret: value) }
-        .alert("Unable to load invitations", isPresented: Binding(get: { invitationError != nil }, set: { if !$0 { invitationError = nil } })) {
-            Button("OK", role: .cancel) {}
-        } message: { Text(invitationError ?? "Unknown error") }
         .accessibilityIdentifier("household-overview-screen")
     }
 
@@ -14814,7 +14826,9 @@ private struct LiveHouseholdOverviewView: View {
     }
     private func memberAccessSummary(_ member: APIHouseholdMember) -> String {
         guard member.role != "owner" else { return "Household owner · full access" }
-        guard let profile = memberProfiles[member.userID] else { return "\(member.role.capitalized) · loading visibility…" }
+        guard let profile = memberProfiles[member.userID] else {
+            return "\(member.role.capitalized) · \(directory.failedMembers.contains(member.userID) ? "visibility unavailable" : "loading visibility…")"
+        }
         guard profile.capabilities.contains("view_budget") else { return "\(member.role.capitalized) · budget hidden" }
         var scopes: [String] = []
         if !profile.capabilities.contains("view_accounts") { scopes.append("accounts hidden") }
@@ -14831,20 +14845,14 @@ private struct LiveHouseholdOverviewView: View {
         return "Authority \(store.format(policy.authorityMinor)) · \(policy.allowReallocation ? "can move assigned money" : "fixed access")"
     }
     private func loadInvitations() async {
-        do { invitations = try await store.householdInvitations(); invitationError = nil }
-        catch { invitationError = error.localizedDescription }
+        await loadHouseholdManagement()
     }
     private func loadHouseholdManagement() async {
-        async let inviteLoad: Void = loadInvitations()
-        var loadedProfiles: [String: APIAccessProfile] = [:]
-        await withTaskGroup(of: (String, APIAccessProfile?).self) { group in
-            for member in otherMembers {
-                group.addTask { (member.userID, try? await store.accessProfile(userID: member.userID)) }
-            }
-            for await (userID, profile) in group { if let profile { loadedProfiles[userID] = profile } }
-        }
-        _ = await inviteLoad
-        memberProfiles = loadedProfiles
+        directory.prepare(scope: directoryScope)
+        guard canManageMembers else { return }
+        await directory.load(memberIDs: otherMembers.map(\.userID),
+            invitations: { try await store.householdInvitations() },
+            profile: { id in try await store.accessProfile(userID: id) })
     }
 }
 
