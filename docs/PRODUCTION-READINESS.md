@@ -2,10 +2,43 @@
 
 ## Current workspace checkpoint
 
-Inspected implementation: `0d084ac` on `codex/development`. App and widget remain `0.11.0`
+Inspected implementation: `87cd00a` on `codex/development`. App and widget remain `0.11.0`
 build `7`; TestFlight is held. Regular Xcode 27.1 (`27A9275`) builds and executes focused tests
 on preserved iPhone 17 Pro Max `3ABD861E-D38D-4AFD-A356-959266051564`, iOS 27.0 (`24A434`).
 No Simulator or Live data reset, merge, tag, or release is part of these checkpoints.
+
+### Automatic Dropbox publication consent
+
+Disabling automatic backup during local capture now stops the queued publication (`87cd00a`).
+Turning it off and on again also invalidates the older attempt. The encrypted package remains
+retained for retry, including after relaunch; it is neither deleted nor reported as a successful
+remote backup. Publication already in progress is not represented as canceled by this preference.
+Six focused native consent, custody, retry-scheduling and persistence tests passed. The regular
+Xcode build and diff check passed. Real Dropbox OAuth, publication, restore and revocation remain
+the separate acceptance flow below; these tests did not access the human Dropbox account.
+
+### Current audit history and attachment observations
+
+Transaction browser observations now fence responses by workspace revision as well as query and
+authority (`44e1f0d`). A current coalesced caller can still publish after the original caller
+cancels. The shared decision-history loader validates pages, preserves opened depth during refresh,
+retains rows on temporary failure, retries the failed request and clears denied observations
+(`cb04e2f`). Account, target, category, payee, schedule, delegated-policy, payoff, transaction and
+reconciliation history use it (`7a129cd`, `ee2af76`, `5a5cca5`). Allowance issuance and policy lists
+publish only after both reads succeed (`0ee7bcf`); this is paired client publication, not a claim
+that independent server reads share a database snapshot.
+
+At `5a5cca5`, six native checks passed, including actual Local Device clearing/reconciliation audit
+records surviving reconstruction. The production Activity-to-Reconciliation History UI test also
+passed. Earlier production payoff history coverage reached and read the saved strategy at
+`7a129cd`. These scoped results do not establish human visual or multi-device acceptance.
+
+Open transaction attachment lists follow workspace and credential updates (`96a6be8`). Temporary
+read failures keep the last loaded metadata with an inline retry, while denied scope clears it.
+Five native checks and the production attachment-preview UI test passed. The Live-shaped credential
+test now uses an isolated mock-server storage namespace and supplies authoritative balance coverage;
+the UI test scrolls to the actual attachment section. Preview/removal, encryption and upload paths
+remain unchanged. These app changes require a rebuild, not a server restart or migration.
 
 ### Statement review and reconciliation continuity
 
