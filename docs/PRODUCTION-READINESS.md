@@ -2,10 +2,46 @@
 
 ## Current workspace checkpoint
 
-Inspected implementation: `87cd00a` on `codex/development`. App and widget remain `0.11.0`
+Inspected implementation: `b9a3f64` on `codex/development`. App and widget remain `0.11.0`
 build `7`; TestFlight is held. Regular Xcode 27.1 (`27A9275`) builds and executes focused tests
 on preserved iPhone 17 Pro Max `3ABD861E-D38D-4AFD-A356-959266051564`, iOS 27.0 (`24A434`).
 No Simulator or Live data reset, merge, tag, or release is part of these checkpoints.
+
+### Native selection and statement preparation
+
+Attachment source selection now opens Photos, Camera or Files from the chooser sheet's dismissal
+callback rather than a fixed delay (`f17d3e1`). Three native checks and two production UI tests
+passed; targeted Simulator logs showed no overlapping-presentation warning during those flows.
+File-picker cancellation preserves attachment, statement and restore drafts without an error
+(`2c11bd1`; four native checks and one production Photos/Files cancellation UI test passed).
+Camera attachment upload now starts after camera dismissal; actual camera capture remains a device
+acceptance check. Existing validation, encrypted upload and confirmed removal paths remain in use.
+
+Selected attachment and statement files enforce their 10 MB limit while reading, with an initial
+size check and chunks of at most 64 KiB (`7710f5f`; six native tests passed). Local statement format
+parsing runs on a worker; current actor and account permissions are checked again before publishing
+a review (`dd8b77b`; twelve native tests passed). Matching and persistence retain their existing
+authority and money-neutral staging boundary.
+
+CSV column discovery stops record parsing after the first complete record, runs on a worker and
+caches results by file and separator (`ecacad3`, `b9a3f64`). Form reappearance neither restores the
+suggested separator nor resets custom mappings. Pending reads are canceled on departure; completed
+headers remain reusable, while authority changes clear them. Full Preview still validates the
+transaction body, including malformed trailing rows. The latest nine-test native run passed with
+zero failures or skips; these overlapping checkpoint runs are not a combined full suite or a
+measured end-to-end responsiveness benchmark. All checkpoints passed regular-Xcode builds and
+diff checks. Rebuild required; no server restart or migration.
+
+### Local transaction audit explanations
+
+Local Device now projects its stored transaction snapshots into safe before/after display values
+instead of returning only field names (`f513f06`). Amounts stay exact; state, tags and qualified
+category names use the existing history screen. An inaccessible historical account or split/category
+scope redacts that entire side, and raw snapshots/internal lineage identifiers remain undisclosed.
+Forty-five selected native checks passed at that checkpoint, including exact large amounts,
+malformed snapshots, historical-scope redaction, persisted clearing/reconciliation details and the
+financial regression class. The membership source audit now accepts multiline guards; two delegated
+guard paths also gained explicit entry guards. Human visual acceptance remains separate.
 
 ### Automatic Dropbox publication consent
 
@@ -236,9 +272,15 @@ Use existing disposable fixtures; retain all previously recorded human acceptanc
    the connection explicitly and confirm existing remote generations remain. Do not replace a
    current budget, delete backups, or record recovery keys in evidence.
 5. In a disposable statement review, use two same-date/amount/payee rows with different memos and
-   one exact repeated row. Confirm only the repeated row starts skipped. From Reconcile, enter a
+   one exact repeated row. For CSV, choose the needed separator and a custom column mapping, visit
+   a column selector and return; choices must remain intact. Confirm only the repeated row starts
+   skipped. From Reconcile, enter a
    statement balance, visit import history, and return: the typed balance must remain. Cancel unless
    an intentional posting/reconciliation is part of the existing acceptance fixture.
+6. On an iPhone, capture one disposable attachment with Take Photo. Confirm upload follows camera
+   dismissal, the attachment remains available for preview, and no overlapping-presentation alert
+   appears. Photos/Files cancellation already has production automation; no restart of all previously
+   accepted attachment or reconciliation workflows is requested.
 
 These flows remain human checks, not completed results. The independent live Dropbox recovery flow
 and deployment gates remain required. Current app changes require a rebuild; server payee/history
