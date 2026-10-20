@@ -269,7 +269,7 @@ struct TransactionEntryView: View {
     }
 
     private func save() async {
-        guard let parsedAmount, let parsedSplits, splitsAreValid else { return }
+        guard !isSaving, let parsedAmount, let parsedSplits, splitsAreValid else { return }
         isSaving = true
         defer { isSaving = false }
         do {
@@ -485,7 +485,7 @@ struct AllocationTransferView: View {
     }
 
     private func save() async {
-        guard let parsedAmount else { return }
+        guard !isSaving, let parsedAmount else { return }
         isSaving = true
         defer { isSaving = false }
         do {
@@ -575,7 +575,7 @@ struct AssignmentEditView: View {
     }
 
     private func save() async {
-        guard let parsedAmount else { return }
+        guard !isSaving, let parsedAmount else { return }
         isSaving = true
         defer { isSaving = false }
         do {
@@ -656,7 +656,7 @@ struct FundingRequestView: View {
     }
 
     private func save() async {
-        guard let parsedAmount else { return }
+        guard !isSaving, let parsedAmount else { return }
         isSaving = true
         defer { isSaving = false }
         do {
@@ -1015,6 +1015,7 @@ struct AccountCreationView: View {
     }
 
     private func save() async {
+        guard !isSaving else { return }
         isSaving = true
         defer { isSaving = false }
         do {
@@ -1130,6 +1131,7 @@ struct AccountSettingsView: View {
     }
 
     private func save() async {
+        guard !isSaving else { return }
         isSaving = true
         defer { isSaving = false }
         do {
@@ -1864,6 +1866,7 @@ struct CategoryCreationView: View {
     }
 
     private func save() async {
+        guard !isSaving else { return }
         isSaving = true
         defer { isSaving = false }
         do {

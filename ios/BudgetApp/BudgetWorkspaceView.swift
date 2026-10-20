@@ -15168,6 +15168,7 @@ private struct AllowanceDetailView: View {
 private struct AllowanceCreateView: View {
     @ObservedObject var store: BudgetWorkspaceStore
     @Environment(\.dismiss) private var dismiss
+    @State private var initialized = false
     @State private var memberID = ""; @State private var sourceID = ""; @State private var destinationID = ""; @State private var name = ""; @State private var amount = ""; @State private var nextDate = Date(); @State private var recurrence = "week"; @State private var interval = 1; @State private var rollover = "rollover"; @State private var isSaving = false; @State private var errorMessage: String?
     private var members: [APIHouseholdMember] { store.householdMembers.filter { $0.role != "owner" && $0.isActive } }
     private var destinations: [APICategory] { store.categories.filter { $0.delegatedUserID == memberID && !$0.isArchived } }
@@ -15184,9 +15185,12 @@ private struct AllowanceCreateView: View {
         Stepper("Every \(interval) \(recurrence == "week" ? "week(s)" : "month(s)")", value: $interval, in: 1...52)
         Picker("Unused money", selection: $rollover) { Text("Carry forward").tag("rollover"); Text("Return before next issue").tag("use_it_or_lose_it") }
         Section { Text("Saving schedules the rule only. Money moves only when an authorized person issues a due allowance.").font(.footnote).foregroundStyle(.secondary) }
-    }.navigationTitle("New Allowance").toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }; ToolbarItem(placement: .confirmationAction) { Button("Save") { Task { await save() } }.disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || memberID.isEmpty || sourceID.isEmpty || destinationID.isEmpty || parsed == nil || isSaving) } }.onAppear { memberID = members.first?.userID ?? ""; selectDefaults() }.onChange(of: memberID) { _, _ in destinationID = destinations.first?.id ?? ""; selectDefaults() }.alert("Unable to create allowance", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) { Button("OK", role: .cancel) {} } message: { Text(errorMessage ?? "Unknown error") } } }
+    }.navigationTitle("New Allowance").toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }; ToolbarItem(placement: .confirmationAction) { Button("Save") { Task { await save() } }.disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || memberID.isEmpty || sourceID.isEmpty || destinationID.isEmpty || parsed == nil || isSaving) } }.onAppear {
+        guard !initialized else { return }
+        initialized = true; memberID = members.first?.userID ?? ""; selectDefaults()
+    }.onChange(of: memberID) { _, _ in destinationID = destinations.first?.id ?? ""; selectDefaults() }.alert("Unable to create allowance", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) { Button("OK", role: .cancel) {} } message: { Text(errorMessage ?? "Unknown error") } } }
     private func selectDefaults() { if destinationID.isEmpty { destinationID = destinations.first?.id ?? "" }; if sourceID.isEmpty || sourceID == destinationID { sourceID = sources.first?.id ?? "" } }
-    private func save() async { guard let parsed else { return }; isSaving = true; defer { isSaving = false }; do { try await store.createAllowance(.init(delegatedUserID: memberID, sourceCategoryID: sourceID, name: name.trimmingCharacters(in: .whitespacesAndNewlines), amountMinor: parsed, nextIssueDate: BudgetWorkspaceStore.dateString(nextDate), recurrenceUnit: recurrence, intervalCount: interval, rolloverPolicy: rollover, splits: [.init(destinationCategoryID: destinationID, amountMinor: parsed)])); dismiss() } catch { errorMessage = error.localizedDescription } }
+    private func save() async { guard !isSaving, let parsed else { return }; isSaving = true; defer { isSaving = false }; do { try await store.createAllowance(.init(delegatedUserID: memberID, sourceCategoryID: sourceID, name: name.trimmingCharacters(in: .whitespacesAndNewlines), amountMinor: parsed, nextIssueDate: BudgetWorkspaceStore.dateString(nextDate), recurrenceUnit: recurrence, intervalCount: interval, rolloverPolicy: rollover, splits: [.init(destinationCategoryID: destinationID, amountMinor: parsed)])); dismiss() } catch { errorMessage = error.localizedDescription } }
 }
 
 private struct HouseholdMemberLifecycleView: View {
