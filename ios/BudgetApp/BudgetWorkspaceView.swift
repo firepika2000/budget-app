@@ -11366,7 +11366,10 @@ private struct TransactionAttachmentsView: View {
     private enum PendingSource { case camera, photos, files }
     @EnvironmentObject private var store: BudgetWorkspaceStore
     let transaction: APITransaction
-    @State private var attachments: [APITransactionAttachment] = []
+    @StateObject private var attachmentList = AttachmentListObservation()
+    private var attachments: [APITransactionAttachment] { attachmentList.rows }
+    private var attachmentScope: String { "\(store.authorityRevision)|\(store.budget.id)|\(transaction.id)" }
+    private var attachmentObservationContext: String { "\(attachmentScope)|\(store.reportRevision)|\(store.liveCredentialRevision)" }
     @State private var showingSources = false
     @State private var importingFile = false
     @State private var choosingPhoto = false
@@ -11385,7 +11388,9 @@ private struct TransactionAttachmentsView: View {
     }
     var body: some View {
         Section("Attachments") {
-            if attachments.isEmpty && pendingUploads.isEmpty {
+            if attachmentList.loading && attachments.isEmpty {
+                ProgressView("Loading attachments…")
+            } else if attachments.isEmpty && pendingUploads.isEmpty && attachmentList.errorMessage == nil {
                 Text(store.isWorkingOffline ? "Connect to load server attachments" : "No attachments")
                     .foregroundStyle(.secondary)
             }
@@ -11416,6 +11421,14 @@ private struct TransactionAttachmentsView: View {
                         .accessibilityIdentifier("pending-attachment-removal-\(entry.id)")
                 }
             }
+            if let message = attachmentList.errorMessage {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(attachments.isEmpty ? "Attachment list unavailable" : "Showing the last loaded attachment list")
+                        .font(.subheadline.weight(.semibold))
+                    Text(message).font(.caption).foregroundStyle(.secondary)
+                    Button("Retry Attachment List") { Task { await load() } }.disabled(attachmentList.loading)
+                }.accessibilityIdentifier("attachment-list-retry")
+            }
             ForEach(pendingUploads) { entry in
                 if let upload = entry.attachmentUpload {
                     Button { openPending(entry) } label: {
@@ -11437,7 +11450,11 @@ private struct TransactionAttachmentsView: View {
             Text("PDF, JPEG, PNG, or HEIC · 10 MB maximum · detached files retained 30 days")
                 .font(.caption).foregroundStyle(.secondary)
         }
-        .task(id: store.liveCredentialRevision) { await load() }
+        .task(id: attachmentObservationContext) { attachmentList.prepare(scope: attachmentScope); await load() }
+        .onDisappear { attachmentList.invalidate() }
+        .onChange(of: attachments) { _, rows in
+            if let pendingRemoval, !rows.contains(where: { $0.id == pendingRemoval.id }) { self.pendingRemoval = nil }
+        }
         .onChange(of: pendingUploads.count) { oldCount, newCount in
             if oldCount > 0 && newCount == 0 { Task { await load() } }
         }
@@ -11466,19 +11483,8 @@ private struct TransactionAttachmentsView: View {
         .alert("Attachment error", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) { Button("OK", role: .cancel) {} } message: { Text(error ?? "Unknown error") }
     }
     private func load() async {
-        do {
-            attachments = try await store.transactionAttachments(id: transaction.id)
-            error = nil
-        } catch is CancellationError {
-            // Credential rotation cancels the stale load and immediately starts one with the current token.
-        } catch let error as URLError where error.code == .cancelled {
-            // URLSession reports task cancellation through URLError on some OS releases.
-        } catch {
-            guard !Task.isCancelled else { return }
-            if case let APIClientError.server(status, _) = error, status == 401 || status == 403 || status == 404 {
-                attachments = []; pendingRemoval = nil
-            }
-            self.error = error.localizedDescription
+        await attachmentList.load(transactionID: transaction.id) {
+            try await store.transactionAttachments(id: transaction.id)
         }
     }
     private func importFile(_ result: Result<URL, Error>) async { do { let url = try result.get(); let scoped = url.startAccessingSecurityScopedResource(); defer { if scoped { url.stopAccessingSecurityScopedResource() } }; let values = try url.resourceValues(forKeys: [.contentTypeKey]); let data = try Data(contentsOf: url, options: .mappedIfSafe); try await upload(data: data, filename: url.lastPathComponent, contentType: values.contentType?.preferredMIMEType ?? "application/octet-stream") } catch { self.error = error.localizedDescription } }

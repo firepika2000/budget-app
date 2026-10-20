@@ -11,6 +11,65 @@ import UserNotifications
 @testable import Budget_App
 
 final class DemoStoreTests: XCTestCase {
+    func testProductionAttachmentReadFailuresAreInlineAndObserveWorkspaceRefresh() throws {
+        let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("BudgetApp/BudgetWorkspaceView.swift")
+        let source = try String(contentsOf: file)
+        let start = try XCTUnwrap(source.range(of: "private struct TransactionAttachmentsView: View"))
+        let end = try XCTUnwrap(source.range(of: "private struct AttachmentPreviewScreen: View"))
+        let view = String(source[start.lowerBound..<end.lowerBound])
+        XCTAssertTrue(view.contains(".task(id: attachmentObservationContext)"))
+        XCTAssertTrue(view.contains("store.reportRevision")); XCTAssertTrue(view.contains("store.liveCredentialRevision"))
+        XCTAssertTrue(view.contains("attachmentList.prepare(scope: attachmentScope)"))
+        XCTAssertTrue(view.contains("Retry Attachment List"))
+        XCTAssertTrue(view.contains("Showing the last loaded attachment list"))
+        let loadStart = try XCTUnwrap(view.range(of: "private func load() async"))
+        let loadEnd = try XCTUnwrap(view.range(of: "private func importFile"))
+        let read = view[loadStart.lowerBound..<loadEnd.lowerBound]
+        XCTAssertTrue(read.contains("attachmentList.load(transactionID:"))
+        XCTAssertFalse(read.contains("self.error ="), "Background reads must not trigger the command-error alert")
+    }
+
+    @MainActor
+    func testAttachmentListPreservesTransientMetadataButClearsDeniedScope() async throws {
+        let row = try attachmentListFixture(id: "a")
+        let observation = AttachmentListObservation()
+        observation.prepare(scope: "owner|budget|t")
+        await observation.load(transactionID: "t") { [row] }
+        XCTAssertEqual(observation.rows, [row])
+        await observation.load(transactionID: "t") { throw URLError(.notConnectedToInternet) }
+        XCTAssertEqual(observation.rows, [row]); XCTAssertNotNil(observation.errorMessage)
+        await observation.load(transactionID: "t") { [] }
+        XCTAssertTrue(observation.rows.isEmpty); XCTAssertNil(observation.errorMessage)
+        await observation.load(transactionID: "t") { [row] }
+        await observation.load(transactionID: "t") { throw BudgetApplicationError.permissionDenied("Scope changed") }
+        XCTAssertTrue(observation.rows.isEmpty)
+        observation.prepare(scope: "new-member|budget|t")
+        XCTAssertTrue(observation.rows.isEmpty)
+    }
+
+    @MainActor
+    func testAttachmentListRejectsSupersededDuplicateAndWrongTransactionResponses() async throws {
+        let row = try attachmentListFixture(id: "a"), foreign = try attachmentListFixture(id: "b", transactionID: "other")
+        let observation = AttachmentListObservation()
+        observation.prepare(scope: "a")
+        await observation.load(transactionID: "t") { [row] }
+        await observation.load(transactionID: "t") { [row, row] }
+        XCTAssertEqual(observation.rows, [row]); XCTAssertNotNil(observation.errorMessage)
+        await observation.load(transactionID: "t") { [foreign] }
+        XCTAssertEqual(observation.rows, [row])
+        await observation.load(transactionID: "t") { observation.prepare(scope: "b"); return [row] }
+        XCTAssertTrue(observation.rows.isEmpty); XCTAssertFalse(observation.loading)
+        await observation.load(transactionID: "t") { [row] }
+        XCTAssertEqual(observation.rows, [row]); XCTAssertNil(observation.errorMessage)
+    }
+
+    private func attachmentListFixture(id: String, transactionID: String = "t") throws -> APITransactionAttachment {
+        try JSONDecoder().decode(APITransactionAttachment.self, from: JSONSerialization.data(withJSONObject: [
+            "id": id, "transaction_id": transactionID, "filename": "receipt.jpg", "content_type": "image/jpeg",
+            "byte_count": 4, "sha256": String(repeating: "a", count: 64), "created_at": "2026-10-20T00:00:00Z"
+        ]))
+    }
+
     @MainActor
     func testAccountHistorySharedPagerRefreshesCanonicalRenameWithoutChangingMoney() async throws {
         let store = BudgetWorkspaceStore.demo()
@@ -2784,7 +2843,10 @@ final class DemoStoreTests: XCTestCase {
                       "whole-budget Available visibility must remain an explicit owner control")
         XCTAssertTrue(workspace.contains("payee-search-load-more"), "large payee histories must paginate instead of hydrating every identity")
         XCTAssertFalse(workspace.contains("async let loadedPayees = client.payees"), "workspace hydration must not download the entire household payee history")
-        XCTAssertTrue(workspace.contains(".task(id: store.liveCredentialRevision)"), "attachment loading must cancel stale credential work and run once for the current credential generation")
+        XCTAssertTrue(workspace.contains(".task(id: attachmentObservationContext)"), "attachment reads must follow current workspace and credential observations")
+        XCTAssertTrue(workspace.contains("store.reportRevision)|\\(store.liveCredentialRevision)"))
+        XCTAssertTrue(workspace.contains("AttachmentListObservation()"))
+        XCTAssertTrue(workspace.contains("attachment-list-retry"))
         XCTAssertTrue(workspace.contains("attachment-take-photo"))
         XCTAssertTrue(workspace.contains("attachment-choose-photo"))
         XCTAssertTrue(workspace.contains("attachment-choose-file"))

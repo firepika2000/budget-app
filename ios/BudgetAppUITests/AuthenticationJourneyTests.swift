@@ -1951,12 +1951,16 @@ final class AuthenticationJourneyTests: XCTestCase {
 
     func testProductionAttachmentPreviewOpensWithoutInvokingRemoval() {
         let app = XCUIApplication()
-        app.launchArguments = ["--demo", "--demo-screen=activity"]
+        app.launchArguments = ["--demo", "--demo-screen=activity", "--skip-guided-onboarding"]
         app.launch()
 
-        app.buttons["transaction-row-t1"].tap()
+        let transaction = app.buttons["transaction-row-t1"]
+        for _ in 0..<8 where !transaction.exists || !transaction.isHittable { app.swipeUp() }
+        XCTAssertTrue(transaction.waitForExistence(timeout: 5))
+        transaction.tap()
         let preview = app.buttons["attachment-preview-demo-attachment-t1"]
         let remove = app.buttons["attachment-remove-demo-attachment-t1"]
+        for _ in 0..<6 where !preview.exists || !preview.isHittable { app.swipeUp() }
         XCTAssertTrue(preview.waitForExistence(timeout: 5))
         XCTAssertTrue(remove.exists)
 

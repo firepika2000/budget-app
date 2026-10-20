@@ -424,6 +424,45 @@ enum HistoryRetryIntent {
 }
 
 @MainActor
+final class AttachmentListObservation: ObservableObject {
+    @Published private(set) var rows: [APITransactionAttachment] = []
+    @Published private(set) var loading = false
+    @Published private(set) var errorMessage: String?
+    private var scope: String?
+    private var requestID = UUID()
+
+    func prepare(scope: String) {
+        invalidate()
+        if self.scope != scope { rows = [] }
+        self.scope = scope
+        errorMessage = nil
+    }
+
+    func invalidate() { requestID = UUID(); loading = false }
+
+    func load(transactionID: String, fetch: () async throws -> [APITransactionAttachment]) async {
+        let observed = UUID(); requestID = observed
+        loading = true
+        defer { if requestID == observed { loading = false } }
+        do {
+            let next = try await fetch()
+            try Task.checkCancellation()
+            guard requestID == observed else { return }
+            guard next.count <= 20, Set(next.map(\.id)).count == next.count,
+                  next.allSatisfy({ !$0.id.isEmpty && $0.transactionID == transactionID && $0.detachedAt == nil }) else {
+                throw BudgetApplicationError.invalidOperation("The attachment list could not be verified. Retry to refresh it.")
+            }
+            rows = next; errorMessage = nil
+        } catch {
+            guard requestID == observed, !(error is CancellationError),
+                  (error as? URLError)?.code != .cancelled else { return }
+            if HistoryObservationPolicy.mustDiscard(after: error) { rows = [] }
+            errorMessage = error.localizedDescription
+        }
+    }
+}
+
+@MainActor
 final class DecisionHistoryPager<Row: Identifiable & Sendable>: ObservableObject {
     @Published private(set) var rows: [Row] = []
     @Published private(set) var loading = false

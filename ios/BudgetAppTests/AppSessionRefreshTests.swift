@@ -762,6 +762,9 @@ final class AppSessionRefreshTests: XCTestCase {
             }
             // A successful command triggers authoritative hydration. Model that healthy read path
             // rather than accidentally representing revoked access with blanket 404 responses.
+            if request.url?.path.hasSuffix("/account-balances") == true {
+                return Self.json(200, #"[{"account_id":"private-account","currency_code":"USD","cleared_balance_minor":0,"uncleared_balance_minor":0,"working_balance_minor":0}]"#)
+            }
             if request.httpMethod == "GET" { return Self.workspaceResponse(request.url!.path) }
             return Self.json(404, "{}")
         }
@@ -769,7 +772,9 @@ final class AppSessionRefreshTests: XCTestCase {
         configuration.protocolClasses = [RefreshMockURLProtocol.self]
         let session = URLSession(configuration: configuration)
         let budget = APIBudget(id: "b1", householdID: "h1", name: "Home", currencyCode: "USD")
-        let serverURL = URL(string: "https://budget.example.com")!
+        // Give this Live-shaped journey its own durable cache/outbox namespace. A previous
+        // authorization-denial test must not quarantine this unrelated healthy session.
+        let serverURL = URL(string: "https://attachment-rotation-\(UUID().uuidString.lowercased()).example.com")!
         let store = BudgetWorkspaceStore.production(
             context: .live(budget: budget, serverURL: serverURL, token: "A1"),
             clientFactory: { try APIClient(baseURL: $0, session: session) }
