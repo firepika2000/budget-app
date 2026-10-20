@@ -4285,12 +4285,36 @@ final class DemoStoreTests: XCTestCase {
         let categories = SpendingBreakdownSlice.make(from: report, mode: .category)
         XCTAssertEqual(categories.map(\.id), ["food", "fuel"])
         XCTAssertEqual(categories.map(\.spendingMinor), [7_001, 2_999])
+        XCTAssertEqual(categories.map(\.name), ["Everyday · Food", "Everyday · Fuel"])
         XCTAssertEqual(categories[0].percentage(of: report.totalSpendingMinor), 0.7001, accuracy: 0.000_001)
 
         let groups = SpendingBreakdownSlice.make(from: report, mode: .group)
         XCTAssertEqual(groups.count, 1)
         XCTAssertEqual(groups[0].spendingMinor, report.totalSpendingMinor)
         XCTAssertEqual(Set(groups[0].transactionIDs), ["purchase", "refund", "split"])
+    }
+
+    func testSpendingBreakdownQualifiesDuplicateNamesAndStabilizesTiedRanks() throws {
+        let rows = [
+            #"{"category_id":"child-food","category_name":"Food","category_group":"Child","spending_minor":5000,"transaction_ids":["split"]}"#,
+            #"{"category_id":"home-food","category_name":"Food","category_group":"Home","spending_minor":5000,"transaction_ids":["purchase","refund"]}"#,
+        ]
+        var previous: [SpendingBreakdownSlice]?
+        for ordered in [rows, rows.reversed().map { $0 }] {
+            let report = try JSONDecoder().decode(APISpendingReport.self, from: Data("""
+            {"start_date":"2026-09-01","end_date":"2026-09-30","currency_code":"USD","total_spending_minor":10000,"categories":[\(ordered.joined(separator: ","))]}
+            """.utf8))
+            let slices = SpendingBreakdownSlice.make(from: report, mode: .category)
+            XCTAssertEqual(slices.map(\.name), ["Child · Food", "Home · Food"])
+            XCTAssertEqual(slices.map(\.id), ["child-food", "home-food"])
+            XCTAssertEqual(slices[1].transactionIDs, ["purchase", "refund"])
+            XCTAssertEqual(slices[0].percentage(of: report.totalSpendingMinor), 0.5)
+            XCTAssertTrue(slices[0].shareText(of: report.totalSpendingMinor, hidden: false).contains("%"))
+            XCTAssertEqual(slices[0].shareText(of: report.totalSpendingMinor, hidden: true), "Share hidden")
+            XCTAssertEqual(SpendingBreakdownSlice.make(from: report, mode: .group).map(\.name), ["Child", "Home"])
+            if let previous { XCTAssertEqual(slices, previous) }
+            previous = slices
+        }
     }
 
     func testProductionSpendingBreakdownRetainsSectorMarkPath() throws {

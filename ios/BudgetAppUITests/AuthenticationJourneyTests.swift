@@ -973,6 +973,32 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertTrue(app.otherElements.matching(identifier: "spending-breakdown-sector-chart").firstMatch.waitForExistence(timeout: 5))
     }
 
+    func testSpendingRankedRowsExposeQualifiedCategoryAndSharedDrillThrough() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--demo-screen=insights"]
+        app.launch()
+        XCTAssertTrue(app.navigationBars["Insights"].waitForExistence(timeout: 5))
+        let spending = app.buttons["insights-spending-income"]
+        XCTAssertTrue(spending.waitForExistence(timeout: 5))
+        XCTAssertTrue(spending.isHittable, "Primary reports should be discoverable without scrolling past the resilience report")
+        spending.tap()
+        XCTAssertTrue(app.navigationBars["Spending & Income"].waitForExistence(timeout: 5))
+        let row = app.buttons["spending-breakdown-row-groceries"]
+        let viewport = app.windows.firstMatch.frame.inset(by: UIEdgeInsets(top: 170, left: 0, bottom: 100, right: 0))
+        for _ in 0..<8 {
+            if row.exists && viewport.contains(row.frame) && row.isHittable { break }
+            if row.exists && row.frame.maxY < viewport.minY { app.swipeDown(velocity: .slow) }
+            else { app.swipeUp(velocity: .slow) }
+        }
+        XCTAssertTrue(row.isHittable)
+        XCTAssertEqual(row.label, "Food · Groceries")
+        let value = row.value as? String ?? ""
+        XCTAssertTrue(value.contains("%") || value.contains("Share hidden"))
+        row.tap()
+        XCTAssertTrue(app.navigationBars["Groceries"].waitForExistence(timeout: 5))
+    }
+
     func testInsightsHubNavigatesFocusedReportsAndDebtProgression() {
         let app = XCUIApplication()
         app.launchArguments = ["--demo", "--demo-screen=insights"]

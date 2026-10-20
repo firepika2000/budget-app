@@ -13358,6 +13358,12 @@ private struct LiveInsightsView: View {
     @State private var exportError: String?
     var body: some View {
         List {
+            Section("Reports") {
+                NavigationLink { SpendingIncomeReportView() } label: { reportLink("Spending & Income", "Where money came from and where it went.", "chart.pie") }.accessibilityIdentifier("insights-spending-income")
+                NavigationLink { PlanPerformanceReportView() } label: { reportLink("Plan Performance", "Assignments, activity, targets, and overspending.", "target") }.accessibilityIdentifier("insights-plan-performance")
+                NavigationLink { NetWorthDestinationView() } label: { reportLink("Net Worth", "Assets, liabilities, and change over time.", "chart.line.uptrend.xyaxis") }.accessibilityIdentifier("insights-net-worth")
+                NavigationLink { DebtInterestDestinationView() } label: { reportLink("Debt & Interest", "Balances, recorded interest, and payoff planning.", "creditcard.trianglebadge.exclamationmark") }.accessibilityIdentifier("insights-debt-interest")
+            }
             Section("Financial Snapshot") {
                 if let worth = store.insightsSummary?.netWorthMinor { LabeledContent("Net worth", value: store.format(worth)) }
                 if let cash = store.insightsSummary?.netCashFlowMinor { LabeledContent("Net cash flow", value: store.format(cash)) }
@@ -13368,12 +13374,6 @@ private struct LiveInsightsView: View {
                 if let interest = store.insightsSummary?.recordedInterestMonthMinor { LabeledContent("Recorded interest this month", value: store.format(interest)) }
             }
             if let resilience = store.resilienceReport { ResilienceInsightsView(report: resilience) }
-            Section("Reports") {
-                NavigationLink { SpendingIncomeReportView() } label: { reportLink("Spending & Income", "Where money came from and where it went.", "chart.pie") }.accessibilityIdentifier("insights-spending-income")
-                NavigationLink { PlanPerformanceReportView() } label: { reportLink("Plan Performance", "Assignments, activity, targets, and overspending.", "target") }.accessibilityIdentifier("insights-plan-performance")
-                NavigationLink { NetWorthDestinationView() } label: { reportLink("Net Worth", "Assets, liabilities, and change over time.", "chart.line.uptrend.xyaxis") }.accessibilityIdentifier("insights-net-worth")
-                NavigationLink { DebtInterestDestinationView() } label: { reportLink("Debt & Interest", "Balances, recorded interest, and payoff planning.", "creditcard.trianglebadge.exclamationmark") }.accessibilityIdentifier("insights-debt-interest")
-            }
             if let margin = store.insightsSummary?.expectedMarginMinor { Section("Looking Ahead") { LabeledContent("Expected 30-day margin", value: store.format(margin)); Text("Forecast-only scheduled income and outflows. It does not change money available today.").font(.caption).foregroundStyle(.secondary) } }
         }.modifier(ReportLoadModifier(kinds: [.summary, .resilience], suspended: showFilters))
         .navigationTitle("Insights").accessibilityIdentifier("insights-hub")
@@ -13492,7 +13492,7 @@ private struct SpendingIncomeReportView: View {
     var body: some View { List {
         ReportPeriodControls()
         if let income=store.incomeReport { IncomeSpendingTrendsView(report:income) }
-        if let spending=store.spendingReport { SpendingBreakdownView(report:spending,mode:$mode,selectedAngle:$angle,selectedSlice:$slice);Section("Ranked breakdown"){ForEach(SpendingBreakdownSlice.make(from:spending,mode:mode)){item in Button{slice=item}label:{LabeledContent(item.name,value:store.format(item.spendingMinor))}}} }
+        if let spending=store.spendingReport { SpendingBreakdownView(report:spending,mode:$mode,selectedAngle:$angle,selectedSlice:$slice); SpendingRankedBreakdownView(report: spending, mode: mode, selectedSlice: $slice) }
         else { ContentUnavailableView("No spending in this range",systemImage:"chart.pie",description:Text("Try a wider date range.")) }
         if let trends=store.spendingTrendsReport { SpendingTrendsView(report:trends) }
         if store.budget.can("export_data") { Section("Export") { if let exportURL { ShareLink(item:exportURL){Label("Share Report CSV",systemImage:"square.and.arrow.up")}.accessibilityIdentifier("share-report-csv") };Button{Task{do{exportURL=try await store.exportReports()}catch{exportError=error.localizedDescription}}}label:{Label(exportURL == nil ? "Prepare Report CSV":"Refresh Report CSV",systemImage:"tablecells")}.accessibilityIdentifier("prepare-report-csv") } }
@@ -14660,13 +14660,53 @@ struct SpendingBreakdownSlice: Identifiable, Hashable {
 
     static func make(from report: APISpendingReport, mode: SpendingBreakdownMode) -> [Self] {
         if mode == .category {
-            return report.categories.filter { $0.spendingMinor > 0 }.map { Self(id: $0.categoryID, name: $0.categoryName, spendingMinor: $0.spendingMinor, transactionIDs: $0.transactionIDs, mode: mode) }.sorted { $0.spendingMinor > $1.spendingMinor }
+            return report.categories.filter { $0.spendingMinor > 0 }.map { Self(id: $0.categoryID, name: "\($0.categoryGroup) · \($0.categoryName)", spendingMinor: $0.spendingMinor, transactionIDs: $0.transactionIDs, mode: mode) }.sorted(by: rankedBefore)
         }
         let groups = Dictionary(grouping: report.categories.filter { $0.spendingMinor > 0 }, by: \.categoryGroup)
-        return groups.map { name, rows in Self(id: "group:\(name)", name: name, spendingMinor: rows.reduce(Int64(0)) { $0 + $1.spendingMinor }, transactionIDs: Array(Set(rows.flatMap(\.transactionIDs))).sorted(), mode: mode) }.sorted { $0.spendingMinor > $1.spendingMinor }
+        return groups.map { name, rows in Self(id: "group:\(name)", name: name, spendingMinor: rows.reduce(Int64(0)) { $0 + $1.spendingMinor }, transactionIDs: Array(Set(rows.flatMap(\.transactionIDs))).sorted(), mode: mode) }.sorted(by: rankedBefore)
+    }
+
+    private static func rankedBefore(_ lhs: Self, _ rhs: Self) -> Bool {
+        if lhs.spendingMinor != rhs.spendingMinor { return lhs.spendingMinor > rhs.spendingMinor }
+        if lhs.name != rhs.name { return lhs.name < rhs.name }
+        return lhs.id < rhs.id
     }
 
     func percentage(of total: Int64) -> Double { total > 0 ? Double(spendingMinor) / Double(total) : 0 }
+    func shareText(of total: Int64, hidden: Bool) -> String {
+        hidden ? "Share hidden" : percentage(of: total).formatted(.percent.precision(.fractionLength(1)))
+    }
+}
+
+private struct SpendingRankedBreakdownView: View {
+    @EnvironmentObject private var store: BudgetWorkspaceStore
+    let report: APISpendingReport
+    let mode: SpendingBreakdownMode
+    @Binding var selectedSlice: SpendingBreakdownSlice?
+
+    var body: some View {
+        Section("Ranked breakdown") {
+            ForEach(SpendingBreakdownSlice.make(from: report, mode: mode)) { slice in
+                Button { selectedSlice = slice } label: {
+                    LabeledContent(slice.name) {
+                        VStack(alignment: .trailing, spacing: 3) {
+                            Text(store.format(slice.spendingMinor)).monospacedDigit()
+                            Text(share(of: slice)).font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                .accessibilityLabel(slice.name)
+                .accessibilityValue("\(store.format(slice.spendingMinor)), \(share(of: slice))")
+                .accessibilityAddTraits(.isButton)
+                .accessibilityHint(mode == .group ? "Open categories in this group" : "Open contributing transactions")
+                .accessibilityIdentifier("spending-breakdown-row-\(slice.id)")
+            }
+        }
+    }
+
+    private func share(of slice: SpendingBreakdownSlice) -> String {
+        slice.shareText(of: report.totalSpendingMinor, hidden: store.hideAmounts)
+    }
 }
 
 private struct SpendingBreakdownView: View {
