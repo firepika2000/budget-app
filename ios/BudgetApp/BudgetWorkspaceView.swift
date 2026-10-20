@@ -15513,17 +15513,19 @@ private struct LiveMemberAccessView: View {
     @ObservedObject var store: BudgetWorkspaceStore
     let member: APIHouseholdMember
     var onSaved: (APIAccessProfile) -> Void = { _ in }
-    @State private var profile: APIAccessProfile?
+    @StateObject private var observation = MemberAccessProfileObservation()
+    private var profile: APIAccessProfile? { observation.value }
     @State private var preset: MemberAccessPreset = .view
     @State private var capabilities: Set<String> = []
     @State private var restrictAccounts = false
     @State private var accountIDs: Set<String> = []
     @State private var restrictCategories = false
     @State private var categoryIDs: Set<String> = []
-    @State private var isLoading = true
+    private var isLoading: Bool { observation.loading }
     @State private var isSaving = false
     @State private var didSave = false
     @State private var errorMessage: String?
+    private var accessScope: String { "\(store.authorityRevision)|\(store.budget.id)|\(member.userID)" }
 
     private let visibility = [
         MemberCapability(id: "view_budget", title: "Open this budget", explanation: "Access the budget workspace"),
@@ -15563,17 +15565,29 @@ private struct LiveMemberAccessView: View {
     var body: some View {
         Group {
             if isLoading { ProgressView("Loading access…") }
-            else if profile == nil { ContentUnavailableView("Access unavailable", systemImage: "exclamationmark.triangle", description: Text(errorMessage ?? "Unable to load this member's access.")) }
+            else if profile == nil {
+                VStack(spacing: 16) {
+                    ContentUnavailableView("Access unavailable", systemImage: "exclamationmark.triangle",
+                        description: Text(observation.errorMessage ?? "Unable to load this member's access."))
+                    Button("Try Again") { Task { await load() } }
+                        .accessibilityIdentifier("member-access-retry")
+                }
+            }
             else { form }
         }
         .navigationTitle(member.displayName)
         .navigationBarTitleDisplayMode(.inline)
-        .task {
+        .task(id: accessScope) {
+            observation.prepare(scope: accessScope)
             guard profile == nil else { return }
             await load()
         }
+        .onDisappear { observation.invalidate() }
         .toolbar { if profile != nil { Button(didSave ? "Saved" : "Save") { Task { await save() } }.disabled(isSaving || (restrictAccounts && accountIDs.isEmpty) || (restrictCategories && categoryIDs.isEmpty)) } }
-        .alert("Unable to update access", isPresented: Binding(get: { errorMessage != nil && profile != nil }, set: { if !$0 { errorMessage = nil } })) { Button("OK", role: .cancel) {} } message: { Text(errorMessage ?? "Unknown error") }
+        .alert("Unable to update access", isPresented: Binding(get: { errorMessage != nil && profile != nil }, set: { if !$0 { errorMessage = nil } })) {
+            Button("Keep Edits", role: .cancel) {}
+            Button("Reload Latest") { Task { await load() } }
+        } message: { Text("\(errorMessage ?? "Unknown error")\nReload Latest replaces your unsaved edits with the current access profile.") }
         .accessibilityIdentifier("member-access-screen")
     }
 
@@ -15683,22 +15697,28 @@ private struct LiveMemberAccessView: View {
     private func capabilityBinding(_ name: String) -> Binding<Bool> { Binding(get: { capabilities.contains(name) }, set: { enabled in if enabled { capabilities.insert(name) } else { capabilities.remove(name) }; preset = matchingPreset() }) }
     private func matchingPreset() -> MemberAccessPreset { MemberAccessPreset.allCases.first(where: { $0 != .custom && $0.capabilities == capabilities }) ?? .custom }
     private func load() async {
-        isLoading = true; defer { isLoading = false }
-        do { let value = try await store.accessProfile(userID: member.userID); apply(value); errorMessage = nil }
-        catch { errorMessage = error.localizedDescription }
+        observation.prepare(scope: accessScope)
+        if let value = await observation.load(fetch: { try await store.accessProfile(userID: member.userID) }) {
+            apply(value); errorMessage = nil; didSave = false
+        } else if profile != nil { errorMessage = observation.errorMessage }
     }
     private func apply(_ value: APIAccessProfile) {
-        profile = value; capabilities = Set(value.capabilities); preset = matchingPreset()
+        capabilities = Set(value.capabilities); preset = matchingPreset()
         restrictAccounts = value.restrictAccounts; accountIDs = Set(value.accountIDs)
         restrictCategories = value.restrictCategories; categoryIDs = Set(value.categoryIDs)
     }
     private func save() async {
-        guard let profile else { return }; isSaving = true; defer { isSaving = false }
+        guard !isSaving, !isLoading, let profile else { return }
+        let scope = accessScope
+        isSaving = true; defer { isSaving = false }
         do {
             let value = APIAccessProfileUpsert(capabilities: capabilities.sorted(), restrictAccounts: restrictAccounts, accountIDs: accountIDs.sorted(), restrictCategories: restrictCategories, categoryIDs: categoryIDs.sorted(), expectedVersion: profile.version)
             let updated = try await store.updateAccessProfile(userID: member.userID, value: value)
-            apply(updated); onSaved(updated); errorMessage = nil; didSave = true
-        } catch { errorMessage = error.localizedDescription }
+            guard accessScope == scope, !Task.isCancelled else { return }
+            observation.accept(updated); apply(updated); onSaved(updated); errorMessage = nil; didSave = true
+        } catch {
+            if accessScope == scope { observation.reject(error); errorMessage = error.localizedDescription }
+        }
     }
 }
 

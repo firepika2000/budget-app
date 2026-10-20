@@ -1772,7 +1772,7 @@ final class AuthenticationJourneyTests: XCTestCase {
         preset.tap()
         app.buttons["Full Access"].tap()
         let accountScope = app.switches["member-access-restrict-accounts"]
-        for _ in 0..<6 where !accountScope.exists { app.swipeUp() }
+        for _ in 0..<6 where !accountScope.isHittable { app.swipeUp() }
         XCTAssertTrue(accountScope.waitForExistence(timeout: 5))
         accountScope.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
         app.buttons["member-access-choose-accounts"].tap()
@@ -1784,10 +1784,13 @@ final class AuthenticationJourneyTests: XCTestCase {
         app.navigationBars.buttons["Jordan Rivera"].tap()
 
         let categoryScope = app.switches["member-access-restrict-categories"]
-        for _ in 0..<6 where !categoryScope.exists { app.swipeUp() }
+        for _ in 0..<6 where !categoryScope.isHittable { app.swipeUp() }
         XCTAssertTrue(categoryScope.waitForExistence(timeout: 5))
         categoryScope.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
-        app.buttons["member-access-choose-categories"].tap()
+        XCTAssertEqual(categoryScope.value as? String, "1")
+        let chooseCategories = app.buttons["member-access-choose-categories"]
+        for _ in 0..<4 where !chooseCategories.isHittable { app.swipeUp() }
+        XCTAssertTrue(chooseCategories.waitForExistence(timeout: 5)); chooseCategories.tap()
         XCTAssertTrue(app.navigationBars["Visible Categories"].waitForExistence(timeout: 5))
         let groceriesScope = app.buttons["member-scope-choice-groceries"]
         XCTAssertTrue(groceriesScope.waitForExistence(timeout: 5))

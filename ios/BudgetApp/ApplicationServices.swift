@@ -596,6 +596,45 @@ final class AttachmentListObservation: ObservableObject {
     }
 }
 
+@MainActor
+final class MemberAccessProfileObservation: ObservableObject {
+    @Published private(set) var value: APIAccessProfile?
+    @Published private(set) var loading = false
+    @Published private(set) var errorMessage: String?
+    private var scope: String?
+    private var requestID = UUID()
+
+    func prepare(scope: String) {
+        guard self.scope != scope else { return }
+        invalidate(); self.scope = scope; value = nil; errorMessage = nil
+    }
+
+    func invalidate() { requestID = UUID(); loading = false }
+
+    func accept(_ value: APIAccessProfile) { self.value = value; errorMessage = nil }
+
+    func reject(_ error: Error) {
+        if HistoryObservationPolicy.mustDiscard(after: error) { value = nil }
+        errorMessage = error.localizedDescription
+    }
+
+    @discardableResult
+    func load(fetch: () async throws -> APIAccessProfile) async -> APIAccessProfile? {
+        let observed = UUID(); requestID = observed; loading = true
+        defer { if requestID == observed { loading = false } }
+        do {
+            let result = try await fetch()
+            try Task.checkCancellation()
+            guard requestID == observed else { return nil }
+            accept(result); return result
+        } catch {
+            guard requestID == observed, !(error is CancellationError) else { return nil }
+            reject(error)
+            return nil
+        }
+    }
+}
+
 struct DelegatedPolicyEditorDraft {
     var poolCategoryID = ""
     var authority = ""

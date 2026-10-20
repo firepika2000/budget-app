@@ -11,6 +11,44 @@ import UserNotifications
 @testable import Budget_App
 
 final class DemoStoreTests: XCTestCase {
+    @MainActor
+    func testMemberAccessReadRetryScopeAndDenial() async throws {
+        let profile = try JSONDecoder().decode(APIAccessProfile.self, from: Data(#"{"budget_id":"budget","user_id":"member","capabilities":["view_budget"],"restrict_accounts":false,"account_ids":[],"restrict_categories":false,"category_ids":[],"grant_permission":"view","is_custom":false,"version":4}"#.utf8))
+        let observation = MemberAccessProfileObservation()
+        observation.prepare(scope: "owner|budget|member")
+        let failed = await observation.load { throw URLError(.timedOut) }
+        XCTAssertNil(failed); XCTAssertNil(observation.value); XCTAssertNotNil(observation.errorMessage)
+        let retried = await observation.load { profile }
+        XCTAssertEqual(retried, profile); XCTAssertEqual(observation.value?.version, 4)
+        XCTAssertNil(observation.errorMessage); XCTAssertFalse(observation.loading)
+        _ = await observation.load { throw URLError(.notConnectedToInternet) }
+        XCTAssertEqual(observation.value, profile, "Transient failure retains reviewed version and draft")
+        _ = await observation.load {
+            observation.prepare(scope: "other-owner|budget|member"); return profile
+        }
+        XCTAssertNil(observation.value, "Late result must not repopulate a changed authority scope")
+        _ = await observation.load { profile }
+        observation.reject(APIClientError.server(status: 403, message: "Denied"))
+        XCTAssertNil(observation.value)
+        _ = await observation.load { profile }
+        _ = await observation.load { observation.invalidate(); return profile }
+        XCTAssertFalse(observation.loading); XCTAssertEqual(observation.value, profile)
+    }
+
+    func testMemberAccessProductionRetryAndSaveUseScopedObservation() throws {
+        let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("BudgetApp/BudgetWorkspaceView.swift")
+        let source = try String(contentsOf: file)
+        let start = try XCTUnwrap(source.range(of: "private struct LiveMemberAccessView: View"))
+        let end = try XCTUnwrap(source.range(of: "struct LiveDelegatedPolicyView: View"))
+        let view = String(source[start.lowerBound..<end.lowerBound])
+        XCTAssertTrue(view.contains("MemberAccessProfileObservation()"))
+        XCTAssertTrue(view.contains("member-access-retry"))
+        XCTAssertTrue(view.contains(".task(id: accessScope)"))
+        XCTAssertTrue(view.contains("guard !isSaving, !isLoading, let profile else"))
+        XCTAssertTrue(view.contains("expectedVersion: profile.version"))
+        XCTAssertTrue(view.contains("Button(\"Reload Latest\")"))
+        XCTAssertTrue(view.contains("observation.reject(error)"))
+    }
     func testDelegatedEditorPreservesDraftRulesAndReviewedVersionAcrossReappearance() throws {
         let policy = try JSONDecoder().decode(APIDelegatedBudget.self, from: Data(#"{"id":"policy","budget_id":"budget","user_id":"member","pool_category_id":"pool","authority_minor":9007199254740993,"assigned_minor":0,"available_to_assign_minor":9007199254740993,"allow_category_creation":false,"allow_reallocation":true,"rules":[{"id":"rule","category_id":"private-category","rule_kind":"hard_limit","minimum_minor":1,"maximum_minor":12345}]}"#.utf8))
         var draft = DelegatedPolicyEditorDraft()
