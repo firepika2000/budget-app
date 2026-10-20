@@ -127,6 +127,20 @@ public actor LocalDatabase {
         }
     }
 
+    /// Synchronous isolated work cannot suspend between its reads and writes.
+    public func withTransaction<Value: Sendable>(_ body: @Sendable (isolated LocalDatabase) throws -> Value) throws -> Value {
+        let database = try requireHandle()
+        try Self.execute("BEGIN IMMEDIATE", on: database)
+        do {
+            let value = try body(self)
+            try Self.execute("COMMIT", on: database)
+            return value
+        } catch {
+            try? Self.execute("ROLLBACK", on: database)
+            throw error
+        }
+    }
+
     public func rows(_ statement: LocalSQLStatement) throws -> [LocalSQLiteRow] {
         try Self.rows(statement.sql, values: statement.values, on: requireHandle())
     }

@@ -652,6 +652,10 @@ public actor LocalAuthorityStore {
 
     public func close() async { await database.close() }
 
+    public func repairPayeeRelationships(budgetID: String, ownerID: String, timestamp: String) async throws -> Int {
+        try await database.repairPayeeRelationships(budgetID: budgetID, ownerID: ownerID, timestamp: timestamp)
+    }
+
     public func bootstrap(_ identity: LocalAuthorityIdentity, createdAt: String, installStarterPlan: Bool = false) async throws {
         guard !identity.householdName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               !identity.ownerDisplayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,

@@ -5183,6 +5183,36 @@ final class DemoStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testHistoricalLocalPayeeRepairsThroughProductionHydration() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let authority = try LocalAuthorityStore(fileURL: root.appendingPathComponent("authority.sqlite3"))
+        let identity = LocalAuthorityIdentity(householdID: "h", householdName: "Household", ownerUserID: "owner",
+            ownerDisplayName: "Owner", budgetID: "b", budgetName: "Budget", currencyCode: "USD")
+        try await authority.bootstrap(identity, createdAt: "2026-10-01T12:00:00Z")
+        try await authority.insertAccount(.init(id: "a", budgetID: "b", name: "Checking", kind: "checking",
+            isOnBudget: true, openingBalanceMinor: 0, createdAt: "2026-10-01T12:00:00Z"))
+        try await authority.insertTransaction(.init(id: "legacy", budgetID: "b", accountID: "a", payeeID: nil, payeeName: "Historical Merchant",
+            amountMinor: 123, occurredOn: "2026-10-01", createdByUserID: "owner",
+            createdAt: "2026-10-01T12:00:00Z", splits: []))
+        let budget = APIBudget(id: "b", householdID: "h", name: "Budget", currencyCode: "USD", effectivePermission: .owner, capabilities: nil)
+        let source = DemoWorkspaceDataSource(fresh: true, budgetOverride: budget, localAuthority: authority, localIdentity: identity)
+        let report = WorkspaceReportQuery(start: Date.demo(monthsAgo: 1), end: Date.demo(monthsAgo: 0),
+            accountID: "", categoryID: "", categoryGroup: "", payee: "", memberID: "", transactionType: "",
+            cleared: "all", flag: "", tag: "", spendingTrendDimension: "category", includeTracking: true)
+        _ = try await source.snapshot(planMonth: Date.demo(monthsAgo: 0), report: report)
+        let page = try await source.searchPayees(query: "Historical", includeArchived: false, limit: 20, cursor: nil)
+        let payee = try XCTUnwrap(page.items.first)
+        let rows = try await source.browseTransactions(query: .init(payeeIDs: [payee.id], limit: 20))
+        XCTAssertEqual(rows.items.map(\.id), ["legacy"])
+        XCTAssertEqual(rows.items.first?.amountMinor, 123)
+        let reopened = DemoWorkspaceDataSource(fresh: true, budgetOverride: budget, localAuthority: authority, localIdentity: identity)
+        _ = try await reopened.snapshot(planMonth: Date.demo(monthsAgo: 0), report: report)
+        let again = try await reopened.searchPayees(query: "Historical", includeArchived: false, limit: 20, cursor: nil)
+        XCTAssertEqual(again.items.map(\.id), [payee.id])
+    }
+
+    @MainActor
     func testCanonicalLocalTransactionCreatesSearchablePayeeIdentity() async throws {
         let source = DemoWorkspaceDataSource(fresh: true)
         try await source.createAccount(.init(name: "Checking", kind: "checking", isOnBudget: true, openingBalanceMinor: 0))

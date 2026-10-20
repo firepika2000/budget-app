@@ -1282,6 +1282,12 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
                 )
                 value = try await localAuthority.snapshot(budgetID: localIdentity.budgetID)
             }
+            if try await localAuthority.repairPayeeRelationships(
+                budgetID: localIdentity.budgetID, ownerID: localIdentity.ownerUserID,
+                timestamp: ISO8601DateFormatter().string(from: now())
+            ) > 0 {
+                value = try await localAuthority.snapshot(budgetID: localIdentity.budgetID)
+            }
             if let localAttachmentVault {
                 let current = now()
                 let formatter = ISO8601DateFormatter()

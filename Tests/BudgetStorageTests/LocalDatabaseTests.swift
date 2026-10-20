@@ -3,6 +3,77 @@ import XCTest
 @testable import BudgetStorage
 
 final class LocalDatabaseTests: XCTestCase {
+    func testHistoricalPayeeRepairSkipsAmbiguousAndSystemRelationships() async throws {
+        let database = try LocalDatabase(fileURL: temporaryDirectory().appendingPathComponent("excluded.sqlite"))
+        try await database.transaction(fixtureStatements)
+        for name in ["", "Starting Balance", "Reconciliation Adjustment", "Transfer"] {
+            try await database.execute(.init("UPDATE transactions SET payee_name=?", values: [.text(name)]))
+            let count = try await database.repairPayeeRelationships(budgetID: "budget", ownerID: "owner", timestamp: "now")
+            XCTAssertEqual(count, 0)
+        }
+        try await database.execute(.init("UPDATE transactions SET payee_name='Ambiguous'"))
+        for id in ["one", "two"] {
+            try await database.execute(.init("INSERT INTO payees(id,budget_id,name,normalized_name,is_archived) VALUES (?,'budget','Ambiguous','ambiguous',0)", values: [.text(id)]))
+        }
+        let ambiguous = try await database.repairPayeeRelationships(budgetID: "budget", ownerID: "owner", timestamp: "now")
+        XCTAssertEqual(ambiguous, 0)
+        try await database.execute(.init("UPDATE transactions SET payee_name='Not a merchant',transfer_id='pair'"))
+        let transfer = try await database.repairPayeeRelationships(budgetID: "budget", ownerID: "owner", timestamp: "now")
+        XCTAssertEqual(transfer, 0)
+        try await database.execute(.init("UPDATE transactions SET transfer_id=NULL,reversal_of_transaction_id='original'"))
+        let reversal = try await database.repairPayeeRelationships(budgetID: "budget", ownerID: "owner", timestamp: "now")
+        XCTAssertEqual(reversal, 0)
+    }
+
+    func testHistoricalPayeeRepairPreservesRowsAndPersistsIdentity() async throws {
+        let url = try temporaryDirectory().appendingPathComponent("payees.sqlite")
+        let database = try LocalDatabase(fileURL: url)
+        try await database.transaction(fixtureStatements)
+        try await database.execute(.init("UPDATE transactions SET payee_name='  Metadata   test  '"))
+        let before = try await database.rows(.init("SELECT * FROM transactions"))[0]
+        let accounts = try await database.rows(.init("SELECT * FROM accounts"))
+        let count = try await database.repairPayeeRelationships(budgetID: "budget", ownerID: "owner", timestamp: "2026-10-19T12:00:00Z")
+        XCTAssertEqual(count, 1)
+        let after = try await database.rows(.init("SELECT * FROM transactions"))[0]
+        XCTAssertEqual(before.values.filter { $0.key != "payee_id" }, after.values.filter { $0.key != "payee_id" })
+        XCTAssertNotEqual(after["payee_id"], .null)
+        let afterAccounts = try await database.rows(.init("SELECT * FROM accounts"))
+        XCTAssertEqual(accounts, afterAccounts)
+        let repeated = try await database.repairPayeeRelationships(budgetID: "budget", ownerID: "owner", timestamp: "later")
+        XCTAssertEqual(repeated, 0)
+        let reopened = try LocalDatabase(fileURL: url)
+        let persisted = try await reopened.rows(.init("SELECT * FROM transactions"))[0]
+        XCTAssertEqual(after, persisted)
+        let payees = try await reopened.rows(.init("SELECT name FROM payees"))
+        XCTAssertTrue(payees.contains { $0["name"] == .text("Metadata test") })
+        try await reopened.integrityCheck()
+    }
+
+    func testHistoricalPayeeRepairReusesArchivedAliasesAndRollsBackFailure() async throws {
+        let database = try LocalDatabase(fileURL: temporaryDirectory().appendingPathComponent("repair.sqlite"))
+        try await database.transaction(fixtureStatements)
+        try await database.execute(.init("INSERT INTO payees(id,budget_id,name,normalized_name,is_archived) VALUES ('old','budget','Old Shop','old shop',1)"))
+        try await database.execute(.init("INSERT INTO payee_aliases(id,payee_id,display_name,normalized_name) VALUES ('alias','old','BANK SHOP','bank shop')"))
+        try await database.execute(.init("UPDATE transactions SET payee_name='BANK SHOP'"))
+        _ = try await database.repairPayeeRelationships(budgetID: "budget", ownerID: "owner", timestamp: "now")
+        let linked = try await database.rows(.init("SELECT payee_id FROM transactions"))
+        XCTAssertEqual(linked.first?["payee_id"], .text("old"))
+        let archived = try await database.rows(.init("SELECT is_archived FROM payees WHERE id='old'"))
+        XCTAssertEqual(archived.first?["is_archived"], .integer(1))
+        try await database.execute(.init("UPDATE transactions SET payee_id=NULL,payee_name='New Shop'"))
+        try await database.execute(.init("CREATE TRIGGER deny_payee_link BEFORE UPDATE OF payee_id ON transactions BEGIN SELECT RAISE(ABORT,'injected'); END"))
+        do {
+            _ = try await database.repairPayeeRelationships(budgetID: "budget", ownerID: "owner", timestamp: "now")
+            XCTFail("Repair should fail atomically")
+        } catch {}
+        let created = try await database.rows(.init("SELECT id FROM payees WHERE name='New Shop'"))
+        XCTAssertTrue(created.isEmpty)
+        do {
+            _ = try await database.repairPayeeRelationships(budgetID: "budget", ownerID: "outsider", timestamp: "now")
+            XCTFail("Non-owner must be rejected")
+        } catch {}
+    }
+
     private func temporaryDirectory() throws -> URL {
         let value = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: value, withIntermediateDirectories: true)

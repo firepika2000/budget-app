@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 import CryptoKit
+import BudgetStorage
 
 enum DemoPersona: String, CaseIterable, Identifiable {
     case rey = "Rey"
@@ -148,10 +149,10 @@ enum LocalPayeeIdentity {
         var errorDescription: String? { self == .invalid ? "Choose a valid active payee." : "This payee is archived or merged. Choose an active payee." }
     }
     static func displayName(_ name: String) -> String {
-        name.precomposedStringWithCompatibilityMapping.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+        LocalPayeeName.displayName(name)
     }
     static func key(_ name: String) -> String {
-        displayName(name).folding(options: .caseInsensitive, locale: Locale(identifier: "en_US_POSIX"))
+        LocalPayeeName.key(name)
     }
     static func resolve(id: String?, name: String, in payees: [DemoPayee], create: Bool = true) throws -> DemoPayee? {
         if let id {

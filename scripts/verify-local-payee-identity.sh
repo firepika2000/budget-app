@@ -18,6 +18,7 @@ abort "Production browser loses explicit identity" unless workspace.include?('le
 abort "System reversals create merchant identities" unless workspace.include?('id: reversalID, resolvesPayee: false')
 puts "import Foundation"
 puts "import CryptoKit"
+puts File.read("Sources/BudgetStorage/LocalPayeeRepair.swift").split("extension LocalDatabase {").first
 puts source[first...last]
 puts <<'SWIFT'
 let existing = DemoPayee(id: "stable", name: "Coffee Shop", aliases: ["BANK COFFEE"])
