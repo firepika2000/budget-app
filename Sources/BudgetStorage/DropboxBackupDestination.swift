@@ -58,6 +58,17 @@ public struct DropboxBackupPublication: Equatable, Sendable {
     }
 }
 
+/// File-verification progress, not a network-byte estimate or a publication receipt.
+public struct BackupTransferProgress: Equatable, Sendable {
+    public enum Stage: Equatable, Sendable { case transferring, finalizing }
+    public let verifiedFiles: Int
+    public let totalFiles: Int
+    public let stage: Stage
+    public init(verifiedFiles: Int, totalFiles: Int, stage: Stage) {
+        self.verifiedFiles = verifiedFiles; self.totalFiles = totalFiles; self.stage = stage
+    }
+}
+
 public enum DropboxBackupDestinationError: LocalizedError, Equatable {
     case invalidFolder
     case invalidPackage(String)
@@ -95,7 +106,8 @@ public actor DropboxBackupDestination {
         self.transport = transport; self.folder = folder; self.retention = retention
     }
 
-    public func publish(packageURL: URL) async throws -> DropboxBackupPublication {
+    public func publish(packageURL: URL,
+                        progress: @Sendable (BackupTransferProgress) async -> Void = { _ in }) async throws -> DropboxBackupPublication {
         try Task.checkCancellation()
         let package = packageURL.standardizedFileURL
         let packageName = package.lastPathComponent
@@ -103,6 +115,8 @@ public actor DropboxBackupDestination {
             throw DropboxBackupDestinationError.invalidPackage("Choose a ClearPocket encrypted backup generation.")
         }
         let files = try Self.validatedPackageFiles(package)
+        await progress(.init(verifiedFiles: 0, totalFiles: files.count, stage: .transferring))
+        try Task.checkCancellation()
         let temporaryPath = "\(folder)/.upload-\(UUID().uuidString)"
         let finalPath = "\(folder)/\(packageName)"
         try await transport.createFolder(path: folder)
@@ -112,7 +126,7 @@ public actor DropboxBackupDestination {
             try Task.checkCancellation()
             var total: Int64 = 0
             var createdParents: Set<String> = []
-            for file in files {
+            for (index, file) in files.enumerated() {
                 try Task.checkCancellation()
                 let relative = file.path.replacingOccurrences(of: package.path + "/", with: "")
                 let remote = "\(temporaryPath)/\(relative)"
@@ -130,9 +144,11 @@ public actor DropboxBackupDestination {
                     throw DropboxBackupDestinationError.integrityFailure(remote)
                 }
                 total += expectedSize
+                await progress(.init(verifiedFiles: index + 1, totalFiles: files.count, stage: .transferring))
             }
             // Cancellation before this commit point must never publish a generation.
             // Once the move succeeds, report the committed backup even if maintenance is cancelled.
+            await progress(.init(verifiedFiles: files.count, totalFiles: files.count, stage: .finalizing))
             try Task.checkCancellation()
             do { try await transport.move(from: temporaryPath, to: finalPath) }
             catch {
@@ -200,7 +216,8 @@ public actor DropboxBackupDestination {
         try await transport.delete(path: remotePath)
     }
 
-    public func download(remotePath: String, destinationURL: URL) async throws {
+    public func download(remotePath: String, destinationURL: URL,
+                         progress: @Sendable (BackupTransferProgress) async -> Void = { _ in }) async throws {
         let remoteName = (remotePath as NSString).lastPathComponent
         guard (remotePath as NSString).deletingLastPathComponent == folder,
               Self.safeName(remoteName), remoteName.hasSuffix(".clearpocketbackup") else {
@@ -218,6 +235,8 @@ public actor DropboxBackupDestination {
               manifestSize <= Int64(BackupManifestIO.maximumBytes) else {
             throw DropboxBackupDestinationError.invalidPackage("The Dropbox manifest size is missing or exceeds the supported metadata size.")
         }
+        await progress(.init(verifiedFiles: 0, totalFiles: entries.count, stage: .transferring))
+        try Task.checkCancellation()
         let staging = destination.deletingLastPathComponent()
             .appendingPathComponent(".dropbox-download-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
@@ -244,13 +263,16 @@ public actor DropboxBackupDestination {
             throw DropboxBackupDestinationError.invalidPackage("The Dropbox generation file set does not match its manifest.")
         }
         try manifestData.write(to: staging.appendingPathComponent("manifest.json"), options: .atomic)
+        await progress(.init(verifiedFiles: 1, totalFiles: expected.count, stage: .transferring))
         let payload = staging.appendingPathComponent("payload", isDirectory: true)
         try FileManager.default.createDirectory(at: payload, withIntermediateDirectories: true)
-        for record in manifest.files {
+        for (index, record) in manifest.files.enumerated() {
             let entry = try Self.only(entries.filter { $0.path == remotePath + "/payload/\(record.payloadName)" })
             let data = try await verifiedDownload(entry)
             try data.write(to: payload.appendingPathComponent(record.payloadName), options: .atomic)
+            await progress(.init(verifiedFiles: index + 2, totalFiles: expected.count, stage: .transferring))
         }
+        await progress(.init(verifiedFiles: expected.count, totalFiles: expected.count, stage: .finalizing))
         try Task.checkCancellation()
         try FileManager.default.moveItem(at: staging, to: destination)
         published = true

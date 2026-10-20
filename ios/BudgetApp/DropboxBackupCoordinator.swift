@@ -23,6 +23,7 @@ final class DropboxBackupCoordinator: NSObject, ObservableObject, ASWebAuthentic
     @Published private(set) var pendingLocalGenerationURL: URL?
     @Published var errorMessage: String?
     @Published private(set) var publicationWarning: String?
+    @Published private(set) var transferProgress: BackupTransferProgress?
     @Published var retention: Int {
         didSet { defaults.set(retention, forKey: retentionKey) }
     }
@@ -138,10 +139,14 @@ final class DropboxBackupCoordinator: NSObject, ObservableObject, ASWebAuthentic
         guard !isWorking else { throw DropboxBackupOperationError.alreadyWorking }
         let destination = try destination()
         observationRevision = UUID()
+        let revision = observationRevision
         isWorking = true; errorMessage = nil; publicationWarning = nil
-        defer { isWorking = false }
+        transferProgress = nil
+        defer { isWorking = false; transferProgress = nil }
         do {
-            let result = try await destination.publish(packageURL: packageURL)
+            let result = try await destination.publish(packageURL: packageURL) { [weak self] value in
+                await self?.receiveTransferProgress(value, revision: revision)
+            }
             return await finalizePublication(result) { try await destination.generations() }
         } catch {
             errorMessage = error.localizedDescription
@@ -173,13 +178,17 @@ final class DropboxBackupCoordinator: NSObject, ObservableObject, ASWebAuthentic
         guard !isWorking else { throw DropboxBackupOperationError.alreadyWorking }
         let destination = try destination()
         observationRevision = UUID()
+        let revision = observationRevision
         let output = FileManager.default.temporaryDirectory.appendingPathComponent(
             "Dropbox-\(UUID().uuidString)-\(generation.name)", isDirectory: true
         )
         isWorking = true; errorMessage = nil
-        defer { isWorking = false }
+        transferProgress = nil
+        defer { isWorking = false; transferProgress = nil }
         do {
-            try await destination.download(remotePath: generation.path, destinationURL: output)
+            try await destination.download(remotePath: generation.path, destinationURL: output) { [weak self] value in
+                await self?.receiveTransferProgress(value, revision: revision)
+            }
             return output
         } catch {
             errorMessage = error.localizedDescription
@@ -342,6 +351,11 @@ final class DropboxBackupCoordinator: NSObject, ObservableObject, ASWebAuthentic
             isConnected = true
             await refreshGenerations(revision: observationRevision)
         } catch { errorMessage = error.localizedDescription }
+    }
+
+    private func receiveTransferProgress(_ value: BackupTransferProgress, revision: UUID) {
+        guard isWorking, observationRevision == revision else { return }
+        transferProgress = value
     }
 
     private func destination() throws -> DropboxBackupDestination {

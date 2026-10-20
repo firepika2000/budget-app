@@ -295,6 +295,12 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertTrue(list.contains("let refreshed = try await destination.generations()"))
         XCTAssertTrue(source.contains("guard !isWorking else { return }"))
         XCTAssertFalse(source.contains("isConnected = await credential.isConnected()"))
+        XCTAssertTrue(source.contains("guard isWorking, observationRevision == revision else { return }"), "Late progress must not replace a newer operation")
+        XCTAssertEqual(source.components(separatedBy: "defer { isWorking = false; transferProgress = nil }").count - 1, 2)
+        XCTAssertEqual(source.components(separatedBy: "await self?.receiveTransferProgress(value, revision: revision)").count - 1, 2)
+        let workspace = try String(contentsOf: file.deletingLastPathComponent().appendingPathComponent("BudgetWorkspaceView.swift"))
+        XCTAssertTrue(workspace.contains("dropbox-transfer-progress"))
+        XCTAssertTrue(workspace.contains("Finalizing encrypted transfer"))
     }
     func testFundingRequestHistoryExplainsRecordedAmountsAndDates() throws {
         for action in ["approved", "partially_approved"] {

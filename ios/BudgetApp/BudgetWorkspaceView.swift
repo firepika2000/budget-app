@@ -7416,7 +7416,19 @@ private struct LocalDeviceBackupRecoveryView: View {
                     }
                     .disabled(creating || !dropbox.canDiscardPendingGeneration)
                 }
-                if dropbox.isWorking { ProgressView().accessibilityLabel("Dropbox backup in progress") }
+                if let progress = dropbox.transferProgress {
+                    VStack(alignment: .leading, spacing: 6) {
+                        if progress.stage == .finalizing {
+                            ProgressView("Finalizing encrypted transfer")
+                        } else {
+                            ProgressView(value: Double(progress.verifiedFiles), total: Double(max(1, progress.totalFiles)))
+                        }
+                        Text("\(progress.verifiedFiles) of \(progress.totalFiles) encrypted files verified")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier("dropbox-transfer-progress")
+                } else if dropbox.isWorking { ProgressView().accessibilityLabel("Dropbox operation in progress") }
                 if let dropboxMessage {
                     Label(dropboxMessage, systemImage: "checkmark.circle")
                         .font(.footnote).foregroundStyle(.green)

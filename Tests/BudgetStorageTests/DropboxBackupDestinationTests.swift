@@ -2,6 +2,54 @@ import XCTest
 @testable import BudgetStorage
 
 final class DropboxBackupDestinationTests: XCTestCase {
+    func testProgressReportsVerifiedFilesAndSeparatesFinalizationFromSuccess() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("dropbox-progress-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let package = try makePackage(root: root, name: "Generation.clearpocketbackup", payloads: [Data("one".utf8), Data("two".utf8)])
+        let transport = FakeDropboxBackupTransport()
+        let destination = try DropboxBackupDestination(transport: transport)
+        let upload = BackupProgressRecorder()
+        let result = try await destination.publish(packageURL: package) { await upload.append($0) }
+        let uploads = await upload.values
+        XCTAssertEqual(uploads.map(\.verifiedFiles), [0, 1, 2, 3, 3])
+        XCTAssertTrue(uploads.allSatisfy { $0.totalFiles == 3 })
+        XCTAssertTrue(uploads.dropLast().allSatisfy { $0.stage == .transferring })
+        XCTAssertEqual(uploads.last?.stage, .finalizing)
+        let download = BackupProgressRecorder()
+        let restored = root.appendingPathComponent("Downloaded.clearpocketbackup")
+        try await destination.download(remotePath: result.remotePath, destinationURL: restored) { await download.append($0) }
+        let downloads = await download.values
+        XCTAssertEqual(downloads, uploads)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: restored.path))
+        let rejected = BackupProgressRecorder()
+        let corrupt = try DropboxBackupDestination(transport: FakeDropboxBackupTransport(corruptUploadMetadata: true))
+        do {
+            _ = try await corrupt.publish(packageURL: package) { await rejected.append($0) }
+            XCTFail("Corrupt upload must fail")
+        } catch {}
+        let rejectedValues = await rejected.values
+        XCTAssertEqual(rejectedValues.map(\.verifiedFiles), [0], "Unverified bytes must never advance progress")
+    }
+
+    func testCancellationAtFinalizingProgressNeverPublishesGeneration() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("dropbox-progress-cancel-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let package = try makePackage(root: root, name: "Generation.clearpocketbackup", payloads: [Data("ciphertext".utf8)])
+        let transport = FakeDropboxBackupTransport()
+        let destination = try DropboxBackupDestination(transport: transport)
+        let task = Task {
+            try await destination.publish(packageURL: package) { value in
+                if value.stage == .finalizing { withUnsafeCurrentTask { $0?.cancel() } }
+            }
+        }
+        do { _ = try await task.value; XCTFail("File verification is not publication") } catch is CancellationError {}
+        let paths = await transport.paths()
+        XCTAssertFalse(paths.contains { $0.contains("Generation.clearpocketbackup") })
+        XCTAssertTrue(FileManager.default.fileExists(atPath: package.path))
+    }
+
     func testCancelledUploadNeverPublishesOrPrunesCommittedGenerations() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -390,6 +438,11 @@ final class DropboxBackupDestinationTests: XCTestCase {
         try encoder.encode(manifest).write(to: package.appendingPathComponent("manifest.json"))
         return package
     }
+}
+
+private actor BackupProgressRecorder {
+    private(set) var values: [BackupTransferProgress] = []
+    func append(_ value: BackupTransferProgress) { values.append(value) }
 }
 
 private actor FakeDropboxBackupTransport: DropboxBackupTransport {
