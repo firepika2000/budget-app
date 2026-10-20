@@ -417,6 +417,46 @@ final class DemoStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testRegisterRefreshPreservesOpenedDepthAndPublishesAtomically() async throws {
+        let store = BudgetWorkspaceStore.demo()
+        await store.refresh()
+        let rows = Array(store.transactions.prefix(3))
+        XCTAssertEqual(rows.count, 3)
+        let pager = TransactionHistoryPager()
+        let query = APITransactionQuery(limit: 1)
+        let fetch: (APITransactionQuery) async throws -> APITransactionPage = { request in
+            let index = Int(request.cursor ?? "0")!
+            return .init(items: [rows[index]], nextCursor: index < 2 ? String(index + 1) : nil, totalCount: 3)
+        }
+        await pager.load(query: query, reset: true, fetch: fetch)
+        await pager.load(query: query, reset: false, fetch: fetch)
+        XCTAssertEqual(pager.rows, Array(rows.prefix(2)))
+        var calls = 0
+        await pager.load(query: query, reset: true, preserveDepth: true) { request in
+            calls += 1
+            XCTAssertEqual(pager.rows, Array(rows.prefix(2)), "Do not publish an intermediate first page")
+            return try await fetch(request)
+        }
+        XCTAssertEqual(calls, 2, "Do not fetch unopened history")
+        XCTAssertEqual(pager.rows, Array(rows.prefix(2)))
+        XCTAssertEqual(pager.nextCursor, "2")
+        await pager.load(query: query, reset: true, preserveDepth: true) { request in
+            if request.cursor != nil { throw URLError(.notConnectedToInternet) }
+            return try await fetch(request)
+        }
+        XCTAssertEqual(pager.rows, Array(rows.prefix(2)))
+        XCTAssertEqual(pager.nextCursor, "2")
+        XCTAssertNotNil(pager.errorMessage)
+        await pager.load(query: query, reset: true, preserveDepth: true) { _ in
+            .init(items: [rows[0]], nextCursor: nil, totalCount: 1)
+        }
+        XCTAssertEqual(pager.rows, [rows[0]], "A shorter authoritative history can shrink the list")
+        XCTAssertEqual(pager.totalCount, 1)
+        await pager.load(query: query, reset: true, preserveDepth: true) { _ in throw APIClientError.server(status: 403, message: "Denied") }
+        XCTAssertTrue(pager.rows.isEmpty)
+    }
+
+    @MainActor
     func testAccountRegisterUsesBoundedSharedPagerWithoutFinancialMutation() async throws {
         let source = DemoWorkspaceDataSource()
         let operations = (0..<75).map { index in RecordTransactionOperation(accountID: "checking", categoryID: nil,

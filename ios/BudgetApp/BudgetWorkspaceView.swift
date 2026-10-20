@@ -11764,7 +11764,7 @@ struct LiveAccountRegisterView: View {
     }
 
     private func loadHistory(_ reset: Bool) async {
-        await history.load(query: .init(accountIDs: [account.id], limit: 50), reset: reset) {
+        await history.load(query: .init(accountIDs: [account.id], limit: 50), reset: reset, preserveDepth: true) {
             try await store.browseTransactions($0)
         }
     }

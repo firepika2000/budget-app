@@ -438,8 +438,10 @@ final class TransactionHistoryPager: ObservableObject {
         rows = []; nextCursor = nil; totalCount = 0; errorMessage = nil; loading = false
     }
 
-    func load(query: APITransactionQuery, reset: Bool, fetch: (APITransactionQuery) async throws -> APITransactionPage) async {
+    func load(query: APITransactionQuery, reset: Bool, preserveDepth: Bool = false,
+              fetch: (APITransactionQuery) async throws -> APITransactionPage) async {
         if !reset && (loading || nextCursor == nil) { return }
+        let desiredCount = reset && preserveDepth ? rows.count : 0
         let observed = UUID()
         requestID = observed
         loading = true
@@ -447,10 +449,21 @@ final class TransactionHistoryPager: ObservableObject {
         var request = query
         request.cursor = reset ? nil : nextCursor
         do {
-            let page = try await fetch(request)
+            var page = try await fetch(request)
             try Task.checkCancellation()
             guard observed == requestID else { return }
-            rows = try page.validatedRows(after: reset ? [] : rows, previousTotal: reset ? nil : totalCount, requestedCursor: request.cursor, limit: request.limit)
+            var refreshed = try page.validatedRows(after: reset ? [] : rows, previousTotal: reset ? nil : totalCount, requestedCursor: request.cursor, limit: request.limit)
+            // Refresh only the depth the user has already opened. Publish all pages together so
+            // a background observation never collapses the register or exposes half a refresh.
+            while refreshed.count < desiredCount, let cursor = page.nextCursor {
+                request.cursor = cursor
+                let previousTotal = page.totalCount
+                page = try await fetch(request)
+                try Task.checkCancellation()
+                guard observed == requestID else { return }
+                refreshed = try page.validatedRows(after: refreshed, previousTotal: previousTotal, requestedCursor: cursor, limit: request.limit)
+            }
+            rows = refreshed
             nextCursor = page.nextCursor; totalCount = page.totalCount; errorMessage = nil
         } catch is CancellationError {
         } catch {
