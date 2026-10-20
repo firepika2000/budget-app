@@ -994,7 +994,13 @@ public actor LocalAuthorityStore {
     }
 
     public func snapshot(budgetID: String) async throws -> LocalAuthoritySnapshot {
-        let identityRows = try await database.rows(.init(
+        try await database.withReadTransaction { database in
+            try self.readSnapshot(budgetID: budgetID, database: database)
+        }
+    }
+
+    private func readSnapshot(budgetID: String, database: isolated LocalDatabase) throws -> LocalAuthoritySnapshot {
+        let identityRows = try database.rows(.init(
             "SELECT h.id AS household_id,h.name AS household_name,u.id AS owner_user_id,u.display_name AS owner_display_name,b.id AS budget_id,b.name AS budget_name,b.currency_code FROM budgets b JOIN households h ON h.id=b.household_id JOIN memberships m ON m.household_id=h.id AND m.role='owner' AND m.is_active=1 JOIN users u ON u.id=m.user_id WHERE b.id=? ORDER BY u.id LIMIT 1",
             values: [.text(budgetID)]
         ))
@@ -1004,32 +1010,32 @@ public actor LocalAuthorityStore {
             ownerUserID: text(row, "owner_user_id"), ownerDisplayName: text(row, "owner_display_name"),
             budgetID: text(row, "budget_id"), budgetName: text(row, "budget_name"), currencyCode: text(row, "currency_code")
         )
-        let accounts = try await loadAccounts(budgetID: budgetID)
-        let accountRevisions = try await loadAccountRevisions(budgetID: budgetID)
-        let structureRevisions = try await loadStructureRevisions(budgetID: budgetID)
-        let groups = try await loadGroups(budgetID: budgetID)
-        let categories = try await loadCategories(budgetID: budgetID)
-        let payees = try await loadPayees(budgetID: budgetID)
-        let transactions = try await loadTransactions(budgetID: budgetID)
-        let payeeAliases = try await loadPayeeAliases(budgetID: budgetID, payeeIDs: Set(payees.map(\.id)))
-        let payeeRevisions = try await loadPayeeRevisions(budgetID: budgetID)
-        let allocations = try await loadAllocations(budgetID: budgetID)
-        let reconciliations = try await loadReconciliations(budgetID: budgetID, accountIDs: Set(accounts.map(\.id)))
-        let targets = try await loadTargets(budgetID: budgetID, categoryIDs: Set(categories.map(\.id)))
-        let targetRevisions = try await loadTargetRevisions(budgetID: budgetID)
-        let schedules = try await loadSchedules(budgetID: budgetID)
-        let scheduleRevisions = try await loadScheduleRevisions(budgetID: budgetID)
-        let attachments = try await loadAttachments(budgetID: budgetID, transactionIDs: Set(transactions.map(\.id)))
-        let attachmentTombstones = try await loadAttachmentTombstones(budgetID: budgetID)
-        let debtTerms = try await loadDebtTerms(budgetID: budgetID, accountIDs: Set(accounts.map(\.id)))
-        let debtTermsRevisions = try await loadDebtTermsRevisions(budgetID: budgetID)
-        let debtPayoffPlans = try await loadDebtPayoffPlans(budgetID: budgetID)
-        let debtPayoffPlanRevisions = try await loadDebtPayoffPlanRevisions(budgetID: budgetID)
-        let rollover = try await loadCashRolloverPolicies(budgetID: budgetID)
-        let reserve = try await loadCreditReserveAttributions(budgetID: budgetID, transactionIDs: Set(transactions.map(\.id)))
-        let changes = try await loadTransactionChanges(budgetID: budgetID)
-        let reserveEvents = try await loadCreditReserveEvents(budgetID: budgetID)
-        let statementImports = try await loadStatementImports(budgetID: budgetID)
+        let accounts = try self.loadAccounts(budgetID: budgetID, database: database)
+        let accountRevisions = try self.loadAccountRevisions(budgetID: budgetID, database: database)
+        let structureRevisions = try self.loadStructureRevisions(budgetID: budgetID, database: database)
+        let groups = try self.loadGroups(budgetID: budgetID, database: database)
+        let categories = try self.loadCategories(budgetID: budgetID, database: database)
+        let payees = try self.loadPayees(budgetID: budgetID, database: database)
+        let transactions = try self.loadTransactions(budgetID: budgetID, database: database)
+        let payeeAliases = try self.loadPayeeAliases(budgetID: budgetID, payeeIDs: Set(payees.map(\.id)), database: database)
+        let payeeRevisions = try self.loadPayeeRevisions(budgetID: budgetID, database: database)
+        let allocations = try self.loadAllocations(budgetID: budgetID, database: database)
+        let reconciliations = try self.loadReconciliations(budgetID: budgetID, accountIDs: Set(accounts.map(\.id)), database: database)
+        let targets = try self.loadTargets(budgetID: budgetID, categoryIDs: Set(categories.map(\.id)), database: database)
+        let targetRevisions = try self.loadTargetRevisions(budgetID: budgetID, database: database)
+        let schedules = try self.loadSchedules(budgetID: budgetID, database: database)
+        let scheduleRevisions = try self.loadScheduleRevisions(budgetID: budgetID, database: database)
+        let attachments = try self.loadAttachments(budgetID: budgetID, transactionIDs: Set(transactions.map(\.id)), database: database)
+        let attachmentTombstones = try self.loadAttachmentTombstones(budgetID: budgetID, database: database)
+        let debtTerms = try self.loadDebtTerms(budgetID: budgetID, accountIDs: Set(accounts.map(\.id)), database: database)
+        let debtTermsRevisions = try self.loadDebtTermsRevisions(budgetID: budgetID, database: database)
+        let debtPayoffPlans = try self.loadDebtPayoffPlans(budgetID: budgetID, database: database)
+        let debtPayoffPlanRevisions = try self.loadDebtPayoffPlanRevisions(budgetID: budgetID, database: database)
+        let rollover = try self.loadCashRolloverPolicies(budgetID: budgetID, database: database)
+        let reserve = try self.loadCreditReserveAttributions(budgetID: budgetID, transactionIDs: Set(transactions.map(\.id)), database: database)
+        let changes = try self.loadTransactionChanges(budgetID: budgetID, database: database)
+        let reserveEvents = try self.loadCreditReserveEvents(budgetID: budgetID, database: database)
+        let statementImports = try self.loadStatementImports(budgetID: budgetID, database: database)
         return .init(identity: identity, accounts: accounts, accountRevisions: accountRevisions,
                      structureRevisions: structureRevisions,
                      groups: groups, categories: categories,
@@ -1165,26 +1171,26 @@ public actor LocalAuthorityStore {
         .init("SELECT id FROM statement_imports WHERE id=? AND budget_id=? AND account_id=? AND version=? AND status=?", values: [.text(item.id), .text(item.budgetID), .text(item.accountID), .integer(item.version), .text(item.status)])
     }
 
-    private func loadAccounts(budgetID: String) async throws -> [LocalAccountRecord] {
-        try await database.rows(.init("SELECT * FROM accounts WHERE budget_id=? ORDER BY created_at,id", values: [.text(budgetID)])).map {
+    private func loadAccounts(budgetID: String, database: isolated LocalDatabase) throws -> [LocalAccountRecord] {
+        try database.rows(.init("SELECT * FROM accounts WHERE budget_id=? ORDER BY created_at,id", values: [.text(budgetID)])).map {
             try .init(id: text($0, "id"), budgetID: text($0, "budget_id"), name: text($0, "name"), kind: text($0, "kind"), isOnBudget: bool($0, "is_on_budget"), isClosed: bool($0, "is_closed"), openingBalanceMinor: integer($0, "opening_balance_minor"), createdAt: text($0, "created_at"))
         }
     }
 
-    private func loadDebtTermsRevisions(budgetID: String) async throws -> [LocalDebtTermsRevisionRecord] {
-        try await database.rows(.init("SELECT * FROM account_debt_terms_revisions WHERE budget_id=? ORDER BY created_at,rowid", values: [.text(budgetID)])).map {
+    private func loadDebtTermsRevisions(budgetID: String, database: isolated LocalDatabase) throws -> [LocalDebtTermsRevisionRecord] {
+        try database.rows(.init("SELECT * FROM account_debt_terms_revisions WHERE budget_id=? ORDER BY created_at,rowid", values: [.text(budgetID)])).map {
             try .init(id: text($0, "id"), budgetID: text($0, "budget_id"), accountID: text($0, "account_id"), action: text($0, "action"), actorUserID: text($0, "actor_user_id"), beforeJSON: optionalText($0, "before_json"), afterJSON: optionalText($0, "after_json"), createdAt: text($0, "created_at"))
         }
     }
 
-    private func loadAccountRevisions(budgetID: String) async throws -> [LocalAccountRevisionRecord] {
-        try await database.rows(.init(
+    private func loadAccountRevisions(budgetID: String, database: isolated LocalDatabase) throws -> [LocalAccountRevisionRecord] {
+        try database.rows(.init(
             "SELECT * FROM account_revisions WHERE budget_id=? ORDER BY created_at,id",
             values: [.text(budgetID)]
         )).map(accountRevisionRecord)
     }
 
-    private func accountRevisionRecord(_ row: LocalSQLiteRow) throws -> LocalAccountRevisionRecord {
+    private nonisolated func accountRevisionRecord(_ row: LocalSQLiteRow) throws -> LocalAccountRevisionRecord {
         try .init(id: text(row, "id"), budgetID: text(row, "budget_id"),
                   accountID: text(row, "account_id"), action: text(row, "action"),
                   actorUserID: text(row, "actor_user_id"), beforeJSON: optionalText(row, "before_json"),
@@ -1203,14 +1209,14 @@ public actor LocalAuthorityStore {
         )).map(accountRevisionRecord)
     }
 
-    private func loadStructureRevisions(budgetID: String) async throws -> [LocalBudgetStructureRevisionRecord] {
-        try await database.rows(.init(
+    private func loadStructureRevisions(budgetID: String, database: isolated LocalDatabase) throws -> [LocalBudgetStructureRevisionRecord] {
+        try database.rows(.init(
             "SELECT * FROM budget_structure_revisions WHERE budget_id=? ORDER BY created_at,id",
             values: [.text(budgetID)]
         )).map(structureRevisionRecord)
     }
 
-    private func structureRevisionRecord(_ row: LocalSQLiteRow) throws -> LocalBudgetStructureRevisionRecord {
+    private nonisolated func structureRevisionRecord(_ row: LocalSQLiteRow) throws -> LocalBudgetStructureRevisionRecord {
         try .init(id: text(row, "id"), budgetID: text(row, "budget_id"),
                   resourceType: text(row, "resource_type"), resourceID: text(row, "resource_id"),
                   action: text(row, "action"), actorUserID: text(row, "actor_user_id"),
@@ -1230,14 +1236,14 @@ public actor LocalAuthorityStore {
         )).map(structureRevisionRecord)
     }
 
-    private func loadPayeeRevisions(budgetID: String) async throws -> [LocalPayeeRevisionRecord] {
-        try await database.rows(.init(
+    private func loadPayeeRevisions(budgetID: String, database: isolated LocalDatabase) throws -> [LocalPayeeRevisionRecord] {
+        try database.rows(.init(
             "SELECT * FROM payee_revisions WHERE budget_id=? ORDER BY created_at,id",
             values: [.text(budgetID)]
         )).map(payeeRevisionRecord)
     }
 
-    private func payeeRevisionRecord(_ row: LocalSQLiteRow) throws -> LocalPayeeRevisionRecord {
+    private nonisolated func payeeRevisionRecord(_ row: LocalSQLiteRow) throws -> LocalPayeeRevisionRecord {
         try .init(id: text(row, "id"), budgetID: text(row, "budget_id"),
                   payeeID: text(row, "payee_id"), action: text(row, "action"),
                   actorUserID: text(row, "actor_user_id"), beforeJSON: optionalText(row, "before_json"),
@@ -1256,23 +1262,23 @@ public actor LocalAuthorityStore {
         )).map(payeeRevisionRecord)
     }
 
-    private func loadStatementImports(budgetID: String) async throws -> [LocalStatementImportRecord] {
-        try await database.rows(.init(
+    private func loadStatementImports(budgetID: String, database: isolated LocalDatabase) throws -> [LocalStatementImportRecord] {
+        try database.rows(.init(
             "SELECT * FROM statement_imports WHERE budget_id=? ORDER BY created_at,id",
             values: [.text(budgetID)]
         )).map(statementImportRecord)
     }
 
-    private func loadDebtPayoffPlanRevisions(budgetID: String) async throws -> [LocalDebtPayoffPlanRevisionRecord] {
-        try await database.rows(.init("SELECT * FROM debt_payoff_plan_revisions WHERE budget_id=? ORDER BY created_at,rowid", values: [.text(budgetID)])).map {
+    private func loadDebtPayoffPlanRevisions(budgetID: String, database: isolated LocalDatabase) throws -> [LocalDebtPayoffPlanRevisionRecord] {
+        try database.rows(.init("SELECT * FROM debt_payoff_plan_revisions WHERE budget_id=? ORDER BY created_at,rowid", values: [.text(budgetID)])).map {
             try .init(id: text($0, "id"), budgetID: text($0, "budget_id"), userID: text($0, "user_id"),
                       action: text($0, "action"), beforeJSON: optionalText($0, "before_json"),
                       afterJSON: optionalText($0, "after_json"), createdAt: text($0, "created_at"))
         }
     }
 
-    private func loadDebtPayoffPlans(budgetID: String) async throws -> [LocalDebtPayoffPlanRecord] {
-        try await database.rows(.init(
+    private func loadDebtPayoffPlans(budgetID: String, database: isolated LocalDatabase) throws -> [LocalDebtPayoffPlanRecord] {
+        try database.rows(.init(
             "SELECT * FROM debt_payoff_plans WHERE budget_id=? ORDER BY user_id,id",
             values: [.text(budgetID)]
         )).map { row in
@@ -1285,27 +1291,27 @@ public actor LocalAuthorityStore {
         }
     }
 
-    private func loadGroups(budgetID: String) async throws -> [LocalCategoryGroupRecord] {
-        try await database.rows(.init("SELECT * FROM category_groups WHERE budget_id=? ORDER BY sort_order,id", values: [.text(budgetID)])).map {
+    private func loadGroups(budgetID: String, database: isolated LocalDatabase) throws -> [LocalCategoryGroupRecord] {
+        try database.rows(.init("SELECT * FROM category_groups WHERE budget_id=? ORDER BY sort_order,id", values: [.text(budgetID)])).map {
             try .init(id: text($0, "id"), budgetID: text($0, "budget_id"), name: text($0, "name"), sortOrder: integer($0, "sort_order"), isArchived: bool($0, "is_archived"))
         }
     }
 
-    private func loadCategories(budgetID: String) async throws -> [LocalCategoryRecord] {
-        try await database.rows(.init("SELECT * FROM categories WHERE budget_id=? ORDER BY sort_order,id", values: [.text(budgetID)])).map {
+    private func loadCategories(budgetID: String, database: isolated LocalDatabase) throws -> [LocalCategoryRecord] {
+        try database.rows(.init("SELECT * FROM categories WHERE budget_id=? ORDER BY sort_order,id", values: [.text(budgetID)])).map {
             try .init(id: text($0, "id"), budgetID: text($0, "budget_id"), groupID: text($0, "group_id"), name: text($0, "name"), iconName: optionalText($0, "icon_name"), note: text($0, "note"), delegatedUserID: optionalText($0, "delegated_user_id"), isArchived: bool($0, "is_archived"), sortOrder: integer($0, "sort_order"), isFavorite: bool($0, "is_favorite"), favoriteSortOrder: integer($0, "favorite_sort_order"), isEssential: bool($0, "is_essential"), isEmergencyFund: bool($0, "is_emergency_fund"))
         }
     }
 
-    private func loadPayees(budgetID: String) async throws -> [LocalPayeeRecord] {
-        try await database.rows(.init("SELECT * FROM payees WHERE budget_id=? ORDER BY normalized_name,id", values: [.text(budgetID)])).map {
+    private func loadPayees(budgetID: String, database: isolated LocalDatabase) throws -> [LocalPayeeRecord] {
+        try database.rows(.init("SELECT * FROM payees WHERE budget_id=? ORDER BY normalized_name,id", values: [.text(budgetID)])).map {
             try .init(id: text($0, "id"), budgetID: text($0, "budget_id"), name: text($0, "name"), normalizedName: text($0, "normalized_name"), defaultCategoryID: optionalText($0, "default_category_id"), isArchived: bool($0, "is_archived"), mergedIntoPayeeID: optionalText($0, "merged_into_payee_id"))
         }
     }
 
-    private func loadPayeeAliases(budgetID: String, payeeIDs: Set<String>) async throws -> [LocalPayeeAliasRecord] {
+    private func loadPayeeAliases(budgetID: String, payeeIDs: Set<String>, database: isolated LocalDatabase) throws -> [LocalPayeeAliasRecord] {
         guard !payeeIDs.isEmpty else { return [] }
-        let rows = try await database.rows(.init("SELECT a.* FROM payee_aliases a JOIN payees p ON p.id=a.payee_id WHERE p.budget_id=? ORDER BY a.normalized_name,a.id", values: [.text(budgetID)]))
+        let rows = try database.rows(.init("SELECT a.* FROM payee_aliases a JOIN payees p ON p.id=a.payee_id WHERE p.budget_id=? ORDER BY a.normalized_name,a.id", values: [.text(budgetID)]))
         return try rows.compactMap {
             let payeeID = try text($0, "payee_id")
             guard payeeIDs.contains(payeeID) else { return nil }
@@ -1322,8 +1328,8 @@ public actor LocalAuthorityStore {
         }
     }
 
-    private func loadTransactions(budgetID: String) async throws -> [LocalTransactionRecord] {
-        let rows = try await database.rows(.init("SELECT * FROM transactions WHERE budget_id=? ORDER BY occurred_on,id", values: [.text(budgetID)]))
+    private func loadTransactions(budgetID: String, database: isolated LocalDatabase) throws -> [LocalTransactionRecord] {
+        let rows = try database.rows(.init("SELECT * FROM transactions WHERE budget_id=? ORDER BY occurred_on,id", values: [.text(budgetID)]))
         let ids = try rows.map { try text($0, "id") }
         var result: [LocalTransactionRecord] = []
         result.reserveCapacity(rows.count)
@@ -1331,7 +1337,7 @@ public actor LocalAuthorityStore {
         // projections. Avoid one SQLite round trip for every historical transaction.
         for (index, statement) in Self.transactionSplitReadStatements(for: ids).enumerated() {
             var grouped: [String: [LocalTransactionSplitRecord]] = [:]
-            for split in try await database.rows(statement) {
+            for split in try database.rows(statement) {
                 let record = try LocalTransactionSplitRecord(id: text(split, "id"), categoryID: text(split, "category_id"),
                     amountMinor: integer(split, "amount_minor"), memo: text(split, "memo"),
                     financialClassification: optionalText(split, "financial_classification"))
@@ -1347,15 +1353,15 @@ public actor LocalAuthorityStore {
         return result
     }
 
-    private func loadAllocations(budgetID: String) async throws -> [LocalAllocationRecord] {
-        try await database.rows(.init("SELECT * FROM allocation_operations WHERE budget_id=? ORDER BY occurred_on,id", values: [.text(budgetID)])).map {
+    private func loadAllocations(budgetID: String, database: isolated LocalDatabase) throws -> [LocalAllocationRecord] {
+        try database.rows(.init("SELECT * FROM allocation_operations WHERE budget_id=? ORDER BY occurred_on,id", values: [.text(budgetID)])).map {
             try .init(id: text($0, "id"), operationID: text($0, "operation_id"), budgetID: text($0, "budget_id"), sourceCategoryID: optionalText($0, "source_category_id"), categoryID: optionalText($0, "category_id"), amountMinor: integer($0, "amount_minor"), occurredOn: text($0, "occurred_on"), kind: text($0, "kind"), actorUserID: text($0, "actor_user_id"), note: text($0, "note"), createdAt: text($0, "created_at"))
         }
     }
 
-    private func loadReconciliations(budgetID: String, accountIDs: Set<String>) async throws -> [LocalReconciliationRecord] {
+    private func loadReconciliations(budgetID: String, accountIDs: Set<String>, database: isolated LocalDatabase) throws -> [LocalReconciliationRecord] {
         guard !accountIDs.isEmpty else { return [] }
-        let rows = try await database.rows(.init("SELECT r.* FROM reconciliations r JOIN accounts a ON a.id=r.account_id WHERE a.budget_id=? ORDER BY r.statement_date,r.id", values: [.text(budgetID)]))
+        let rows = try database.rows(.init("SELECT r.* FROM reconciliations r JOIN accounts a ON a.id=r.account_id WHERE a.budget_id=? ORDER BY r.statement_date,r.id", values: [.text(budgetID)]))
         return try rows.compactMap {
             let accountID = try text($0, "account_id")
             guard accountIDs.contains(accountID) else { return nil }
@@ -1363,9 +1369,9 @@ public actor LocalAuthorityStore {
         }
     }
 
-    private func loadTargets(budgetID: String, categoryIDs: Set<String>) async throws -> [LocalCategoryTargetRecord] {
+    private func loadTargets(budgetID: String, categoryIDs: Set<String>, database: isolated LocalDatabase) throws -> [LocalCategoryTargetRecord] {
         guard !categoryIDs.isEmpty else { return [] }
-        let rows = try await database.rows(.init("SELECT t.* FROM category_targets t JOIN categories c ON c.id=t.category_id WHERE c.budget_id=? ORDER BY t.category_id", values: [.text(budgetID)]))
+        let rows = try database.rows(.init("SELECT t.* FROM category_targets t JOIN categories c ON c.id=t.category_id WHERE c.budget_id=? ORDER BY t.category_id", values: [.text(budgetID)]))
         return try rows.compactMap {
             let categoryID = try text($0, "category_id")
             guard categoryIDs.contains(categoryID) else { return nil }
@@ -1373,8 +1379,8 @@ public actor LocalAuthorityStore {
         }
     }
 
-    private func loadTargetRevisions(budgetID: String) async throws -> [LocalCategoryTargetRevisionRecord] {
-        try await database.rows(.init("SELECT * FROM category_target_revisions WHERE budget_id=? ORDER BY created_at,rowid", values: [.text(budgetID)])).map {
+    private func loadTargetRevisions(budgetID: String, database: isolated LocalDatabase) throws -> [LocalCategoryTargetRevisionRecord] {
+        try database.rows(.init("SELECT * FROM category_target_revisions WHERE budget_id=? ORDER BY created_at,rowid", values: [.text(budgetID)])).map {
             try .init(id: text($0, "id"), budgetID: text($0, "budget_id"), categoryID: text($0, "category_id"),
                       targetID: optionalText($0, "target_id"), action: text($0, "action"),
                       actorUserID: text($0, "actor_user_id"), beforeJSON: optionalText($0, "before_json"),
@@ -1383,17 +1389,17 @@ public actor LocalAuthorityStore {
         }
     }
 
-    private func loadSchedules(budgetID: String) async throws -> [LocalScheduleRecord] {
-        try await database.rows(.init("SELECT * FROM scheduled_transactions WHERE budget_id=? ORDER BY next_date,id", values: [.text(budgetID)])).map {
+    private func loadSchedules(budgetID: String, database: isolated LocalDatabase) throws -> [LocalScheduleRecord] {
+        try database.rows(.init("SELECT * FROM scheduled_transactions WHERE budget_id=? ORDER BY next_date,id", values: [.text(budgetID)])).map {
             try .init(id: text($0, "id"), budgetID: text($0, "budget_id"), accountID: text($0, "account_id"), destinationAccountID: optionalText($0, "destination_account_id"), categoryID: optionalText($0, "category_id"), payeeID: optionalText($0, "payee_id"), name: text($0, "name"), amountMinor: integer($0, "amount_minor"), nextDate: text($0, "next_date"), recurrenceUnit: text($0, "recurrence_unit"), intervalCount: integer($0, "interval_count"), memo: text($0, "memo"), endDate: optionalText($0, "end_date"), remainingOccurrences: optionalInteger($0, "remaining_occurrences"), isActive: bool($0, "is_active"), financialClassification: optionalText($0, "financial_classification"), lastRealizedOn: optionalText($0, "last_realized_on"))
         }
     }
 
-    private func loadScheduleRevisions(budgetID: String) async throws -> [LocalScheduledTransactionRevisionRecord] {
-        try await database.rows(.init("SELECT * FROM scheduled_transaction_revisions WHERE budget_id=? ORDER BY created_at,rowid", values: [.text(budgetID)])).map(scheduleRevisionRecord)
+    private func loadScheduleRevisions(budgetID: String, database: isolated LocalDatabase) throws -> [LocalScheduledTransactionRevisionRecord] {
+        try database.rows(.init("SELECT * FROM scheduled_transaction_revisions WHERE budget_id=? ORDER BY created_at,rowid", values: [.text(budgetID)])).map(scheduleRevisionRecord)
     }
 
-    private func scheduleRevisionRecord(_ row: LocalSQLiteRow) throws -> LocalScheduledTransactionRevisionRecord {
+    private nonisolated func scheduleRevisionRecord(_ row: LocalSQLiteRow) throws -> LocalScheduledTransactionRevisionRecord {
         let transactionIDs = optionalText(row, "transaction_ids_json") == nil ? nil : stringArray(row, "transaction_ids_json")
         return try .init(id: text(row, "id"), budgetID: text(row, "budget_id"), scheduleID: text(row, "schedule_id"),
                   action: text(row, "action"), actorUserID: text(row, "actor_user_id"),
@@ -1402,9 +1408,9 @@ public actor LocalAuthorityStore {
                   createdAt: text(row, "created_at"))
     }
 
-    private func loadDebtTerms(budgetID: String, accountIDs: Set<String>) async throws -> [LocalAccountDebtTermsRecord] {
+    private func loadDebtTerms(budgetID: String, accountIDs: Set<String>, database: isolated LocalDatabase) throws -> [LocalAccountDebtTermsRecord] {
         guard !accountIDs.isEmpty else { return [] }
-        let rows = try await database.rows(.init("SELECT d.* FROM account_debt_terms d JOIN accounts a ON a.id=d.account_id WHERE a.budget_id=? ORDER BY d.account_id", values: [.text(budgetID)]))
+        let rows = try database.rows(.init("SELECT d.* FROM account_debt_terms d JOIN accounts a ON a.id=d.account_id WHERE a.budget_id=? ORDER BY d.account_id", values: [.text(budgetID)]))
         return try rows.compactMap { row in
             let accountID = try text(row, "account_id")
             guard accountIDs.contains(accountID) else { return nil }
@@ -1412,15 +1418,15 @@ public actor LocalAuthorityStore {
         }
     }
 
-    private func loadCashRolloverPolicies(budgetID: String) async throws -> [LocalCashRolloverPolicyRecord] {
-        try await database.rows(.init("SELECT * FROM cash_rollover_policies WHERE budget_id=? ORDER BY version", values: [.text(budgetID)])).map { row in
+    private func loadCashRolloverPolicies(budgetID: String, database: isolated LocalDatabase) throws -> [LocalCashRolloverPolicyRecord] {
+        try database.rows(.init("SELECT * FROM cash_rollover_policies WHERE budget_id=? ORDER BY version", values: [.text(budgetID)])).map { row in
             try .init(id: text(row, "id"), budgetID: text(row, "budget_id"), effectiveMonth: text(row, "effective_month"), policy: text(row, "policy"), version: integer(row, "version"), source: text(row, "source"), actorUserID: optionalText(row, "actor_user_id"), createdAt: text(row, "created_at"))
         }
     }
 
-    private func loadCreditReserveAttributions(budgetID: String, transactionIDs: Set<String>) async throws -> [LocalCreditReserveAttributionRecord] {
+    private func loadCreditReserveAttributions(budgetID: String, transactionIDs: Set<String>, database: isolated LocalDatabase) throws -> [LocalCreditReserveAttributionRecord] {
         guard !transactionIDs.isEmpty else { return [] }
-        let rows = try await database.rows(.init("SELECT r.* FROM credit_reserve_attributions r JOIN transactions t ON t.id=r.transaction_id WHERE t.budget_id=? ORDER BY r.transaction_id,r.category_id", values: [.text(budgetID)]))
+        let rows = try database.rows(.init("SELECT r.* FROM credit_reserve_attributions r JOIN transactions t ON t.id=r.transaction_id WHERE t.budget_id=? ORDER BY r.transaction_id,r.category_id", values: [.text(budgetID)]))
         return try rows.compactMap { row in
             let transactionID = try text(row, "transaction_id")
             guard transactionIDs.contains(transactionID) else { return nil }
@@ -1428,23 +1434,23 @@ public actor LocalAuthorityStore {
         }
     }
 
-    private func loadTransactionChanges(budgetID: String) async throws -> [LocalTransactionChangeRecord] {
-        try await database.rows(.init("SELECT * FROM transaction_changes WHERE budget_id=? ORDER BY created_at,id", values: [.text(budgetID)])).map(transactionChangeRecord)
+    private func loadTransactionChanges(budgetID: String, database: isolated LocalDatabase) throws -> [LocalTransactionChangeRecord] {
+        try database.rows(.init("SELECT * FROM transaction_changes WHERE budget_id=? ORDER BY created_at,id", values: [.text(budgetID)])).map(transactionChangeRecord)
     }
 
-    private func transactionChangeRecord(_ row: LocalSQLiteRow) throws -> LocalTransactionChangeRecord {
+    private nonisolated func transactionChangeRecord(_ row: LocalSQLiteRow) throws -> LocalTransactionChangeRecord {
         try .init(id: text(row, "id"), budgetID: text(row, "budget_id"), transactionID: text(row, "transaction_id"), actorUserID: text(row, "actor_user_id"), action: text(row, "action"), beforeJSON: optionalText(row, "before_json"), afterJSON: optionalText(row, "after_json"), createdAt: text(row, "created_at"))
     }
 
-    private func loadCreditReserveEvents(budgetID: String) async throws -> [LocalCreditReserveEventRecord] {
-        try await database.rows(.init("SELECT * FROM credit_reserve_events WHERE budget_id=? ORDER BY occurred_on,id", values: [.text(budgetID)])).map { row in
+    private func loadCreditReserveEvents(budgetID: String, database: isolated LocalDatabase) throws -> [LocalCreditReserveEventRecord] {
+        try database.rows(.init("SELECT * FROM credit_reserve_events WHERE budget_id=? ORDER BY occurred_on,id", values: [.text(budgetID)])).map { row in
             try .init(id: text(row, "id"), budgetID: text(row, "budget_id"), creditAccountID: text(row, "credit_account_id"), paymentCategoryID: text(row, "payment_category_id"), spendingCategoryID: optionalText(row, "spending_category_id"), sourceTransactionID: optionalText(row, "source_transaction_id"), transferID: optionalText(row, "transfer_id"), occurredOn: text(row, "occurred_on"), amountMinor: integer(row, "amount_minor"), kind: text(row, "kind"), actorUserID: text(row, "actor_user_id"), createdAt: text(row, "created_at"))
         }
     }
 
-    private func loadAttachments(budgetID: String, transactionIDs: Set<String>) async throws -> [LocalAttachmentRecord] {
+    private func loadAttachments(budgetID: String, transactionIDs: Set<String>, database: isolated LocalDatabase) throws -> [LocalAttachmentRecord] {
         guard !transactionIDs.isEmpty else { return [] }
-        let rows = try await database.rows(.init("SELECT a.* FROM attachments a JOIN transactions t ON t.id=a.transaction_id WHERE t.budget_id=? ORDER BY a.created_at,a.id", values: [.text(budgetID)]))
+        let rows = try database.rows(.init("SELECT a.* FROM attachments a JOIN transactions t ON t.id=a.transaction_id WHERE t.budget_id=? ORDER BY a.created_at,a.id", values: [.text(budgetID)]))
         return try rows.compactMap {
             let transactionID = try text($0, "transaction_id")
             guard transactionIDs.contains(transactionID) else { return nil }
@@ -1452,8 +1458,8 @@ public actor LocalAuthorityStore {
         }
     }
 
-    private func loadAttachmentTombstones(budgetID: String) async throws -> [LocalAttachmentTombstoneRecord] {
-        try await database.rows(.init("SELECT * FROM attachment_tombstones WHERE budget_id=? ORDER BY detached_at,id", values: [.text(budgetID)])).map { row in
+    private func loadAttachmentTombstones(budgetID: String, database: isolated LocalDatabase) throws -> [LocalAttachmentTombstoneRecord] {
+        try database.rows(.init("SELECT * FROM attachment_tombstones WHERE budget_id=? ORDER BY detached_at,id", values: [.text(budgetID)])).map { row in
             try .init(id: text(row, "id"), budgetID: text(row, "budget_id"), transactionID: text(row, "transaction_id"), filename: text(row, "filename"), contentType: text(row, "content_type"), sizeBytes: integer(row, "size_bytes"), sha256: text(row, "sha256"), createdAt: text(row, "created_at"), detachedAt: text(row, "detached_at"), detachedByUserID: text(row, "detached_by_user_id"), purgeAfter: text(row, "purge_after"), tombstoneObjectName: optionalText(row, "tombstone_object_name"))
         }
     }
@@ -1499,29 +1505,29 @@ public actor LocalAuthorityStore {
         guard changes == 1 else { throw LocalStorageError.operationFailed("Local \(record) was not found") }
     }
 
-    private func optionalText(_ value: String?) -> LocalSQLiteValue { value.map(LocalSQLiteValue.text) ?? .null }
-    private func optionalInteger(_ value: Int64?) -> LocalSQLiteValue { value.map(LocalSQLiteValue.integer) ?? .null }
-    private func json(_ values: [String]) -> String {
+    private nonisolated func optionalText(_ value: String?) -> LocalSQLiteValue { value.map(LocalSQLiteValue.text) ?? .null }
+    private nonisolated func optionalInteger(_ value: Int64?) -> LocalSQLiteValue { value.map(LocalSQLiteValue.integer) ?? .null }
+    private nonisolated func json(_ values: [String]) -> String {
         guard let data = try? JSONEncoder().encode(values) else { return "[]" }
         return String(decoding: data, as: UTF8.self)
     }
-    private func stringArray(_ row: LocalSQLiteRow, _ key: String) -> [String] {
+    private nonisolated func stringArray(_ row: LocalSQLiteRow, _ key: String) -> [String] {
         guard case let .text(value)? = row[key], let data = value.data(using: .utf8) else { return [] }
         return (try? JSONDecoder().decode([String].self, from: data)) ?? []
     }
-    private func text(_ row: LocalSQLiteRow, _ key: String) throws -> String {
+    private nonisolated func text(_ row: LocalSQLiteRow, _ key: String) throws -> String {
         guard case let .text(value)? = row[key] else { throw LocalStorageError.operationFailed("Invalid local value for \(key)") }
         return value
     }
-    private func optionalText(_ row: LocalSQLiteRow, _ key: String) -> String? {
+    private nonisolated func optionalText(_ row: LocalSQLiteRow, _ key: String) -> String? {
         guard case let .text(value)? = row[key] else { return nil }
         return value
     }
-    private func optionalInteger(_ row: LocalSQLiteRow, _ key: String) -> Int64? {
+    private nonisolated func optionalInteger(_ row: LocalSQLiteRow, _ key: String) -> Int64? {
         guard case let .integer(value)? = row[key] else { return nil }
         return value
     }
-    private func statementImportRecord(_ row: LocalSQLiteRow) throws -> LocalStatementImportRecord {
+    private nonisolated func statementImportRecord(_ row: LocalSQLiteRow) throws -> LocalStatementImportRecord {
         try .init(
             id: text(row, "id"), budgetID: text(row, "budget_id"), accountID: text(row, "account_id"),
             status: text(row, "status"), version: integer(row, "version"),
@@ -1529,9 +1535,9 @@ public actor LocalAuthorityStore {
             payloadJSON: text(row, "payload_json"), createdAt: text(row, "created_at")
         )
     }
-    private func integer(_ row: LocalSQLiteRow, _ key: String) throws -> Int64 {
+    private nonisolated func integer(_ row: LocalSQLiteRow, _ key: String) throws -> Int64 {
         guard case let .integer(value)? = row[key] else { throw LocalStorageError.operationFailed("Invalid local value for \(key)") }
         return value
     }
-    private func bool(_ row: LocalSQLiteRow, _ key: String) throws -> Bool { try integer(row, key) != 0 }
+    private nonisolated func bool(_ row: LocalSQLiteRow, _ key: String) throws -> Bool { try integer(row, key) != 0 }
 }

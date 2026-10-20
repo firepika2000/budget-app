@@ -1,8 +1,68 @@
 import Foundation
+import SQLite3
 import XCTest
 @testable import BudgetStorage
 
 final class LocalDatabaseTests: XCTestCase {
+    func testReadTransactionKeepsOneWALObservationWhileAnotherConnectionCommits() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appendingPathComponent("consistent.sqlite")
+        let database = try LocalDatabase(fileURL: file)
+        try await database.transaction(fixtureStatements)
+        let observed = try await database.withReadTransaction { reader in
+            let before = try reader.rows(.init("SELECT memo FROM transactions WHERE id='transaction'"))
+            var writer: OpaquePointer?
+            XCTAssertEqual(sqlite3_open_v2(file.path, &writer, SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX, nil), SQLITE_OK)
+            guard let writer else { throw LocalStorageError.openFailed("Missing test writer") }
+            defer { sqlite3_close_v2(writer) }
+            XCTAssertEqual(sqlite3_exec(writer, "UPDATE transactions SET memo='committed elsewhere' WHERE id='transaction'", nil, nil, nil), SQLITE_OK)
+            let after = try reader.rows(.init("SELECT memo FROM transactions WHERE id='transaction'"))
+            XCTAssertEqual(before, after, "A later read must retain the original WAL snapshot")
+            return after
+        }
+        XCTAssertEqual(observed.first?["memo"], .text("Exact local purchase"))
+        let fresh = try await database.rows(.init("SELECT memo FROM transactions WHERE id='transaction'"))
+        XCTAssertEqual(fresh.first?["memo"], .text("committed elsewhere"))
+        do {
+            let _: Int = try await database.withReadTransaction { _ in throw LocalStorageError.operationFailed("injected") }
+            XCTFail("Injected read failure must propagate")
+        } catch { XCTAssertEqual(error as? LocalStorageError, .operationFailed("injected")) }
+        try await database.transaction([.init("UPDATE transactions SET memo='after rollback' WHERE id='transaction'")])
+    }
+
+    func testAuthoritySnapshotNeverMixesVersionsDuringConcurrentMetadataWrites() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appendingPathComponent("concurrent.sqlite")
+        let writer = try LocalDatabase(fileURL: file)
+        try await writer.transaction(fixtureStatements + [
+            .init("UPDATE accounts SET name='v0' WHERE id='checking'"),
+            .init("UPDATE transactions SET memo='v0' WHERE id='transaction'")
+        ])
+        let authority = try LocalAuthorityStore(fileURL: file)
+        async let writes: Void = {
+            for version in 1...50 {
+                try await writer.transaction([
+                    .init("UPDATE accounts SET name=? WHERE id='checking'", values: [.text("v\(version)")]),
+                    .init("UPDATE transactions SET memo=? WHERE id='transaction'", values: [.text("v\(version)")])
+                ])
+                await Task.yield()
+            }
+        }()
+        for _ in 0..<50 {
+            let value = try await authority.snapshot(budgetID: "budget")
+            XCTAssertEqual(value.accounts.first?.name, value.transactions.first?.memo)
+            XCTAssertEqual(value.accounts.first?.openingBalanceMinor, 9_007_199_254_740_991)
+            XCTAssertEqual(value.transactions.first?.amountMinor, -12_345)
+            XCTAssertEqual(value.transactions.first?.splits.first?.amountMinor, -12_345)
+        }
+        try await writes
+        let final = try await authority.snapshot(budgetID: "budget")
+        XCTAssertEqual(final.accounts.first?.name, "v50")
+        try await authority.integrityCheck()
+    }
+
     func testLocalRelatedObservationsStayBudgetScopedAcrossReopen() async throws {
         let root = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }

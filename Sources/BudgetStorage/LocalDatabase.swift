@@ -141,6 +141,21 @@ public actor LocalDatabase {
         }
     }
 
+    /// All observations in this synchronous block share one WAL read snapshot. Other connections
+    /// may commit without turning a multi-table observation into a mixture of different versions.
+    public func withReadTransaction<Value: Sendable>(_ body: @Sendable (isolated LocalDatabase) throws -> Value) throws -> Value {
+        let database = try requireHandle()
+        try Self.execute("BEGIN DEFERRED", on: database)
+        do {
+            let value = try body(self)
+            try Self.execute("COMMIT", on: database)
+            return value
+        } catch {
+            try? Self.execute("ROLLBACK", on: database)
+            throw error
+        }
+    }
+
     public func rows(_ statement: LocalSQLStatement) throws -> [LocalSQLiteRow] {
         try Self.rows(statement.sql, values: statement.values, on: requireHandle())
     }
