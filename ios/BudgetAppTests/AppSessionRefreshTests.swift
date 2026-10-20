@@ -2088,6 +2088,26 @@ final class AppSessionRefreshTests: XCTestCase {
         revised.remove()
         XCTAssertThrowsError(try revised.load())
         XCTAssertThrowsError(try revised.load(planMonth: "2026-10-01"))
+        try revised.save(snapshot)
+        try revised.save(snapshot, planMonth: "2026-09-01")
+        let rootFile = directory.appendingPathComponent("cache.json")
+        let monthFile = directory.appendingPathComponent("cache-plan-2026-09-01.json")
+        let oldRoot = try Data(contentsOf: rootFile), oldMonth = try Data(contentsOf: monthFile)
+        revised.remove()
+        // Reintroduce same-revision bytes to model an eviction that left old files behind.
+        try oldRoot.write(to: rootFile)
+        try oldMonth.write(to: monthFile)
+        let reopenedDenied = LiveWorkspaceReadCache(fileURL: rootFile, accessRevision: "scope-c")
+        XCTAssertThrowsError(try reopenedDenied.load(), "Denial must survive reconstruction even when unlink left data behind")
+        XCTAssertThrowsError(try reopenedDenied.load(planMonth: "2026-09-01"))
+        let unrelated = directory.appendingPathComponent("another-budget.json")
+        try Data("keep".utf8).write(to: unrelated)
+        try reopenedDenied.save(snapshot, planMonth: "2026-10-01")
+        let authorized = LiveWorkspaceReadCache(fileURL: rootFile, accessRevision: "scope-c")
+        XCTAssertNoThrow(try authorized.load(planMonth: "2026-10-01"))
+        XCTAssertThrowsError(try authorized.load(planMonth: "2026-09-01"), "One fresh month must not revive an older revoked month")
+        XCTAssertThrowsError(try authorized.load())
+        XCTAssertEqual(try Data(contentsOf: unrelated), Data("keep".utf8))
     }
 
     func testLiveReadNamespaceSeparatesServersButSurvivesCredentialRotation() throws {

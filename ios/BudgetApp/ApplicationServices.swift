@@ -1120,6 +1120,8 @@ struct LiveWorkspaceCachePayload: Codable {
 final class LiveWorkspaceReadCache {
     private let fileURL: URL
     private var accessRevision: String?
+    private var requiresFreshObservation = false
+    private var denialMarker: URL { fileURL.appendingPathExtension("revoked") }
 
     init(budgetID: String, serverURL: URL, token: String, accessRevision: String? = nil, fileManager: FileManager = .default) {
         self.accessRevision = accessRevision
@@ -1146,11 +1148,25 @@ final class LiveWorkspaceReadCache {
         try FileManager.default.createDirectory(
             at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true
         )
+        if requiresFreshObservation || FileManager.default.fileExists(atPath: denialMarker.path) {
+            // A new authorized observation may reopen only its own month, never an older cached
+            // month left behind by failed denial eviction. Keep quarantine until cleanup succeeds.
+            for old in try cacheFiles() where FileManager.default.fileExists(atPath: old.path) {
+                try FileManager.default.removeItem(at: old)
+            }
+            if FileManager.default.fileExists(atPath: denialMarker.path) {
+                try FileManager.default.removeItem(at: denialMarker)
+            }
+            requiresFreshObservation = false
+        }
         try JSONEncoder().encode(value).write(to: destination, options: [.atomic, .completeFileProtection])
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: destination.path)
     }
 
     func load(planMonth: String? = nil) throws -> LiveWorkspaceCachePayload {
+        guard !requiresFreshObservation, !FileManager.default.fileExists(atPath: denialMarker.path) else {
+            throw BudgetApplicationError.invalidOperation("Saved workspace access was revoked. Reconnect to load an authorized observation.")
+        }
         let value = try JSONDecoder().decode(LiveWorkspaceCachePayload.self, from: Data(contentsOf: cacheURL(planMonth: planMonth)))
         guard value.accessRevision == accessRevision else {
             throw BudgetApplicationError.invalidOperation("The saved workspace belongs to earlier access settings. Reconnect to load your current budget access.")
@@ -1177,16 +1193,25 @@ final class LiveWorkspaceReadCache {
     }
 
     func remove() {
-        try? FileManager.default.removeItem(at: fileURL)
+        requiresFreshObservation = true
+        try? FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? Data("revoked".utf8).write(to: denialMarker, options: [.atomic, .completeFileProtection])
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: denialMarker.path)
+        for candidate in (try? cacheFiles()) ?? [] { try? FileManager.default.removeItem(at: candidate) }
+    }
+
+    private func cacheFiles() throws -> [URL] {
+        var files = [fileURL]
         let parent = fileURL.deletingLastPathComponent()
         let prefix = fileURL.deletingPathExtension().lastPathComponent + "-plan-"
-        for candidate in (try? FileManager.default.contentsOfDirectory(at: parent, includingPropertiesForKeys: nil)) ?? [] {
+        for candidate in try FileManager.default.contentsOfDirectory(at: parent, includingPropertiesForKeys: nil) {
             guard candidate.lastPathComponent.hasPrefix(prefix), candidate.pathExtension == "json" else { continue }
             let month = String(candidate.deletingPathExtension().lastPathComponent.dropFirst(prefix.count))
             guard let expected = try? cacheURL(planMonth: month),
                   expected.standardizedFileURL.path == candidate.standardizedFileURL.path else { continue }
-            try? FileManager.default.removeItem(at: candidate)
+            files.append(candidate)
         }
+        return files
     }
 }
 
