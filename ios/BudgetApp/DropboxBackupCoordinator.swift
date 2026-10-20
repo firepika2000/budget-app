@@ -51,6 +51,7 @@ final class DropboxBackupCoordinator: NSObject, ObservableObject, ASWebAuthentic
     static let pendingRetryInterval: TimeInterval = 30 * 60
     static let supportedAutomaticIntervals = [1, 7]
     @Published private var automaticBackupClaimed = false
+    @Published private var manualTransferClaimed = false
     private var automaticBackupStartedAt: Date?
     private let credential: DropboxOAuthCredential?
     private var authenticationSession: ASWebAuthenticationSession?
@@ -277,7 +278,7 @@ final class DropboxBackupCoordinator: NSObject, ObservableObject, ASWebAuthentic
     /// Claims one due automatic run before capture begins. Scene activation and SwiftUI task
     /// delivery can overlap, so the claim covers both the local snapshot and the later upload.
     func claimAutomaticBackupIfDue(at date: Date = Date()) -> Bool {
-        guard !automaticBackupClaimed, !isWorking, automaticBackupIsDue(at: date) else { return false }
+        guard !automaticBackupClaimed, !manualTransferClaimed, !isWorking, automaticBackupIsDue(at: date) else { return false }
         automaticBackupClaimed = true
         automaticBackupStartedAt = date
         return true
@@ -295,6 +296,48 @@ final class DropboxBackupCoordinator: NSObject, ObservableObject, ASWebAuthentic
         automaticBackupStartedAt = nil
     }
 
+    var canStartManualTransfer: Bool { !isWorking && !automaticBackupClaimed && !manualTransferClaimed }
+    var canStartManualBackup: Bool { canStartManualTransfer && pendingLocalGenerationURL == nil }
+    func claimManualTransfer() -> Bool {
+        guard canStartManualTransfer else { return false }
+        manualTransferClaimed = true
+        return true
+    }
+    func finishManualTransfer() { manualTransferClaimed = false }
+
+    /// One claimed lifecycle for scene activation and the Settings toggle. A retained immutable
+    /// generation always wins over capture, and cleanup failure cannot undo verified publication.
+    func performAutomaticBackup(
+        prepare: () async -> Bool,
+        capture: () async throws -> URL,
+        publish: (URL) async throws -> DropboxBackupPublication,
+        remove: (URL) throws -> Void
+    ) async {
+        guard claimAutomaticBackupIfDue() else { return }
+        defer { finishAutomaticBackupAttempt() }
+        errorMessage = nil
+        guard await prepare(), automaticBackupIsDue() else { return }
+        var package: URL?
+        do {
+            try Task.checkCancellation()
+            let generation: URL
+            if let pendingLocalGenerationURL { generation = pendingLocalGenerationURL }
+            else { generation = try await capture() }
+            package = generation
+            try Task.checkCancellation()
+            _ = try await publish(generation)
+            if (lastSuccessfulBackupAt ?? .distantPast) < (automaticBackupStartedAt ?? .distantPast) {
+                recordSuccessfulBackup()
+            }
+            clearPendingLocalGeneration()
+        } catch {
+            if let package { retainPendingLocalGeneration(package) }
+            errorMessage = error.localizedDescription
+            return
+        }
+        if let package { try? remove(package) }
+    }
+
     func retainPendingLocalGeneration(_ url: URL, at date: Date = Date()) {
         guard Self.isValidPendingGeneration(url) else { return }
         pendingLocalGenerationURL = url
@@ -310,7 +353,7 @@ final class DropboxBackupCoordinator: NSObject, ObservableObject, ASWebAuthentic
         defaults.removeObject(forKey: pendingRetryAtKey)
     }
 
-    var canDiscardPendingGeneration: Bool { !isWorking && !automaticBackupClaimed }
+    var canDiscardPendingGeneration: Bool { canStartManualTransfer }
 
     /// Keep custody metadata until deletion succeeds. The synchronous deletion and state update
     /// form one MainActor operation, so upload/capture cannot start between the guard and removal.

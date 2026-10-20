@@ -3800,6 +3800,70 @@ final class DemoStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testAutomaticDropboxLifecycleReusesPendingAndSerializesManualCapture() async throws {
+        let suite = "BudgetAppTests.DropboxLifecycle.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let pending = root.appendingPathComponent("Pending.clearpocketbackup", isDirectory: true)
+        try FileManager.default.createDirectory(at: pending, withIntermediateDirectories: true)
+        let coordinator = DropboxBackupCoordinator(appKey: "", defaults: defaults)
+        coordinator.automaticBackupEnabled = true
+        coordinator.retainPendingLocalGeneration(pending, at: Date().addingTimeInterval(-4000))
+        var preparations = 0, captures = 0, publications = 0
+        XCTAssertTrue(coordinator.claimManualTransfer())
+        await coordinator.performAutomaticBackup(prepare: { preparations += 1; return true }, capture: {
+            captures += 1; return pending
+        }, publish: { _ in XCTFail("Manual claim must block automatic execution"); throw URLError(.cancelled) }, remove: { _ in })
+        XCTAssertEqual(preparations, 0)
+        coordinator.finishManualTransfer()
+        await coordinator.performAutomaticBackup(prepare: { preparations += 1; return true }, capture: {
+            captures += 1; return pending
+        }, publish: { url in
+            publications += 1
+            XCTAssertEqual(url, pending)
+            XCTAssertFalse(coordinator.claimManualTransfer(), "An automatic claim includes capture and publication")
+            throw URLError(.notConnectedToInternet)
+        }, remove: { _ in XCTFail("Failed publication must retain local custody") })
+        XCTAssertEqual(captures, 0)
+        XCTAssertEqual(publications, 1)
+        XCTAssertEqual(coordinator.pendingLocalGenerationURL, pending)
+        XCTAssertFalse(coordinator.automaticBackupIsDue())
+        coordinator.recordSuccessfulBackup(at: Date().addingTimeInterval(-172800))
+        coordinator.retainPendingLocalGeneration(pending, at: Date().addingTimeInterval(-4000))
+        await coordinator.performAutomaticBackup(prepare: { true }, capture: {
+            captures += 1; return pending
+        }, publish: { url in
+            publications += 1
+            XCTAssertEqual(url, pending)
+            return .init(remotePath: "/Backups/Pending.clearpocketbackup", encryptedBytes: 10, fileCount: 1)
+        }, remove: { _ in throw CocoaError(.fileWriteNoPermission) })
+        XCTAssertEqual(captures, 0)
+        XCTAssertEqual(publications, 2)
+        XCTAssertNil(coordinator.pendingLocalGenerationURL, "Cleanup failure cannot turn committed publication into a pending retry")
+        XCTAssertNil(coordinator.errorMessage)
+        XCTAssertNotNil(coordinator.lastSuccessfulBackupAt)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: pending.path))
+        XCTAssertTrue(coordinator.canStartManualBackup)
+    }
+
+    @MainActor
+    func testAutomaticDropboxPreparationFailureUsesCooldownWithoutCapture() async {
+        let suite = "BudgetAppTests.DropboxPrepare.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let coordinator = DropboxBackupCoordinator(appKey: "", defaults: defaults)
+        coordinator.automaticBackupEnabled = true
+        await coordinator.performAutomaticBackup(prepare: { false }, capture: {
+            XCTFail("Disconnected preparation cannot capture"); throw URLError(.notConnectedToInternet)
+        }, publish: { _ in XCTFail("No generation may publish"); throw URLError(.notConnectedToInternet) }, remove: { _ in })
+        XCTAssertFalse(coordinator.automaticBackupIsDue())
+        XCTAssertNil(coordinator.pendingLocalGenerationURL)
+        XCTAssertTrue(coordinator.canStartManualBackup)
+    }
+
+    @MainActor
     func testPendingDropboxDiscardIsBlockedDuringCaptureAndRetainsCustodyOnFailure() throws {
         let suite = "BudgetAppTests.DropboxDiscard.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
@@ -3892,7 +3956,12 @@ final class DemoStoreTests: XCTestCase {
         let sourceURL = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().appendingPathComponent("BudgetApp/BudgetWorkspaceView.swift")
         let source = try String(contentsOf: sourceURL, encoding: .utf8)
-        XCTAssertTrue(source.contains("generation = pending"), "Automatic retry must reuse the immutable package")
+        let coordinator = try String(contentsOf: sourceURL.deletingLastPathComponent().appendingPathComponent("DropboxBackupCoordinator.swift"))
+        XCTAssertTrue(coordinator.contains("generation = pendingLocalGenerationURL"), "Automatic retry must reuse the immutable package")
+        XCTAssertEqual(source.components(separatedBy: "await store.performAutomaticDropboxBackup(using:").count - 1, 2)
+        XCTAssertTrue(source.contains("guard !creating, dropbox.canStartManualTransfer else { return }"), "Leaving Settings cannot unlink an active upload source")
+        XCTAssertTrue(source.contains("if let backup, backup.packageURL == dropbox.pendingLocalGenerationURL"))
+        XCTAssertFalse(source.contains("if backup?.packageURL == dropbox.pendingLocalGenerationURL"), "Two absent URLs cannot block a first backup")
         XCTAssertTrue(source.contains("store.deletePendingLocalDeviceBackup(packageURL)"))
     }
 

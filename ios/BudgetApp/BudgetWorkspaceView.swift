@@ -4872,6 +4872,19 @@ final class BudgetWorkspaceStore: ObservableObject {
         return try localStorageComposition.keyManager.loadOrCreateDropboxBackupRecoveryKey()
     }
 
+    func performAutomaticDropboxBackup(using coordinator: DropboxBackupCoordinator) async {
+        guard localStorageComposition != nil else { return }
+        await coordinator.performAutomaticBackup(prepare: {
+            await coordinator.refresh()
+            return coordinator.isConnected
+        }, capture: {
+            let key = try self.localDeviceDropboxRecoveryKey()
+            let directory = try self.localDevicePendingBackupDirectory()
+            return try await self.createLocalDeviceBackup(in: directory, recoveryKey: key).packageURL
+        }, publish: { try await coordinator.upload(packageURL: $0) },
+           remove: { try self.deletePendingLocalDeviceBackup($0) })
+    }
+
     func localDevicePendingBackupDirectory() throws -> URL {
         guard let localStorageComposition else {
             throw LocalStorageError.operationFailed("Pending backup storage is available only for a Local Device budget")
@@ -6471,30 +6484,8 @@ struct BudgetWorkspaceView: View {
     }
 
     private func runAutomaticDropboxBackupIfDue() async {
-        guard session.sourceMode == .localDevice,
-              dropboxBackup.claimAutomaticBackupIfDue() else { return }
-        defer { dropboxBackup.finishAutomaticBackupAttempt() }
-        await dropboxBackup.refresh()
-        guard dropboxBackup.isConnected, dropboxBackup.automaticBackupIsDue() else { return }
-        var packageURL: URL?
-        do {
-            let generation: URL
-            if let pending = dropboxBackup.pendingLocalGenerationURL {
-                generation = pending
-            } else {
-                let recoveryKey = try store.localDeviceDropboxRecoveryKey()
-                let directory = try store.localDevicePendingBackupDirectory()
-                generation = try await store.createLocalDeviceBackup(in: directory, recoveryKey: recoveryKey).packageURL
-            }
-            packageURL = generation
-            _ = try await dropboxBackup.upload(packageURL: generation)
-            dropboxBackup.clearPendingLocalGeneration()
-        } catch {
-            if let packageURL { dropboxBackup.retainPendingLocalGeneration(packageURL) }
-            dropboxBackup.errorMessage = error.localizedDescription
-            return
-        }
-        if let packageURL { try? store.deletePendingLocalDeviceBackup(packageURL) }
+        guard session.sourceMode == .localDevice else { return }
+        await store.performAutomaticDropboxBackup(using: dropboxBackup)
     }
 }
 
@@ -7352,7 +7343,7 @@ private struct LocalDeviceBackupRecoveryView: View {
                     Button("Back Up Now to Dropbox", systemImage: "arrow.up.doc") {
                         Task { await createAndUploadDropboxBackup() }
                     }
-                    .disabled(creating || dropbox.isWorking || dropbox.pendingLocalGenerationURL != nil)
+                    .disabled(creating || !dropbox.canStartManualBackup)
                     .accessibilityIdentifier("backup-now-dropbox")
                     if let completedAt = dropbox.lastSuccessfulBackupAt {
                         LabeledContent("Last successful backup", value: completedAt.formatted(date: .abbreviated, time: .shortened))
@@ -7395,7 +7386,7 @@ private struct LocalDeviceBackupRecoveryView: View {
                         }
                     }
                     Button("Disconnect Dropbox", role: .destructive) { confirmingDropboxDisconnect = true }
-                        .disabled(dropbox.isWorking)
+                        .disabled(!dropbox.canStartManualTransfer)
                         .accessibilityIdentifier("disconnect-dropbox-backup")
                 }
                 if let pending = dropbox.pendingLocalGenerationURL {
@@ -7406,7 +7397,7 @@ private struct LocalDeviceBackupRecoveryView: View {
                         Button("Retry Pending Upload", systemImage: "arrow.clockwise.icloud") {
                             Task { await retryPendingDropboxBackup(pending) }
                         }
-                        .disabled(dropbox.isWorking)
+                        .disabled(!dropbox.canStartManualTransfer)
                     }
                     ShareLink(item: pending) {
                         Label("Save Pending Generation Elsewhere", systemImage: "square.and.arrow.up")
@@ -7487,7 +7478,7 @@ private struct LocalDeviceBackupRecoveryView: View {
                     Button("Create Transfer Package", systemImage: "shippingbox.and.arrow.backward") {
                         Task { await createBackup() }
                     }
-                    .disabled(creating)
+                    .disabled(creating || !dropbox.canStartManualTransfer)
                     .accessibilityIdentifier("create-local-server-transfer")
                 }
                 NavigationLink("Connect After Server Import") {
@@ -7518,7 +7509,7 @@ private struct LocalDeviceBackupRecoveryView: View {
                 } label: {
                     if creating { ProgressView() } else { Label(backup == nil ? "Create Encrypted Backup" : "Create New Backup", systemImage: "externaldrive.badge.plus") }
                 }
-                .disabled(creating)
+                .disabled(creating || !dropbox.canStartManualTransfer)
                 .accessibilityIdentifier("create-local-device-backup")
                 Text("Creating a new generation does not change, move, or delete the budget on this iPhone.")
                     .font(.footnote).foregroundStyle(.secondary)
@@ -7605,7 +7596,7 @@ private struct LocalDeviceBackupRecoveryView: View {
         }
         .onChange(of: dropbox.automaticBackupEnabled) { _, enabled in
             guard enabled, dropbox.isConnected, dropbox.automaticBackupIsDue() else { return }
-            Task { await createAndUploadDropboxBackup() }
+            Task { await store.performAutomaticDropboxBackup(using: dropbox) }
         }
         .onDisappear {
             removeDropboxRestoreDownload()
@@ -7734,16 +7725,19 @@ private struct LocalDeviceBackupRecoveryView: View {
 
     private func createBackup(
         in directory: URL = FileManager.default.temporaryDirectory,
-        recoveryKey: LocalDeviceBackupRecoveryKey? = nil
+        recoveryKey: LocalDeviceBackupRecoveryKey? = nil,
+        hasTransferClaim: Bool = false
     ) async {
         guard !creating else { return }
+        if !hasTransferClaim, !dropbox.claimManualTransfer() { return }
+        defer { if !hasTransferClaim { dropbox.finishManualTransfer() } }
         creating = true
         copied = false
         errorMessage = nil
         dropboxMessage = nil
         defer { creating = false }
         do {
-            if backup?.packageURL == dropbox.pendingLocalGenerationURL {
+            if let backup, backup.packageURL == dropbox.pendingLocalGenerationURL {
                 throw LocalStorageError.operationFailed("Retry, save, or discard the pending Dropbox generation before creating another backup")
             }
             if let prior = backup?.packageURL { try? FileManager.default.removeItem(at: prior) }
@@ -7755,7 +7749,8 @@ private struct LocalDeviceBackupRecoveryView: View {
     }
 
     private func createAndUploadDropboxBackup() async {
-        guard !creating, !dropbox.isWorking else { return }
+        guard !creating, dropbox.canStartManualBackup, dropbox.claimManualTransfer() else { return }
+        defer { dropbox.finishManualTransfer() }
         let recoveryKey: LocalDeviceBackupRecoveryKey
         do {
             recoveryKey = try store.localDeviceDropboxRecoveryKey()
@@ -7767,7 +7762,7 @@ private struct LocalDeviceBackupRecoveryView: View {
         let directory: URL
         do { directory = try store.localDevicePendingBackupDirectory() }
         catch { errorMessage = error.localizedDescription; return }
-        await createBackup(in: directory, recoveryKey: recoveryKey)
+        await createBackup(in: directory, recoveryKey: recoveryKey, hasTransferClaim: true)
         guard let backup else { return }
         do {
             let publication = try await dropbox.upload(packageURL: backup.packageURL)
@@ -7784,6 +7779,8 @@ private struct LocalDeviceBackupRecoveryView: View {
     }
 
     private func retryPendingDropboxBackup(_ packageURL: URL) async {
+        guard dropbox.claimManualTransfer() else { return }
+        defer { dropbox.finishManualTransfer() }
         do {
             let publication = try await dropbox.upload(packageURL: packageURL)
             try? store.deletePendingLocalDeviceBackup(packageURL)
@@ -7863,6 +7860,7 @@ private struct LocalDeviceBackupRecoveryView: View {
     }
 
     private func removeTemporaryBackup() {
+        guard !creating, dropbox.canStartManualTransfer else { return }
         guard let backup else { return }
         guard backup.packageURL != dropbox.pendingLocalGenerationURL else { return }
         try? FileManager.default.removeItem(at: backup.packageURL)
