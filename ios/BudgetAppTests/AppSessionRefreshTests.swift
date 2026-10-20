@@ -84,6 +84,8 @@ final class AppSessionRefreshTests: XCTestCase {
             } else {
                 XCTAssertEqual(reopened.pendingSyncCount, 1)
                 XCTAssertEqual(reopened.pendingLiveTransactions.first?.requiresReview, true)
+                XCTAssertEqual(reopened.pendingLiveTransactions.first?.reviewReason,
+                    outcome == "unsupported" ? .serverUpdateRequired : (outcome == "conflict" ? .conflict : .accessChanged))
                 XCTAssertEqual(reopened.requests.first?.status, originalStatus)
                 XCTAssertEqual(posts.values.count, outcome == "unsupported" ? 0 : 1, "Rejected intent must not automatically repeat")
                 try reopened.discardPendingLiveTransaction(id: identity)

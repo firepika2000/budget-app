@@ -4,6 +4,48 @@ import BudgetAPI
 
 final class FinancialGoldenVectorTests: XCTestCase {
     @MainActor
+    func testPendingReviewReasonSurvivesRelaunchWithoutPersistingRawErrors() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("queue.json"), id = UUID().uuidString.lowercased()
+        let queue = LiveTransactionOutbox(fileURL: file)
+        let request = APIFinancialRequestCreate(destinationCategoryID: "food", requestedAmountMinor: 123, reason: "Reviewed")
+        try queue.enqueueRequest(id: id, request: request)
+        do {
+            try await queue.replayCommands(shouldPause: { _ in true }) { _ in
+                throw APIClientError.server(status: 409, message: "Sensitive raw server diagnostic must not be retained")
+            }
+            XCTFail("Expected conflict")
+        } catch {}
+        let reopened = LiveTransactionOutbox(fileURL: file)
+        XCTAssertEqual(reopened.entries.first?.reviewReason, .conflict)
+        XCTAssertEqual(reopened.entries.first?.requestCreation, request)
+        XCTAssertEqual(reopened.entries.first?.requiresReview, true)
+        let saved = try String(contentsOf: file)
+        XCTAssertFalse(saved.contains("Sensitive raw server diagnostic"))
+        var sends = 0
+        do { try await reopened.replayCommands { _ in sends += 1 }; XCTFail("Review must pause automatic retry") } catch {}
+        XCTAssertEqual(sends, 0)
+        try reopened.retryReviewed(id: id)
+        XCTAssertNil(reopened.entries.first?.reviewReason)
+        XCTAssertEqual(reopened.entries.first?.id, id)
+        XCTAssertEqual(reopened.entries.first?.requestCreation, request)
+        try await reopened.replayCommands { _ in sends += 1 }
+        XCTAssertEqual(sends, 1); XCTAssertEqual(reopened.count, 0)
+    }
+
+    func testPendingReviewReasonsDoNotClassifyAuthenticationOrTransportAsRejections() throws {
+        XCTAssertEqual(PendingChangeReviewReason.classify(PendingReplayError.serverUpdateRequired), .serverUpdateRequired)
+        for (status, reason) in [(400, PendingChangeReviewReason.invalidDetails), (403, .accessChanged),
+                                  (404, .resourceUnavailable), (409, .conflict), (422, .invalidDetails)] {
+            XCTAssertEqual(PendingChangeReviewReason.classify(APIClientError.server(status: status, message: "Ignored")), reason)
+        }
+        XCTAssertNil(PendingChangeReviewReason.classify(APIClientError.server(status: 401, message: "Refresh session")))
+        XCTAssertNil(PendingChangeReviewReason.classify(APIClientError.server(status: 503, message: "Unavailable")))
+        XCTAssertNil(PendingChangeReviewReason.classify(URLError(.networkConnectionLost)))
+        XCTAssertEqual(try JSONDecoder().decode(PendingChangeReviewReason.self, from: Data(#""future_reason""#.utf8)), .other)
+    }
+    @MainActor
     func testPendingRequestRevisionRetainsExactIntentAndExcludesCancellation() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }

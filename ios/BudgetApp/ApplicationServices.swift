@@ -619,6 +619,44 @@ struct ReportFilterSelection: Equatable {
     var isActive: Bool { self != Self() }
 }
 
+enum PendingReplayError: LocalizedError {
+    case serverUpdateRequired
+    var errorDescription: String? { "Update ClearPocket Server before retrying this saved change. Its original details remain in Pending Sync." }
+}
+
+enum PendingChangeReviewReason: String, Codable {
+    case serverUpdateRequired, accessChanged, resourceUnavailable, conflict, invalidDetails, attachmentUnavailable, other
+
+    init(from decoder: Decoder) throws {
+        self = Self(rawValue: try decoder.singleValueContainer().decode(String.self)) ?? .other
+    }
+
+    static func classify(_ error: Error) -> Self? {
+        if error is PendingReplayError { return .serverUpdateRequired }
+        if error is AttachmentStagingError { return .attachmentUnavailable }
+        guard case let APIClientError.server(status, _) = error else { return nil }
+        switch status {
+        case 403: return .accessChanged
+        case 404: return .resourceUnavailable
+        case 409: return .conflict
+        case 400, 422: return .invalidDetails
+        default: return nil
+        }
+    }
+
+    var explanation: String {
+        switch self {
+        case .serverUpdateRequired: return "Server update required. Update ClearPocket Server, then retry this original saved change."
+        case .accessChanged: return "Access changed. Reconnect and ask the household owner to verify your permissions before retrying."
+        case .resourceUnavailable: return "The item is unavailable or no longer shared with you. Refresh and verify access before retrying."
+        case .conflict: return "The server could not accept the reviewed state. Refresh and compare the current item before retrying; the original saved details have not been replaced."
+        case .invalidDetails: return "The server rejected these details. Review the current item and saved values before retrying."
+        case .attachmentUnavailable: return "The saved attachment could not be verified. Preserve your original file and review this upload before retrying."
+        case .other: return "Review this saved change and the current server state before retrying."
+        }
+    }
+}
+
 struct RequestRevisionIntent: Codable, Equatable {
     let requestID: String
     let expectedVersion: Int
@@ -1164,6 +1202,7 @@ final class LiveTransactionOutbox {
         let queuedAt: Date
         let operation: RecordTransactionOperation?
         var requiresReview: Bool? = nil
+        var reviewReason: PendingChangeReviewReason? = nil
         var transactionID: String? = nil
         var bulkUpdate: APITransactionBulkUpdate? = nil
         var assignment: AssignMoneyOperation? = nil
@@ -1312,7 +1351,7 @@ final class LiveTransactionOutbox {
             }
             do { try await send(entry) }
             catch {
-                if shouldPause(error) { try setReview(id: entry.id, required: true) }
+                if shouldPause(error) { try setReview(id: entry.id, required: true, reason: PendingChangeReviewReason.classify(error)) }
                 throw error
             }
             try acknowledgeReplay(id: entry.id)
@@ -1619,11 +1658,12 @@ final class LiveTransactionOutbox {
         try setReview(id: id, required: false)
     }
 
-    private func setReview(id: String, required: Bool) throws {
+    private func setReview(id: String, required: Bool, reason: PendingChangeReviewReason? = nil) throws {
         try requireReadableQueue()
         var next = entries
         guard let index = next.firstIndex(where: { $0.id == id }) else { return }
         next[index].requiresReview = required
+        next[index].reviewReason = required ? reason : nil
         try persist(next)
         entries = next
     }

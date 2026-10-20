@@ -3895,6 +3895,7 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
     }
 
     private func shouldPauseRejectedTransaction(_ error: Error) -> Bool {
+        if error is PendingReplayError { return true }
         if error is AttachmentStagingError { return true }
         guard case let APIClientError.server(status, _) = error else { return false }
         // Authentication and uncertain transport failures remain owned by the session/retry lifecycle.
@@ -3932,10 +3933,10 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
             do {
                 let support = try await client.financialRequestCapabilities(budgetID: budget.id, token: token)
                 guard support.revisionReplayVersion == 1 else {
-                    throw APIClientError.server(status: 409, message: "Update ClearPocket Server before retrying this saved request revision.")
+                    throw PendingReplayError.serverUpdateRequired
                 }
             } catch APIClientError.server(status: 404, message: _) {
-                throw APIClientError.server(status: 409, message: "This server needs an update for safe request revisions. Your edits remain saved in Pending Sync.")
+                throw PendingReplayError.serverUpdateRequired
             }
             try await credentials.prepare()
             try transactionOutbox.requireServer(budgetID: budget.id, serverURL: credentials.serverURL, token: credentials.token)
@@ -3949,10 +3950,10 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
             do {
                 let support = try await client.financialRequestCapabilities(budgetID: budget.id, token: token)
                 guard support.cancellationReplayVersion == 1 else {
-                    throw APIClientError.server(status: 409, message: "Update ClearPocket Server before retrying this saved request cancellation.")
+                    throw PendingReplayError.serverUpdateRequired
                 }
             } catch APIClientError.server(status: 404, message: _) {
-                throw APIClientError.server(status: 409, message: "This server needs an update for safe request cancellation. Your intent remains saved in Pending Sync.")
+                throw PendingReplayError.serverUpdateRequired
             }
             try await credentials.prepare()
             try transactionOutbox.requireServer(budgetID: budget.id, serverURL: credentials.serverURL, token: credentials.token)
@@ -3966,10 +3967,10 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
             do {
                 let support = try await client.financialRequestCapabilities(budgetID: budget.id, token: token)
                 guard support.creationReplayVersion == 1 else {
-                    throw APIClientError.server(status: 409, message: "Update ClearPocket Server before retrying this saved funding request.")
+                    throw PendingReplayError.serverUpdateRequired
                 }
             } catch APIClientError.server(status: 404, message: _) {
-                throw APIClientError.server(status: 409, message: "This server needs an update for safe funding-request retries. Your request remains saved in Pending Sync.")
+                throw PendingReplayError.serverUpdateRequired
             }
             try await credentials.prepare()
             try transactionOutbox.requireServer(budgetID: budget.id, serverURL: credentials.serverURL, token: credentials.token)
@@ -7174,10 +7175,14 @@ private struct PendingLiveTransactionsView: View {
                             if entry.requiresReview == true {
                                 Text("Needs review · automatic retry paused")
                                     .font(.caption).foregroundStyle(.secondary)
+                                if let reason = entry.reviewReason {
+                                    Text(reason.explanation).font(.caption).foregroundStyle(.secondary)
+                                        .accessibilityIdentifier("pending-review-reason-\(entry.id)")
+                                }
                                 Button("Retry This Change", systemImage: "arrow.clockwise") {
                                     Task {
                                         do { try await store.retryReviewedLiveTransaction(id: entry.id) }
-                                        catch { store.errorMessage = error.localizedDescription }
+                                        catch { errorMessage = error.localizedDescription }
                                     }
                                 }
                                 .disabled(store.isBackgroundSyncing || store.isLoading || store.pendingLegacyServerReview)
