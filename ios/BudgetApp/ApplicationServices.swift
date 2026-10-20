@@ -424,6 +424,62 @@ enum HistoryRetryIntent {
 }
 
 @MainActor
+final class DecisionHistoryPager<Row: Identifiable & Sendable>: ObservableObject {
+    @Published private(set) var rows: [Row] = []
+    @Published private(set) var loading = false
+    @Published private(set) var loadingOlder = false
+    @Published private(set) var canLoadOlder = false
+    @Published private(set) var errorMessage: String?
+    private(set) var retryIntent: HistoryRetryIntent = .refresh
+    private let pageSize: Int
+    private var scope: String?
+    private var requestID = UUID()
+
+    init(pageSize: Int = 50) { self.pageSize = max(1, min(pageSize, 100)) }
+
+    func prepare(scope: String) {
+        invalidate()
+        if self.scope != scope { rows = []; canLoadOlder = false }
+        self.scope = scope
+        errorMessage = nil
+    }
+
+    func invalidate() { requestID = UUID(); loading = false; loadingOlder = false }
+    func dismissError() { errorMessage = nil }
+
+    func load(reset: Bool, fetch: (Int, Int) async throws -> [Row]) async {
+        guard reset || (!loading && !loadingOlder && canLoadOlder) else { return }
+        let observed = UUID(); requestID = observed
+        let desiredCount = reset ? max(pageSize, rows.count) : 0
+        loading = reset; loadingOlder = !reset
+        defer { if requestID == observed { loading = false; loadingOlder = false } }
+        do {
+            var replacement: [Row] = []
+            var offset = reset ? 0 : rows.count
+            var more = false
+            repeat {
+                let page = try await fetch(pageSize, offset)
+                try Task.checkCancellation()
+                guard requestID == observed else { return }
+                let ids = (reset ? replacement : rows).map(\.id) + page.map(\.id)
+                guard page.count <= pageSize, Set(ids).count == ids.count else {
+                    throw NSError(domain: "DecisionHistory", code: 1,
+                        userInfo: [NSLocalizedDescriptionKey: "History returned an invalid page. Refresh to try again."])
+                }
+                replacement += page; offset += page.count; more = page.count == pageSize
+            } while reset && more && replacement.count < desiredCount
+            rows = reset ? replacement : rows + replacement
+            canLoadOlder = more; errorMessage = nil
+        } catch {
+            guard requestID == observed, !(error is CancellationError) else { return }
+            retryIntent = reset ? .refresh : .older
+            if HistoryObservationPolicy.mustDiscard(after: error) { rows = []; canLoadOlder = false }
+            errorMessage = error.localizedDescription
+        }
+    }
+}
+
+@MainActor
 struct StatementMatchIndex {
     struct Observation {
         let id: String

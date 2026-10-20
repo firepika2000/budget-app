@@ -11,6 +11,56 @@ import UserNotifications
 @testable import Budget_App
 
 final class DemoStoreTests: XCTestCase {
+    @MainActor
+    func testDecisionHistoryRefreshPreservesDepthAtomicallyAndRetryIntent() async {
+        struct Row: Identifiable, Sendable, Equatable { let id: Int; var value = "old" }
+        let history = DecisionHistoryPager<Row>(pageSize: 2)
+        history.prepare(scope: "owner|target")
+        await history.load(reset: true) { limit, offset in
+            XCTAssertEqual(limit, 2); XCTAssertEqual(offset, 0)
+            return [Row(id: 1), Row(id: 2)]
+        }
+        await history.load(reset: false) { _, offset in
+            XCTAssertEqual(offset, 2); return [Row(id: 3), Row(id: 4)]
+        }
+        let previous = history.rows
+        history.prepare(scope: "owner|target")
+        await history.load(reset: true) { _, offset in
+            XCTAssertEqual(history.rows, previous, "No partial refresh publication")
+            if offset == 0 { return [Row(id: 1, value: "new"), Row(id: 2)] }
+            throw URLError(.timedOut)
+        }
+        XCTAssertEqual(history.rows, previous); XCTAssertEqual(history.retryIntent, .refresh)
+        await history.load(reset: true) { _, offset in
+            offset == 0 ? [Row(id: 1, value: "new"), Row(id: 2)] : [Row(id: 3)]
+        }
+        XCTAssertEqual(history.rows.map(\.id), [1, 2, 3]); XCTAssertEqual(history.rows.first?.value, "new")
+        XCTAssertFalse(history.canLoadOlder); XCTAssertNil(history.errorMessage)
+        await history.load(reset: false) { _, _ in XCTFail("Final page must not repeat"); return [] }
+        history.prepare(scope: "different-member|target")
+        XCTAssertTrue(history.rows.isEmpty)
+    }
+
+    @MainActor
+    func testDecisionHistoryRejectsDuplicateDeniedAndSupersededPages() async {
+        struct Row: Identifiable, Sendable { let id: Int }
+        let history = DecisionHistoryPager<Row>(pageSize: 1)
+        history.prepare(scope: "a")
+        await history.load(reset: true) { _, _ in [Row(id: 1)] }
+        await history.load(reset: false) { _, _ in [Row(id: 1)] }
+        XCTAssertEqual(history.rows.map(\.id), [1]); XCTAssertEqual(history.retryIntent, .older)
+        XCTAssertNotNil(history.errorMessage)
+        await history.load(reset: false) { _, _ in throw APIClientError.server(status: 403, message: "Denied") }
+        XCTAssertTrue(history.rows.isEmpty); XCTAssertFalse(history.canLoadOlder)
+        await history.load(reset: true) { _, _ in
+            history.prepare(scope: "b")
+            return [Row(id: 2)]
+        }
+        XCTAssertTrue(history.rows.isEmpty); XCTAssertFalse(history.loading)
+        await history.load(reset: true) { _, _ in [Row(id: 3)] }
+        XCTAssertEqual(history.rows.map(\.id), [3])
+    }
+
     func testReconciliationHistoryInitialLoadAndRecoveryAreReachable() throws {
         let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("BudgetApp/BudgetWorkspaceView.swift")
         let source = try String(contentsOf: file)
@@ -1053,8 +1103,10 @@ final class DemoStoreTests: XCTestCase {
             let end = source.range(of: "\nprivate struct ", range: start.upperBound..<source.endIndex)?.lowerBound ?? source.endIndex
             let view = source[start.lowerBound..<end]
             XCTAssertTrue(view.contains("retryIntent.shouldReset(hasLoadedRows: !rows.isEmpty)"), name)
-            XCTAssertTrue(view.contains("guard !loading, !loadingOlder else { return }"), name)
-            XCTAssertTrue(view.contains("HistoryObservationPolicy.mustDiscard(after: error)"), name)
+            XCTAssertTrue(view.contains("DecisionHistoryPager<"), name)
+            XCTAssertTrue(view.contains("history.prepare(scope: historyScope)"), name)
+            XCTAssertTrue(view.contains(".task(id: historyContext)"), name)
+            XCTAssertTrue(view.contains("history.invalidate()"), name)
         }
         for name in ["ScheduledTransactionHistoryView", "DelegatedPolicyHistoryView"] {
             let start = try XCTUnwrap(source.range(of: "private struct \(name): View"))
@@ -1103,6 +1155,11 @@ final class DemoStoreTests: XCTestCase {
             let start = try XCTUnwrap(source.range(of: "private struct \(name): View"))
             let end = source.range(of: "\nprivate struct ", range: start.upperBound..<source.endIndex)?.lowerBound ?? source.endIndex
             let view = String(source[start.lowerBound..<end])
+            if ["BudgetStructureHistoryView", "PayeeHistoryView", "TargetHistoryView"].contains(name) {
+                XCTAssertTrue(view.contains("DecisionHistoryPager<"), name)
+                XCTAssertTrue(view.contains("store.authorityRevision"), name)
+                continue
+            }
             XCTAssertTrue(view.contains("HistoryObservationPolicy.mustDiscard(after: error)"), name)
             if name == "AllowanceDetailView" {
                 XCTAssertTrue(view.contains("history = []; policyHistory = []; hasOlderIssuances = false; hasOlderPolicy = false"), name)

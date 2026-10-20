@@ -9741,11 +9741,15 @@ private enum CategoryTransactionMode: String, Identifiable {
 private struct BudgetStructureHistoryView: View {
     @EnvironmentObject private var store: BudgetWorkspaceStore
     let resourceType: String; let resourceID: String; let title: String
-    @State private var rows: [APIBudgetStructureRevision] = []
-    @State private var loading = false; @State private var loadingOlder = false
-    @State private var canLoadOlder = false; @State private var errorMessage: String?
-    @State private var retryIntent: HistoryRetryIntent = .refresh
-    private let pageSize = 50
+    @StateObject private var history = DecisionHistoryPager<APIBudgetStructureRevision>()
+    private var rows: [APIBudgetStructureRevision] { history.rows }
+    private var loading: Bool { history.loading }
+    private var loadingOlder: Bool { history.loadingOlder }
+    private var canLoadOlder: Bool { history.canLoadOlder }
+    private var errorMessage: String? { history.errorMessage }
+    private var retryIntent: HistoryRetryIntent { history.retryIntent }
+    private var historyScope: String { "\(store.authorityRevision)|\(resourceType)|\(resourceID)" }
+    private var historyContext: String { "\(historyScope)|\(store.reportRevision)" }
 
     var body: some View {
         List {
@@ -9780,28 +9784,19 @@ private struct BudgetStructureHistoryView: View {
         }
         .navigationTitle(resourceType == "category" ? "Category History" : "Group History")
         .navigationBarTitleDisplayMode(.inline)
-        .task { await load(reset: true) }
+        .task(id: historyContext) { history.prepare(scope: historyScope); await load(reset: true) }
+        .onDisappear { history.invalidate() }
         .refreshable { await load(reset: true) }
-        .alert("History unavailable", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
+        .alert("History unavailable", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { history.dismissError() } })) {
             Button("Try Again") { Task { await load(reset: retryIntent.shouldReset(hasLoadedRows: !rows.isEmpty)) } }; Button("Cancel", role: .cancel) {}
         } message: { Text(errorMessage ?? "Unknown error") }
     }
 
     private func load(reset: Bool) async {
-        guard !loading, !loadingOlder else { return }
-        if reset { loading = true; errorMessage = nil } else { loadingOlder = true }
-        defer { loading = false; loadingOlder = false }
-        do {
-            let offset = reset ? 0 : rows.count
-            let next = try await (resourceType == "category"
-                ? store.categoryHistory(categoryID: resourceID, limit: pageSize, offset: offset)
-                : store.categoryGroupHistory(groupID: resourceID, limit: pageSize, offset: offset))
-            if reset { rows = next } else { rows.append(contentsOf: next) }
-            canLoadOlder = next.count == pageSize
-        } catch {
-            retryIntent = reset ? .refresh : .older
-            if HistoryObservationPolicy.mustDiscard(after: error) { rows = []; canLoadOlder = false }
-            errorMessage = error.localizedDescription
+        await history.load(reset: reset) { limit, offset in
+            try await (resourceType == "category"
+                ? store.categoryHistory(categoryID: resourceID, limit: limit, offset: offset)
+                : store.categoryGroupHistory(groupID: resourceID, limit: limit, offset: offset))
         }
     }
 
@@ -9822,11 +9817,15 @@ private struct BudgetStructureHistoryView: View {
 private struct PayeeHistoryView: View {
     @EnvironmentObject private var store: BudgetWorkspaceStore
     let payeeID: String; let payeeName: String
-    @State private var rows: [APIPayeeRevision] = []
-    @State private var loading = false; @State private var loadingOlder = false
-    @State private var canLoadOlder = false; @State private var errorMessage: String?
-    @State private var retryIntent: HistoryRetryIntent = .refresh
-    private let pageSize = 50
+    @StateObject private var history = DecisionHistoryPager<APIPayeeRevision>()
+    private var rows: [APIPayeeRevision] { history.rows }
+    private var loading: Bool { history.loading }
+    private var loadingOlder: Bool { history.loadingOlder }
+    private var canLoadOlder: Bool { history.canLoadOlder }
+    private var errorMessage: String? { history.errorMessage }
+    private var retryIntent: HistoryRetryIntent { history.retryIntent }
+    private var historyScope: String { "\(store.authorityRevision)|payee|\(payeeID)" }
+    private var historyContext: String { "\(historyScope)|\(store.reportRevision)" }
 
     var body: some View {
         List {
@@ -9858,26 +9857,17 @@ private struct PayeeHistoryView: View {
         }
         .navigationTitle("Payee History")
         .navigationBarTitleDisplayMode(.inline)
-        .task { await load(reset: true) }
+        .task(id: historyContext) { history.prepare(scope: historyScope); await load(reset: true) }
+        .onDisappear { history.invalidate() }
         .refreshable { await load(reset: true) }
-        .alert("History unavailable", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
+        .alert("History unavailable", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { history.dismissError() } })) {
             Button("Try Again") { Task { await load(reset: retryIntent.shouldReset(hasLoadedRows: !rows.isEmpty)) } }; Button("Cancel", role: .cancel) {}
         } message: { Text(errorMessage ?? "Unknown error") }
     }
 
     private func load(reset: Bool) async {
-        guard !loading, !loadingOlder else { return }
-        if reset { loading = true; errorMessage = nil } else { loadingOlder = true }
-        defer { loading = false; loadingOlder = false }
-        do {
-            let next = try await store.payeeHistory(payeeID: payeeID, limit: pageSize,
-                offset: reset ? 0 : rows.count)
-            if reset { rows = next } else { rows.append(contentsOf: next) }
-            canLoadOlder = next.count == pageSize
-        } catch {
-            retryIntent = reset ? .refresh : .older
-            if HistoryObservationPolicy.mustDiscard(after: error) { rows = []; canLoadOlder = false }
-            errorMessage = error.localizedDescription
+        await history.load(reset: reset) { limit, offset in
+            try await store.payeeHistory(payeeID: payeeID, limit: limit, offset: offset)
         }
     }
 
@@ -9918,13 +9908,15 @@ private struct TargetHistoryView: View {
     @EnvironmentObject private var store: BudgetWorkspaceStore
     let categoryID: String
     let categoryName: String
-    @State private var rows: [APICategoryTargetRevision] = []
-    @State private var loading = false
-    @State private var loadingOlder = false
-    @State private var canLoadOlder = false
-    @State private var errorMessage: String?
-    @State private var retryIntent: HistoryRetryIntent = .refresh
-    private let pageSize = 50
+    @StateObject private var history = DecisionHistoryPager<APICategoryTargetRevision>()
+    private var rows: [APICategoryTargetRevision] { history.rows }
+    private var loading: Bool { history.loading }
+    private var loadingOlder: Bool { history.loadingOlder }
+    private var canLoadOlder: Bool { history.canLoadOlder }
+    private var errorMessage: String? { history.errorMessage }
+    private var retryIntent: HistoryRetryIntent { history.retryIntent }
+    private var historyScope: String { "\(store.authorityRevision)|target|\(categoryID)" }
+    private var historyContext: String { "\(historyScope)|\(store.reportRevision)" }
 
     var body: some View {
         List {
@@ -9987,34 +9979,16 @@ private struct TargetHistoryView: View {
         }
         .navigationTitle("Target History")
         .navigationBarTitleDisplayMode(.inline)
-        .task(id: store.liveCredentialRevision) { await load() }
+        .task(id: historyContext) { history.prepare(scope: historyScope); await load() }
+        .onDisappear { history.invalidate() }
         .accessibilityIdentifier("target-history-screen")
     }
 
-    private func load() async {
-        guard !loading, !loadingOlder else { return }
-        loading = true; defer { loading = false }
-        do {
-            let page = try await store.targetHistory(categoryID: categoryID, limit: pageSize, offset: 0)
-            rows = page; canLoadOlder = page.count == pageSize; errorMessage = nil
-        } catch {
-            retryIntent = .refresh
-            if HistoryObservationPolicy.mustDiscard(after: error) { rows = []; canLoadOlder = false }
-            errorMessage = error.localizedDescription
-        }
-    }
-
-    private func loadOlder() async {
-        guard !loading, !loadingOlder else { return }
-        loadingOlder = true; defer { loadingOlder = false }
-        do {
-            let page = try await store.targetHistory(categoryID: categoryID, limit: pageSize, offset: rows.count)
-            rows += page.filter { item in !rows.contains(where: { $0.id == item.id }) }
-            canLoadOlder = page.count == pageSize; errorMessage = nil
-        } catch {
-            retryIntent = .older
-            if HistoryObservationPolicy.mustDiscard(after: error) { rows = []; canLoadOlder = false }
-            errorMessage = error.localizedDescription
+    private func load() async { await loadPage(reset: true) }
+    private func loadOlder() async { await loadPage(reset: false) }
+    private func loadPage(reset: Bool) async {
+        await history.load(reset: reset) { limit, offset in
+            try await store.targetHistory(categoryID: categoryID, limit: limit, offset: offset)
         }
     }
 
