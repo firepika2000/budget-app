@@ -7494,10 +7494,20 @@ private struct LocalDeviceBackupRecoveryView: View {
                     }
                     Text("ClearPocket creates each new encrypted generation using your dedicated Dropbox recovery key. Automatic backups run when the app is active and due; iOS may defer them while the app is closed. Save the key somewhere outside this iPhone and outside Dropbox—ClearPocket cannot recover it after device loss. Backups made by an older app version may still require the recovery key shown when that backup was created.")
                         .font(.footnote).foregroundStyle(.secondary)
-                    if dropbox.generations.isEmpty {
+                    if dropbox.generationListState == .loading {
+                        ProgressView("Loading encrypted backups…")
+                            .accessibilityIdentifier("dropbox-generations-loading")
+                    } else {
+                        Button(dropbox.generationListState == .failed ? "Retry Backup List" : "Refresh Backup List", systemImage: "arrow.clockwise") {
+                            Task { await dropbox.refresh() }
+                        }
+                        .disabled(!dropbox.canStartManualTransfer)
+                        .accessibilityIdentifier("refresh-dropbox-generations")
+                    }
+                    if dropbox.generations.isEmpty && dropbox.generationListState == .loaded {
                         Text("No encrypted Dropbox generations found.")
                             .font(.footnote).foregroundStyle(.secondary)
-                    } else {
+                    } else if !dropbox.generations.isEmpty {
                         ForEach(dropbox.generations, id: \.path) { generation in
                             Button {
                                 Task { await chooseDropboxGeneration(generation) }

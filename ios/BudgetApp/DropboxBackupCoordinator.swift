@@ -9,6 +9,8 @@ enum DropboxBackupOperationError: LocalizedError {
     var errorDescription: String? { "A Dropbox operation is already in progress. Wait for it to finish before trying again." }
 }
 
+enum DropboxGenerationListState: Equatable { case idle, loading, loaded, failed }
+
 @MainActor
 final class DropboxBackupCoordinator: NSObject, ObservableObject, ASWebAuthenticationPresentationContextProviding {
     static let appKeyInfoKey = "ClearPocketDropboxAppKey"
@@ -18,6 +20,7 @@ final class DropboxBackupCoordinator: NSObject, ObservableObject, ASWebAuthentic
     @Published private(set) var isConfigured: Bool
     @Published private(set) var isConnected = false
     @Published private(set) var generations: [DropboxBackupEntry] = []
+    @Published private(set) var generationListState: DropboxGenerationListState = .idle
     @Published private(set) var isWorking = false
     @Published private(set) var lastSuccessfulBackupAt: Date?
     @Published private(set) var pendingLocalGenerationURL: URL?
@@ -60,7 +63,9 @@ final class DropboxBackupCoordinator: NSObject, ObservableObject, ASWebAuthentic
     private let credential: DropboxOAuthCredential?
     private var authenticationSession: ASWebAuthenticationSession?
     private var pendingAuthorization: DropboxPKCEAuthorization?
-    private var observationRevision = UUID()
+    private var observationRevision = UUID() {
+        didSet { if generationListState == .loading { generationListState = .idle } }
+    }
 
     init(
         appKey: String? = nil,
@@ -104,13 +109,13 @@ final class DropboxBackupCoordinator: NSObject, ObservableObject, ASWebAuthentic
         let revision = UUID()
         observationRevision = revision
         guard let credential else {
-            isConnected = false; generations = []
+            isConnected = false; generations = []; generationListState = .idle
             return
         }
         let connected = await credential.isConnected()
         guard observationRevision == revision else { return }
         isConnected = connected
-        if connected { await refreshGenerations(revision: revision) } else { generations = [] }
+        if connected { await refreshGenerations(revision: revision) } else { generations = []; generationListState = .idle }
     }
 
     func connect() {
@@ -167,8 +172,9 @@ final class DropboxBackupCoordinator: NSObject, ObservableObject, ASWebAuthentic
         if result.retentionCleanupPending {
             warnings.append("Backup saved. Older-backup cleanup is pending; it will be attempted with the next backup.")
         }
-        do { generations = try await listGenerations() }
+        do { generations = try await listGenerations(); generationListState = .loaded }
         catch {
+            generationListState = .failed
             let entry = DropboxBackupEntry(path: result.remotePath,
                 name: (result.remotePath as NSString).lastPathComponent, isFolder: true)
             if !generations.contains(where: { $0.path == result.remotePath }) { generations.append(entry) }
@@ -212,7 +218,12 @@ final class DropboxBackupCoordinator: NSObject, ObservableObject, ASWebAuthentic
             generations.removeAll { $0.path == generation.path }
             // Deletion is already authoritative. A transient list failure must not misreport the
             // completed destructive operation as failed or encourage the user to repeat it.
-            if let refreshed = try? await destination.generations() { generations = refreshed }
+            if let refreshed = try? await destination.generations() {
+                generations = refreshed; generationListState = .loaded
+            } else {
+                generationListState = .failed
+                publicationWarning = "Backup deleted. The backup list could not refresh; retry the list to see the latest generations."
+            }
         } catch {
             errorMessage = error.localizedDescription
             throw error
@@ -227,7 +238,7 @@ final class DropboxBackupCoordinator: NSObject, ObservableObject, ASWebAuthentic
         isWorking = true
         defer { isWorking = false }
         await credential?.disconnect()
-        isConnected = false; generations = []; automaticBackupEnabled = false
+        isConnected = false; generations = []; generationListState = .idle; automaticBackupEnabled = false
         errorMessage = nil; publicationWarning = nil
     }
 
@@ -238,19 +249,31 @@ final class DropboxBackupCoordinator: NSObject, ObservableObject, ASWebAuthentic
         defer { isWorking = false }
         do {
             try await credential.revoke()
-            isConnected = false; generations = []; automaticBackupEnabled = false
+            isConnected = false; generations = []; generationListState = .idle; automaticBackupEnabled = false
         } catch { errorMessage = error.localizedDescription }
     }
 
     private func refreshGenerations(revision: UUID) async {
+        guard observationRevision == revision else { return }
         guard let destination = try? destination() else { return }
+        await refreshGenerations(using: { try await destination.generations() })
+    }
+
+    /// The same observation lifecycle is used by authenticated refresh and controlled transports.
+    /// Failed reads retain known generations; only a successful empty response proves emptiness.
+    func refreshGenerations(using load: () async throws -> [DropboxBackupEntry]) async {
+        let revision = UUID()
+        observationRevision = revision
+        generationListState = .loading
         do {
-            let refreshed = try await destination.generations()
+            let refreshed = try await load()
             guard observationRevision == revision else { return }
             generations = refreshed
+            generationListState = .loaded
             errorMessage = nil
         } catch {
             guard observationRevision == revision else { return }
+            generationListState = .failed
             errorMessage = error.localizedDescription
         }
     }

@@ -11,6 +11,47 @@ import UserNotifications
 @testable import Budget_App
 
 final class DemoStoreTests: XCTestCase {
+    @MainActor
+    func testDropboxGenerationListFailureRetainsKnownBackupsAndRetryDistinguishesEmpty() async throws {
+        let name = "dropbox-list-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        let coordinator = DropboxBackupCoordinator(appKey: "", defaults: defaults)
+        XCTAssertEqual(coordinator.generationListState, .idle)
+        await coordinator.refreshGenerations { throw URLError(.notConnectedToInternet) }
+        XCTAssertEqual(coordinator.generationListState, .failed)
+        XCTAssertTrue(coordinator.generations.isEmpty); XCTAssertNotNil(coordinator.errorMessage)
+        let generation = DropboxBackupEntry(path: "/Backups/one.clearpocketbackup", name: "one.clearpocketbackup", isFolder: true)
+        await coordinator.refreshGenerations { [generation] }
+        XCTAssertEqual(coordinator.generationListState, .loaded); XCTAssertNil(coordinator.errorMessage)
+        await coordinator.refreshGenerations { throw URLError(.timedOut) }
+        XCTAssertEqual(coordinator.generationListState, .failed)
+        XCTAssertEqual(coordinator.generations, [generation])
+        await coordinator.refreshGenerations { [] }
+        XCTAssertEqual(coordinator.generationListState, .loaded); XCTAssertTrue(coordinator.generations.isEmpty)
+        XCTAssertNil(coordinator.errorMessage)
+    }
+
+    @MainActor
+    func testDropboxLateGenerationReadCannotResurrectDisconnectedBackups() async throws {
+        let name = "dropbox-late-list-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        let coordinator = DropboxBackupCoordinator(appKey: "", defaults: defaults)
+        var completion: CheckedContinuation<[DropboxBackupEntry], Error>?
+        let read = Task { await coordinator.refreshGenerations {
+            try await withCheckedThrowingContinuation { completion = $0 }
+        } }
+        for _ in 0..<100 where completion == nil { await Task.yield() }
+        let finish = try XCTUnwrap(completion)
+        XCTAssertEqual(coordinator.generationListState, .loading)
+        await coordinator.disconnectLocally()
+        finish.resume(returning: [.init(path: "/Backups/private.clearpocketbackup", name: "Private", isFolder: true)])
+        await read.value
+        XCTAssertEqual(coordinator.generationListState, .idle)
+        XCTAssertTrue(coordinator.generations.isEmpty); XCTAssertFalse(coordinator.isConnected)
+        XCTAssertNil(coordinator.errorMessage)
+    }
     func testFundingDecisionDraftRequiresExplicitReloadAfterAuthoritativeRevision() throws {
         func request(_ version: Int, amount: Int64 = 9_007_199_254_740_993, id: String = "r1") throws -> APIFinancialRequest {
             try JSONDecoder().decode(APIFinancialRequest.self, from: Data("""
@@ -1480,11 +1521,12 @@ final class DemoStoreTests: XCTestCase {
             let busy = try XCTUnwrap(tail.range(of: "isWorking = true"))
             XCTAssertLessThan(invalidation.lowerBound, busy.lowerBound)
         }
-        let listStart = try XCTUnwrap(source.range(of: "private func refreshGenerations(revision: UUID)"))
+        let listStart = try XCTUnwrap(source.range(of: "func refreshGenerations(using load:"))
         let listEnd = try XCTUnwrap(source.range(of: "func recordSuccessfulBackup", range: listStart.upperBound..<source.endIndex))
         let list = source[listStart.upperBound..<listEnd.lowerBound]
         XCTAssertEqual(list.components(separatedBy: "guard observationRevision == revision else { return }").count - 1, 2)
-        XCTAssertTrue(list.contains("let refreshed = try await destination.generations()"))
+        XCTAssertTrue(list.contains("let refreshed = try await load()"))
+        XCTAssertTrue(source.contains("await refreshGenerations(using: { try await destination.generations() })"))
         XCTAssertTrue(source.contains("guard !isWorking else { return }"))
         XCTAssertFalse(source.contains("isConnected = await credential.isConnected()"))
         XCTAssertTrue(source.contains("guard isWorking, observationRevision == revision else { return }"), "Late progress must not replace a newer operation")
@@ -1493,6 +1535,8 @@ final class DemoStoreTests: XCTestCase {
         let workspace = try String(contentsOf: file.deletingLastPathComponent().appendingPathComponent("BudgetWorkspaceView.swift"))
         XCTAssertTrue(workspace.contains("dropbox-transfer-progress"))
         XCTAssertTrue(workspace.contains("Finalizing encrypted transfer"))
+        XCTAssertTrue(workspace.contains("dropbox.generations.isEmpty && dropbox.generationListState == .loaded"))
+        XCTAssertTrue(workspace.contains("Retry Backup List"))
     }
     func testFundingRequestHistoryExplainsRecordedAmountsAndDates() throws {
         for action in ["approved", "partially_approved"] {
@@ -2266,11 +2310,13 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertNil(coordinator.errorMessage)
         XCTAssertTrue(coordinator.publicationWarning?.contains("Do not upload") == true)
         XCTAssertEqual(coordinator.generations.map(\.path), [publication.remotePath])
+        XCTAssertEqual(coordinator.generationListState, .failed)
         _ = await coordinator.finalizePublication(publication) { throw URLError(.timedOut) }
         XCTAssertEqual(coordinator.generations.count, 1, "Refresh failure must not duplicate the known generation")
         let recovered = DropboxBackupPublication(remotePath: publication.remotePath, encryptedBytes: 123, fileCount: 3)
         _ = await coordinator.finalizePublication(recovered) { coordinator.generations }
         XCTAssertNil(coordinator.publicationWarning)
+        XCTAssertEqual(coordinator.generationListState, .loaded)
     }
 
     @MainActor
