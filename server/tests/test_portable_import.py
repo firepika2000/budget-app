@@ -146,6 +146,26 @@ def test_portable_import_creates_separate_login_capable_authority_with_exact_mon
         json=assignment_body,
     )
     assert assignment.status_code == 200
+    request_body = {"request_type": "purchase_approval", "destination_category_id": category["id"],
+                    "requested_amount_minor": 9_007_199_254_740_993, "reason": "Recovery request"}
+    request_identity = "710233d6-0612-4404-a2bb-02858ff5503e"
+    revision_identity = "32a1386b-1cba-43f8-ae7b-a052cbb032f8"
+    cancellation_identity = "02c0b675-b36a-41d2-91cc-885400303b5f"
+    requested = client.post(f"{root}/requests", headers={**auth(owner_token), "X-Request-Operation-ID": request_identity}, json=request_body)
+    assert requested.status_code == 201, requested.text
+    request_id = requested.json()["id"]
+    change_requested = client.post(f"{root}/requests/{request_id}/decision", headers=auth(owner_token), json={
+        "decision": "changes_requested", "expected_request_version": 0, "note": "Clarify before recovery",
+    })
+    assert change_requested.status_code == 200, change_requested.text
+    revision_body = {**request_body, "reason": "Clarified recovery request", "expected_request_version": 1}
+    revised = client.post(f"{root}/requests/{request_id}/revise",
+                          headers={**auth(owner_token), "X-Request-Operation-ID": revision_identity}, json=revision_body)
+    assert revised.status_code == 200, revised.text
+    cancellation_body = {"expected_request_version": 2, "note": "Cancelled before recovery"}
+    cancelled = client.post(f"{root}/requests/{request_id}/cancel",
+                            headers={**auth(owner_token), "X-Request-Operation-ID": cancellation_identity}, json=cancellation_body)
+    assert cancelled.status_code == 200, cancelled.text
     # Populate the newly mapped histories, including deleted identities and exact money
     # beyond Double precision. These are recovery fixtures, not accounting commands.
     from datetime import date
@@ -239,6 +259,19 @@ def test_portable_import_creates_separate_login_capable_authority_with_exact_mon
             f"{root}/categories/{category['id']}/assignment", headers=auth(token), json=assignment_body
         )
         assert assignment_replay.status_code == 200, assignment_replay.text
+        for path, body, identity, expected_status in [
+            ("requests", request_body, request_identity, 201),
+            (f"requests/{request_id}/revise", revision_body, revision_identity, 200),
+            (f"requests/{request_id}/cancel", cancellation_body, cancellation_identity, 200),
+        ]:
+            replayed_request = imported_client.post(f"{root}/{path}",
+                headers={**auth(token), "X-Request-Operation-ID": identity}, json=body)
+            assert replayed_request.status_code == expected_status, replayed_request.text
+            assert replayed_request.json() == cancelled.json(), "Recovery replay must acknowledge final state, not repeat earlier transitions"
+        changed_request = imported_client.post(f"{root}/requests/{request_id}/revise",
+            headers={**auth(token), "X-Request-Operation-ID": revision_identity},
+            json={**revision_body, "requested_amount_minor": 1})
+        assert changed_request.status_code == 409, changed_request.text
         restored_export = imported_client.get(f"{root}/export.json", headers=auth(token))
         assert restored_export.status_code == 200, restored_export.text
         for section in ("transaction_creation_receipts", "workspace_command_receipts",
@@ -246,7 +279,7 @@ def test_portable_import_creates_separate_login_capable_authority_with_exact_mon
                         "account_debt_terms_revisions", "target_revisions",
                         "scheduled_transaction_revisions", "allowance_plan_revisions",
                         "debt_payoff_plans", "debt_payoff_plan_revisions", "reconciliations",
-                        "allocation_operations", "allocation_postings"):
+                        "allocation_operations", "allocation_postings", "requests", "request_actions"):
             original = sorted(payload[section], key=lambda row: json.dumps(row, sort_keys=True))
             restored = sorted(restored_export.json()[section], key=lambda row: json.dumps(row, sort_keys=True))
             assert restored == original, section
