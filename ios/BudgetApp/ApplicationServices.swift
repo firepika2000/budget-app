@@ -424,6 +424,50 @@ enum HistoryRetryIntent {
 }
 
 @MainActor
+final class StatementImportHistoryPager: ObservableObject {
+    @Published private(set) var rows: [APIStatementImportSummary] = []
+    @Published private(set) var nextOffset: Int?
+    @Published private(set) var loading = false
+    @Published private(set) var errorMessage: String?
+    private(set) var retryIntent: HistoryRetryIntent = .refresh
+    private var requestID = UUID()
+
+    func clear() {
+        requestID = UUID()
+        rows = []; nextOffset = nil; loading = false; errorMessage = nil
+    }
+
+    func load(budgetID: String, accountID: String, reset: Bool,
+              fetch: (Int, Int) async throws -> APIStatementImportList) async {
+        guard reset || (!loading && nextOffset != nil) else { return }
+        let observed = UUID(); requestID = observed
+        let offset = reset ? 0 : nextOffset!
+        loading = true
+        defer { if requestID == observed { loading = false } }
+        do {
+            let page = try await fetch(25, offset)
+            try Task.checkCancellation()
+            guard requestID == observed else { return }
+            let previous = reset ? [] : rows
+            let ids = previous.map(\.id) + page.items.map(\.id)
+            guard page.items.count <= 25, Set(ids).count == ids.count,
+                  page.items.allSatisfy({ $0.budgetID == budgetID && $0.accountID == accountID }),
+                  page.hasMore == (page.nextOffset != nil),
+                  page.nextOffset == nil || (!page.items.isEmpty && page.nextOffset == offset + page.items.count) else {
+                throw NSError(domain: "StatementImportHistory", code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: "Statement history returned an invalid page. Refresh to try again."])
+            }
+            rows = previous + page.items; nextOffset = page.nextOffset; errorMessage = nil
+        } catch {
+            guard requestID == observed, !(error is CancellationError) else { return }
+            retryIntent = reset ? .refresh : .older
+            if HistoryObservationPolicy.mustDiscard(after: error) { rows = []; nextOffset = nil }
+            errorMessage = error.localizedDescription
+        }
+    }
+}
+
+@MainActor
 final class TransactionHistoryPager: ObservableObject {
     @Published private(set) var rows: [APITransaction] = []
     @Published private(set) var nextCursor: String?

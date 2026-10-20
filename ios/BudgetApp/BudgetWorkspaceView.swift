@@ -12061,18 +12061,86 @@ private struct StatementImportHistoryView: View {
     @ObservedObject var workspace: BudgetWorkspaceStore
     let budget: APIBudget; let account: APIAccount
     @Environment(\.dismiss) private var dismiss
-    @State private var items: [APIStatementImportSummary] = []
-    @State private var nextOffset: Int?; @State private var selected: APIStatementImport?
-    @State private var isLoading = false; @State private var errorMessage: String?
-    var body: some View { NavigationStack { Group {
-        if items.isEmpty && !isLoading { ContentUnavailableView("No Statement Imports", systemImage: "doc.text.magnifyingglass", description: Text("Imported statements and unfinished reviews will appear here.")) }
-        else { List { ForEach(items) { item in Button { Task { await open(item) } } label: { HStack { VStack(alignment: .leading, spacing: 4) { Text(formatTitle(item.sourceFormat)); Text("\(item.candidateCount) recognized transactions").font(.caption).foregroundStyle(.secondary) }; Spacer(); VStack(alignment: .trailing, spacing: 4) { Label(statusTitle(item.status), systemImage: statusSymbol(item.status)).foregroundStyle(statusColor(item.status)); Text(Self.displayDate(item.createdAt)).font(.caption).foregroundStyle(.secondary) } } }.buttonStyle(.plain).accessibilityLabel("\(formatTitle(item.sourceFormat)) statement, \(item.candidateCount) transactions, \(statusTitle(item.status))") }; if nextOffset != nil { Button("Load More") { Task { await load(reset: false) } }.disabled(isLoading) } } }
-    }.navigationTitle("Statement Imports").navigationBarTitleDisplayMode(.inline).toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } } }.overlay { if isLoading && items.isEmpty { ProgressView("Loading imports…") } }.task { await load(reset: true) }.refreshable { await load(reset: true) }.alert("Unable to load imports", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) { Button("OK", role: .cancel) {} } message: { Text(errorMessage ?? "Unknown error") }.sheet(item: $selected, onDismiss: { Task { await load(reset: true) } }) { batch in StatementImportFlowView(workspace: workspace, budget: budget, account: account, existingBatch: batch) } } }
-    private func load(reset: Bool) async { guard !isLoading else { return }; isLoading = true; defer { isLoading = false }; do { let offset = reset ? 0 : (nextOffset ?? items.count); let page = try await workspace.statementImports(accountID: account.id, limit: 25, offset: offset); items = reset ? page.items : items + page.items; nextOffset = page.nextOffset; errorMessage = nil } catch { handleReadError(error) } }
-    private func open(_ item: APIStatementImportSummary) async { do { selected = try await workspace.statementImport(accountID: account.id, batchID: item.id) } catch { handleReadError(error) } }
-    private func handleReadError(_ error: Error) {
-        if HistoryObservationPolicy.mustDiscard(after: error) { items = []; nextOffset = nil; selected = nil }
-        errorMessage = error.localizedDescription
+    @StateObject private var pager = StatementImportHistoryPager()
+    @State private var selected: APIStatementImport?
+    @State private var opening = false
+    @State private var detailError: String?
+    @State private var openRequestID = UUID()
+    private var context: String { "\(workspace.authorityRevision)|\(budget.id)|\(account.id)" }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                if pager.loading && pager.rows.isEmpty {
+                    ProgressView("Loading imports…")
+                } else if pager.rows.isEmpty && pager.errorMessage == nil {
+                    ContentUnavailableView("No Statement Imports", systemImage: "doc.text.magnifyingglass",
+                        description: Text("Imported statements and unfinished reviews will appear here."))
+                }
+                ForEach(pager.rows) { item in
+                    Button { Task { await open(item) } } label: {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(formatTitle(item.sourceFormat))
+                                Text("\(item.candidateCount) recognized transactions").font(.caption).foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            VStack(alignment: .trailing, spacing: 4) {
+                                Label(statusTitle(item.status), systemImage: statusSymbol(item.status)).foregroundStyle(statusColor(item.status))
+                                Text(Self.displayDate(item.createdAt)).font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    .buttonStyle(.plain).disabled(opening)
+                    .accessibilityLabel("\(formatTitle(item.sourceFormat)) statement, \(item.candidateCount) transactions, \(statusTitle(item.status))")
+                }
+                if let message = pager.errorMessage {
+                    Section {
+                        Text(message).font(.caption).foregroundStyle(.secondary)
+                        Button(pager.retryIntent == .older ? "Try Loading More Again" : "Try Refreshing Again") {
+                            Task { await load(reset: pager.retryIntent.shouldReset(hasLoadedRows: !pager.rows.isEmpty)) }
+                        }.disabled(pager.loading)
+                    } header: { Text(pager.rows.isEmpty ? "Statement History Unavailable" : "History Update Unavailable") }
+                } else if pager.nextOffset != nil {
+                    Button(pager.loading ? "Loading…" : "Load More") { Task { await load(reset: false) } }
+                        .disabled(pager.loading)
+                }
+            }
+            .navigationTitle("Statement Imports").navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } } }
+            .task(id: context) { openRequestID = UUID(); opening = false; pager.clear(); selected = nil; await load(reset: true) }
+            .onDisappear { openRequestID = UUID(); opening = false; pager.clear() }
+            .refreshable { await load(reset: true) }
+            .alert("Unable to open import", isPresented: Binding(get: { detailError != nil }, set: { if !$0 { detailError = nil } })) {
+                Button("OK", role: .cancel) {}
+            } message: { Text(detailError ?? "Unknown error") }
+            .sheet(item: $selected, onDismiss: { Task { await load(reset: true) } }) { batch in
+                StatementImportFlowView(workspace: workspace, budget: budget, account: account, existingBatch: batch)
+            }
+        }
+    }
+
+    private func load(reset: Bool) async {
+        await pager.load(budgetID: budget.id, accountID: account.id, reset: reset) { limit, offset in
+            try await workspace.statementImports(accountID: account.id, limit: limit, offset: offset)
+        }
+    }
+
+    private func open(_ item: APIStatementImportSummary) async {
+        guard !opening else { return }
+        let observed = context
+        let requestID = UUID(); openRequestID = requestID
+        opening = true
+        defer { if openRequestID == requestID { opening = false } }
+        do {
+            let batch = try await workspace.statementImport(accountID: account.id, batchID: item.id)
+            guard observed == context, openRequestID == requestID, !Task.isCancelled else { return }
+            selected = batch
+        } catch {
+            guard observed == context, openRequestID == requestID, !(error is CancellationError) else { return }
+            if HistoryObservationPolicy.mustDiscard(after: error) { pager.clear(); selected = nil }
+            detailError = error.localizedDescription
+        }
     }
     private func statusTitle(_ status: String) -> String { status == "review" ? "Needs Review" : status.capitalized }
     private func formatTitle(_ sourceFormat: String) -> String { sourceFormat == "pdf_ocr" ? "PDF (Scanned)" : sourceFormat.uppercased() }

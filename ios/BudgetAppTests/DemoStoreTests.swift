@@ -11,6 +11,67 @@ import UniformTypeIdentifiers
 
 final class DemoStoreTests: XCTestCase {
     @MainActor
+    func testStatementImportPagerRetriesPreservesRowsAndRejectsInvalidPages() async throws {
+        func row(_ id: String, account: String = "a") -> APIStatementImportSummary {
+            .init(id: id, budgetID: "b", accountID: account, status: "review", version: 1,
+                  sourceFormat: "csv", candidateCount: 2, createdAt: "2026-10-20")
+        }
+        let pager = StatementImportHistoryPager()
+        await pager.load(budgetID: "b", accountID: "a", reset: true) { limit, offset in
+            XCTAssertEqual(limit, 25); XCTAssertEqual(offset, 0)
+            throw URLError(.notConnectedToInternet)
+        }
+        XCTAssertNotNil(pager.errorMessage); XCTAssertTrue(pager.rows.isEmpty)
+        XCTAssertEqual(pager.retryIntent, .refresh)
+        await pager.load(budgetID: "b", accountID: "a", reset: true) { _, _ in
+            .init(items: [row("1")], hasMore: true, nextOffset: 1)
+        }
+        await pager.load(budgetID: "b", accountID: "a", reset: false) { _, offset in
+            XCTAssertEqual(offset, 1); throw URLError(.timedOut)
+        }
+        XCTAssertEqual(pager.rows.map(\.id), ["1"]); XCTAssertEqual(pager.retryIntent, .older)
+        await pager.load(budgetID: "b", accountID: "a", reset: false) { _, _ in
+            .init(items: [row("1")], hasMore: false, nextOffset: nil)
+        }
+        XCTAssertEqual(pager.rows.map(\.id), ["1"]); XCTAssertNotNil(pager.errorMessage)
+        await pager.load(budgetID: "b", accountID: "a", reset: false) { _, _ in
+            .init(items: [row("2", account: "private")], hasMore: false, nextOffset: nil)
+        }
+        XCTAssertEqual(pager.rows.map(\.id), ["1"])
+        await pager.load(budgetID: "b", accountID: "a", reset: false) { _, _ in
+            .init(items: [row("2")], hasMore: false, nextOffset: nil)
+        }
+        XCTAssertEqual(pager.rows.map(\.id), ["1", "2"]); XCTAssertNil(pager.errorMessage)
+        await pager.load(budgetID: "b", accountID: "a", reset: false) { _, _ in
+            XCTFail("Final page must not refetch"); return .init(items: [], hasMore: false, nextOffset: nil)
+        }
+        await pager.load(budgetID: "b", accountID: "a", reset: true) { _, _ in
+            throw APIClientError.server(status: 403, message: "Denied")
+        }
+        XCTAssertTrue(pager.rows.isEmpty); XCTAssertNil(pager.nextOffset)
+    }
+
+    @MainActor
+    func testStatementImportPagerDiscardsSupersededResponsesAndProductionWiring() async throws {
+        let pager = StatementImportHistoryPager()
+        await pager.load(budgetID: "b", accountID: "a", reset: true) { _, _ in
+            pager.clear()
+            return .init(items: [.init(id: "old", budgetID: "b", accountID: "a", status: "review",
+                version: 1, sourceFormat: "csv", candidateCount: 1, createdAt: "2026-10-20")], hasMore: false, nextOffset: nil)
+        }
+        XCTAssertTrue(pager.rows.isEmpty); XCTAssertFalse(pager.loading)
+        let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("BudgetApp/BudgetWorkspaceView.swift")
+        let source = try String(contentsOf: file)
+        let start = try XCTUnwrap(source.range(of: "private struct StatementImportHistoryView:"))
+        let end = try XCTUnwrap(source.range(of: "private struct StatementImportFile:"))
+        let view = String(source[start.lowerBound..<end.lowerBound])
+        XCTAssertTrue(view.contains("@StateObject private var pager = StatementImportHistoryPager()"))
+        XCTAssertTrue(view.contains("pager.rows.isEmpty && pager.errorMessage == nil"))
+        XCTAssertTrue(view.contains("pager.retryIntent.shouldReset"))
+        XCTAssertTrue(view.contains("openRequestID == requestID"))
+    }
+
+    @MainActor
     func testNetWorthContributorsKeepFullHistoryAndAccountScope() async throws {
         let store = BudgetWorkspaceStore.demo()
         await store.refresh()
@@ -366,7 +427,7 @@ final class DemoStoreTests: XCTestCase {
             let end = source.range(of: "\nprivate struct ", range: start.upperBound..<source.endIndex)?.lowerBound ?? source.endIndex
             XCTAssertTrue(source[start.lowerBound..<end].contains("HistoryObservationPolicy.mustDiscard(after: error)"), name)
         }
-        XCTAssertTrue(source.contains("items = []; nextOffset = nil; selected = nil"))
+        XCTAssertTrue(source.contains("pager.clear(); selected = nil"))
         XCTAssertTrue(source.contains("invitations = []; events = []; hasMoreEvents = false"))
     }
     func testProductionTransactionBrowsersDiscardDeniedIndependentObservations() throws {
