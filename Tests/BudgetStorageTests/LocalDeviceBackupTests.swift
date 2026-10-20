@@ -3,6 +3,43 @@ import XCTest
 @testable import BudgetStorage
 
 final class LocalDeviceBackupTests: XCTestCase {
+    func testBackupRejectsMissingAttachmentIntroducedIntoCapturedImage() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (authority, attachments, key, _) = try await fixture(in: root.appendingPathComponent("source"))
+        let source = ChangingBackupSource(authority: authority, changesBeforeCapture: true)
+        let destination = root.appendingPathComponent("Rejected.clearpocketbackup")
+        do {
+            _ = try await LocalDeviceBackupService.create(authority: source, budgetID: "budget",
+                attachmentsDirectory: attachments, attachmentKey: key, destinationURL: destination,
+                recoveryKey: .generate())
+            XCTFail("The captured image's missing attachment must prevent publication")
+        } catch let error as LocalStorageError {
+            guard case .invalidSnapshot = error else { return XCTFail("Unexpected error: \(error)") }
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+        XCTAssertFalse(try FileManager.default.contentsOfDirectory(atPath: root.path).contains { $0.hasPrefix(".clearpocket-") })
+    }
+
+    func testBackupUsesCapturedReferencesRatherThanLaterLiveChanges() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (authority, attachments, key, _) = try await fixture(in: root.appendingPathComponent("source"))
+        let source = ChangingBackupSource(authority: authority, changesBeforeCapture: false)
+        let recovery = try LocalDeviceBackupRecoveryKey.generate()
+        let destination = root.appendingPathComponent("Captured.clearpocketbackup")
+        _ = try await LocalDeviceBackupService.create(authority: source, budgetID: "budget",
+            attachmentsDirectory: attachments, attachmentKey: key, destinationURL: destination, recoveryKey: recovery)
+        let restored = root.appendingPathComponent("restored")
+        _ = try await LocalDeviceBackupService.restore(packageURL: destination, destinationRootURL: restored, recoveryKey: recovery)
+        let restoredAuthority = try LocalAuthorityStore(fileURL: restored.appendingPathComponent("authority.sqlite3"))
+        let observed = try await restoredAuthority.snapshot(budgetID: "budget")
+        let live = try await authority.snapshot(budgetID: "budget")
+        XCTAssertEqual(observed.attachments.map(\.id), ["receipt"])
+        XCTAssertEqual(live.attachments.count, 2, "Later live changes are outside this backup's capture instant")
+        XCTAssertEqual(observed.transactions.first?.amountMinor, -1_234)
+    }
+
     func testRestoreRejectsLinkedPackageAndPayloadDirectoriesWithoutPublishing() async throws {
         let root = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -235,5 +272,23 @@ final class LocalDeviceBackupTests: XCTestCase {
             guard case .invalidSnapshot = error else { return XCTFail("Unexpected error: \(error)") }
         }
         XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+    }
+}
+
+private actor ChangingBackupSource: LocalBackupSnapshotProviding {
+    let authority: LocalAuthorityStore
+    let changesBeforeCapture: Bool
+    init(authority: LocalAuthorityStore, changesBeforeCapture: Bool) {
+        self.authority = authority; self.changesBeforeCapture = changesBeforeCapture
+    }
+    func snapshotDatabase(to destinationURL: URL) async throws {
+        if changesBeforeCapture { try await introduceMissingReference() }
+        try await authority.snapshotDatabase(to: destinationURL)
+        if !changesBeforeCapture { try await introduceMissingReference() }
+    }
+    private func introduceMissingReference() async throws {
+        try await authority.insertAttachment(.init(id: "missing", transactionID: "purchase", filename: "missing.jpg",
+            contentType: "image/jpeg", sizeBytes: 1, sha256: String(repeating: "a", count: 64),
+            objectName: "absent.enc", createdAt: "2026-10-02T00:00:00Z"))
     }
 }

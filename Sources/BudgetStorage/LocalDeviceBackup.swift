@@ -65,6 +65,13 @@ public struct LocalDeviceBackupRestoreResult: Equatable, Sendable {
     public let attachmentKey: Data
 }
 
+/// Supplies a coherent SQLite image without exposing the live WAL-backed database file.
+public protocol LocalBackupSnapshotProviding: Sendable {
+    func snapshotDatabase(to destinationURL: URL) async throws
+}
+
+extension LocalAuthorityStore: LocalBackupSnapshotProviding {}
+
 /// Creates and validates an immutable encrypted generation for the Local Device authority.
 ///
 /// The package is a directory so large authorities can be encrypted and verified one file at a
@@ -78,7 +85,7 @@ public enum LocalDeviceBackupService {
     private static let payloadDirectoryName = "payload"
 
     public static func create(
-        authority: LocalAuthorityStore,
+        authority: any LocalBackupSnapshotProviding,
         budgetID: String,
         attachmentsDirectory: URL,
         attachmentKey: Data,
@@ -103,9 +110,19 @@ public enum LocalDeviceBackupService {
             if !published { try? FileManager.default.removeItem(at: staging) }
         }
 
-        let aggregate = try await authority.snapshot(budgetID: budgetID)
         let snapshot = scratch.appendingPathComponent("authority.sqlite3")
         try await authority.snapshotDatabase(to: snapshot)
+        // Validate attachment references from the exact image being encrypted, not a separate
+        // live read before/after capture. The application gate still protects database/file custody.
+        let captured = try LocalAuthorityStore(fileURL: snapshot)
+        let aggregate: LocalAuthoritySnapshot
+        do {
+            aggregate = try await captured.snapshot(budgetID: budgetID)
+            await captured.close()
+        } catch {
+            await captured.close()
+            throw error
+        }
         let payloadDirectory = staging.appendingPathComponent(payloadDirectoryName, isDirectory: true)
         try createPrivateDirectory(payloadDirectory)
 
