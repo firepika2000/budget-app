@@ -424,6 +424,66 @@ enum HistoryRetryIntent {
 }
 
 @MainActor
+struct StatementMatchIndex {
+    struct Observation {
+        let id: String
+        let date: Date
+        let day: String
+        let amount: Int64
+        let payeeKeys: Set<String>
+    }
+    struct Result: Equatable {
+        let exact: [String]
+        let possible: [String]
+        let truncated: Bool
+    }
+    private struct Query: Hashable {
+        let day: String
+        let date: Date
+        let amount: Int64
+        let payeeKey: String
+    }
+    private var amounts: [Int64: [Observation]]
+    private var results: [Query: Result] = [:]
+
+    /// Input must already be scoped to the authorized account and posted transactions.
+    init(observations: [Observation]) {
+        amounts = Dictionary(grouping: observations, by: \.amount)
+        for amount in Array(amounts.keys) {
+            amounts[amount]?.sort { $0.date == $1.date ? $0.id < $1.id : $0.date < $1.date }
+        }
+    }
+
+    mutating func match(day: String, date: Date, amount: Int64, payeeKey: String) -> Result {
+        let query = Query(day: day, date: date, amount: amount, payeeKey: payeeKey)
+        if let result = results[query] { return result }
+        let rows = amounts[amount] ?? []
+        let earliest = date.addingTimeInterval(-2 * 86_400)
+        let latest = date.addingTimeInterval(2 * 86_400)
+        // Binary search skips unrelated amounts and dates instead of a candidate × ledger scan.
+        var low = 0, high = rows.count
+        while low < high {
+            let middle = low + (high - low) / 2
+            if rows[middle].date < earliest { low = middle + 1 } else { high = middle }
+        }
+        var exact: [String] = [], possible: [(id: String, distance: TimeInterval)] = []
+        var index = low
+        while index < rows.count, rows[index].date <= latest {
+            let row = rows[index]
+            if row.day == day && row.payeeKeys.contains(payeeKey) { exact.append(row.id) }
+            else { possible.append((row.id, abs(row.date.timeIntervalSince(date)))) }
+            index += 1
+        }
+        exact.sort()
+        possible.sort { $0.distance == $1.distance ? $0.id < $1.id : $0.distance < $1.distance }
+        let result = Result(exact: Array(exact.prefix(20)), possible: possible.prefix(20).map(\.id),
+                            truncated: exact.count > 20 || possible.count > 20)
+        results[query] = result
+        return result
+    }
+}
+
+@MainActor
 final class BackupDownloadCustody: ObservableObject {
     @Published private(set) var packageURL: URL?
     private var reading = false

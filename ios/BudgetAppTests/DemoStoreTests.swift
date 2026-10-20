@@ -11,6 +11,41 @@ import UniformTypeIdentifiers
 
 final class DemoStoreTests: XCTestCase {
     @MainActor
+    func testIndexedStatementMatchesEqualExhaustiveReviewAcrossLargeHistory() {
+        let base = BudgetWorkspaceStore.parseDate("2026-09-01")
+        let largeAmount: Int64 = -9_007_199_254_740_993
+        let observations: [StatementMatchIndex.Observation] = (0..<2_001).map { index in
+            let date = base.addingTimeInterval(Double(index % 25) * 86_400 + Double(index % 3) * 3_600)
+            return .init(id: String(format: "t%05d", index), date: date,
+                day: BudgetWorkspaceStore.dateString(date), amount: index % 5 == 0 ? largeAmount : -100,
+                payeeKeys: ["merchant-\(index % 13)", "alias-\(index % 7)"])
+        }
+        var indexed = StatementMatchIndex(observations: observations.reversed())
+        for offset in 0..<25 {
+            let date = base.addingTimeInterval(Double(offset) * 86_400)
+            let day = BudgetWorkspaceStore.dateString(date)
+            for amount in [Int64(-100), largeAmount, Int64(0)] {
+                for key in ["merchant-3", "alias-2", "missing"] {
+                    let exact = observations.filter { $0.day == day && $0.amount == amount && $0.payeeKeys.contains(key) }
+                        .map(\.id).sorted()
+                    let ids = Set(exact)
+                    let possible = observations.filter {
+                        $0.amount == amount && abs($0.date.timeIntervalSince(date)) <= 2 * 86_400 && !ids.contains($0.id)
+                    }.sorted {
+                        let left = abs($0.date.timeIntervalSince(date)), right = abs($1.date.timeIntervalSince(date))
+                        return left == right ? $0.id < $1.id : left < right
+                    }.map(\.id)
+                    let expected = StatementMatchIndex.Result(exact: Array(exact.prefix(20)), possible: Array(possible.prefix(20)),
+                        truncated: exact.count > 20 || possible.count > 20)
+                    XCTAssertEqual(indexed.match(day: day, date: date, amount: amount, payeeKey: key), expected)
+                    XCTAssertEqual(indexed.match(day: day, date: date, amount: amount, payeeKey: key), expected,
+                                   "Repeated rows share immutable match results, not consumed matches")
+                }
+            }
+        }
+    }
+
+    @MainActor
     func testDownloadedBackupCustodyDefersCleanupUntilVerificationFinishes() throws {
         var removed: [URL] = []
         var failRemoval = false

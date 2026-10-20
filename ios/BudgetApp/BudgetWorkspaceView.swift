@@ -1935,49 +1935,37 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
             let memo: String
         }
         var firstSourceRows: [StatementRowFingerprint: Int] = [:]
-        func matchesPayee(_ transaction: DemoTransaction, candidatePayee: String) -> Bool {
-            let candidate = LocalPayeeName.key(candidatePayee)
-            var names = [transaction.payee]
-            if includePayeeAliases,
-               let payee = demo.payees.first(where: {
-                   LocalPayeeName.key($0.name) == LocalPayeeName.key(transaction.payee)
-               }) {
-                names.append(contentsOf: payee.aliases)
-            }
-            return names.contains {
-                LocalPayeeName.key($0) == candidate
+        var aliasesByName: [String: [String]] = [:]
+        var suggestionPayees: [String: DemoPayee] = [:]
+        if includePayeeAliases {
+            for payee in demo.payees {
+                let name = LocalPayeeName.key(payee.name)
+                if aliasesByName[name] == nil { aliasesByName[name] = payee.aliases }
+                if !payee.isArchived {
+                    for key in ([payee.name] + payee.aliases).map(LocalPayeeName.key) where suggestionPayees[key] == nil {
+                        suggestionPayees[key] = payee
+                    }
+                }
             }
         }
+        let visibleCategoryIDs = Set(demo.visibleCategories.map(\.id))
+        var matchIndex = StatementMatchIndex(observations: observations.map { transaction in
+            let name = LocalPayeeName.key(transaction.payee)
+            let aliases = includePayeeAliases ? (aliasesByName[name] ?? []) : []
+            return .init(id: transaction.id, date: transaction.date,
+                day: BudgetWorkspaceStore.dateString(transaction.date), amount: transaction.amount,
+                payeeKeys: Set([name] + aliases.map(LocalPayeeName.key)))
+        })
         let candidates = parsed.map { candidate -> APIStatementImportCandidate in
             let candidateDate = BudgetWorkspaceStore.parseDate(candidate.occurredOn)
-            let exactMatches = observations.filter {
-                BudgetWorkspaceStore.dateString($0.date) == candidate.occurredOn && $0.amount == candidate.amountMinor &&
-                matchesPayee($0, candidatePayee: candidate.payee)
-            }.sorted { $0.id < $1.id }
-            let exact = exactMatches.prefix(20).map(\.id)
-            let exactIDs = Set(exactMatches.map(\.id))
-            let possibleMatches = observations.filter {
-                $0.amount == candidate.amountMinor &&
-                abs($0.date.timeIntervalSince(candidateDate)) <= 2 * 86_400 &&
-                !exactIDs.contains($0.id)
-            }.sorted {
-                let leftDistance = abs($0.date.timeIntervalSince(candidateDate))
-                let rightDistance = abs($1.date.timeIntervalSince(candidateDate))
-                return leftDistance != rightDistance ? leftDistance < rightDistance : $0.id < $1.id
-            }
-            let possible = possibleMatches.prefix(20).map(\.id)
-            let suggestedCategoryID: String? = {
-                guard candidate.amountMinor < 0, includePayeeAliases else { return nil }
-                let key = LocalPayeeName.key(candidate.payee)
-                return demo.payees.first(where: { payee in
-                    !payee.isArchived && ([payee.name] + payee.aliases).contains {
-                        LocalPayeeName.key($0) == key
-                    }
-                })?.defaultCategoryID.flatMap { categoryID in
-                    demo.visibleCategories.contains(where: { $0.id == categoryID }) ? categoryID : nil
-                }
-            }()
-            let suggestionsTruncated = exactMatches.count > exact.count || possibleMatches.count > possible.count
+            let matches = matchIndex.match(day: candidate.occurredOn, date: candidateDate,
+                amount: candidate.amountMinor, payeeKey: LocalPayeeName.key(candidate.payee))
+            let exact = matches.exact, possible = matches.possible
+            let suggestedCategoryID = candidate.amountMinor < 0 && includePayeeAliases
+                ? suggestionPayees[LocalPayeeName.key(candidate.payee)]?.defaultCategoryID.flatMap {
+                    visibleCategoryIDs.contains($0) ? $0 : nil
+                } : nil
+            let suggestionsTruncated = matches.truncated
             // Match the server's memo-aware fingerprint. Distinct bank descriptions can
             // represent legitimate repeated purchases, not duplicate source rows.
             let fingerprint = StatementRowFingerprint(date: candidate.occurredOn, amount: candidate.amountMinor,
