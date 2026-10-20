@@ -4394,6 +4394,38 @@ final class DemoStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testAutomaticDropboxDisableDuringCaptureRetainsPackageWithoutPublication() async throws {
+        for reenable in [false, true] {
+            let suite = "BudgetAppTests.DropboxDisable.\(UUID().uuidString)"
+            let defaults = UserDefaults(suiteName: suite)!
+            defer { defaults.removePersistentDomain(forName: suite) }
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent("disabled-backup-\(UUID().uuidString)")
+            defer { try? FileManager.default.removeItem(at: root) }
+            let package = root.appendingPathComponent("Retained.clearpocketbackup", isDirectory: true)
+            try FileManager.default.createDirectory(at: package, withIntermediateDirectories: true)
+            let coordinator = DropboxBackupCoordinator(appKey: "", defaults: defaults)
+            coordinator.automaticBackupEnabled = true
+            var captures = 0, publications = 0
+            await coordinator.performAutomaticBackup(prepare: { true }, capture: {
+                captures += 1
+                coordinator.automaticBackupEnabled = false
+                if reenable { coordinator.automaticBackupEnabled = true }
+                return package
+            }, publish: { _ in
+                publications += 1
+                return .init(remotePath: "/Backups/Retained.clearpocketbackup", encryptedBytes: 10, fileCount: 1)
+            }, remove: { _ in XCTFail("Disabling publication must not discard captured recovery data") })
+            XCTAssertEqual(captures, 1); XCTAssertEqual(publications, 0)
+            XCTAssertEqual(coordinator.pendingLocalGenerationURL, package)
+            XCTAssertNil(coordinator.lastSuccessfulBackupAt); XCTAssertNil(coordinator.errorMessage)
+            XCTAssertTrue(coordinator.canStartManualTransfer)
+            let reopened = DropboxBackupCoordinator(appKey: "", defaults: defaults)
+            XCTAssertEqual(reopened.pendingLocalGenerationURL, package)
+            XCTAssertEqual(reopened.automaticBackupEnabled, reenable)
+        }
+    }
+
+    @MainActor
     func testAutomaticDropboxPreparationFailureUsesCooldownWithoutCapture() async {
         let suite = "BudgetAppTests.DropboxPrepare.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!

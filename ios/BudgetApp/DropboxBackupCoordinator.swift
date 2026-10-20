@@ -28,7 +28,10 @@ final class DropboxBackupCoordinator: NSObject, ObservableObject, ASWebAuthentic
         didSet { defaults.set(retention, forKey: retentionKey) }
     }
     @Published var automaticBackupEnabled: Bool {
-        didSet { defaults.set(automaticBackupEnabled, forKey: automaticBackupEnabledKey) }
+        didSet {
+            if oldValue != automaticBackupEnabled { automaticPreferenceRevision = UUID() }
+            defaults.set(automaticBackupEnabled, forKey: automaticBackupEnabledKey)
+        }
     }
     @Published var automaticBackupIntervalDays: Int {
         didSet {
@@ -53,6 +56,7 @@ final class DropboxBackupCoordinator: NSObject, ObservableObject, ASWebAuthentic
     @Published private var automaticBackupClaimed = false
     @Published private var manualTransferClaimed = false
     private var automaticBackupStartedAt: Date?
+    private var automaticPreferenceRevision = UUID()
     private let credential: DropboxOAuthCredential?
     private var authenticationSession: ASWebAuthenticationSession?
     private var pendingAuthorization: DropboxPKCEAuthorization?
@@ -314,9 +318,10 @@ final class DropboxBackupCoordinator: NSObject, ObservableObject, ASWebAuthentic
         remove: (URL) throws -> Void
     ) async {
         guard claimAutomaticBackupIfDue() else { return }
+        let preference = automaticPreferenceRevision
         defer { finishAutomaticBackupAttempt() }
         errorMessage = nil
-        guard await prepare(), automaticBackupIsDue() else { return }
+        guard await prepare(), automaticBackupIsDue(), preference == automaticPreferenceRevision else { return }
         var package: URL?
         do {
             try Task.checkCancellation()
@@ -325,6 +330,12 @@ final class DropboxBackupCoordinator: NSObject, ObservableObject, ASWebAuthentic
             else { generation = try await capture() }
             package = generation
             try Task.checkCancellation()
+            // Capture can suspend while the user disables automatic publication. Preserve the
+            // encrypted generation, but never let the old run resume after an off/on toggle.
+            guard automaticBackupEnabled, preference == automaticPreferenceRevision else {
+                retainPendingLocalGeneration(generation)
+                return
+            }
             _ = try await publish(generation)
             if (lastSuccessfulBackupAt ?? .distantPast) < (automaticBackupStartedAt ?? .distantPast) {
                 recordSuccessfulBackup()
