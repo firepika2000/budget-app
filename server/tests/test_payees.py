@@ -1,10 +1,53 @@
 from time import monotonic
+from datetime import date
+
+from sqlalchemy import event
+from sqlalchemy.orm import Session
 
 from app.models import Budget, Household, Membership, Payee, PayeeAlias, Transaction, TransactionChange, User
 from app.security import create_access_token, hash_password
 
 from .conftest import auth
 from .test_budgeting_api import create_budget, create_budget_structure
+
+
+def test_payee_search_streams_exact_totals_without_loading_ledger_entities(client, owner_token, session_factory):
+    budget = create_budget(client, owner_token, session_factory)
+    account, category = create_budget_structure(client, owner_token, budget["id"])
+    payee = client.post(f"/api/v1/budgets/{budget['id']}/payees", headers=auth(owner_token), json={"display_name": "Long History"}).json()
+    amounts = [-9_007_199_254_740_993, 9_007_199_254_740_992] + [-1] * 2000
+    with session_factory() as db:
+        owner_id = db.query(User.id).filter(User.email == "owner@example.com").scalar()
+        db.add_all([Transaction(budget_id=budget["id"], account_id=account["id"], category_id=category["id"],
+            payee_id=payee["id"], amount_minor=amount, occurred_on=date(2026, 9, 15),
+            payee_name="Long History", created_by_user_id=owner_id) for amount in amounts])
+        db.commit()
+
+    loaded = []
+    batches = []
+    def observe(session, instance):
+        if isinstance(instance, Transaction):
+            loaded.append(instance.id)
+    def observe_query(state):
+        columns = getattr(state.statement, "selected_columns", None)
+        if columns is not None and list(columns.keys()) == ["payee_id", "amount_minor"]:
+            batches.append(state.execution_options.get("yield_per"))
+    event.listen(Session, "loaded_as_persistent", observe)
+    event.listen(Session, "do_orm_execute", observe_query)
+    try:
+        response = client.get(f"/api/v1/budgets/{budget['id']}/payees/search?q=Long&limit=1", headers=auth(owner_token))
+        legacy = client.get(f"/api/v1/budgets/{budget['id']}/payees", headers=auth(owner_token))
+    finally:
+        event.remove(Session, "loaded_as_persistent", observe)
+        event.remove(Session, "do_orm_execute", observe_query)
+    assert response.status_code == 200, response.text
+    item = response.json()["items"][0]
+    assert item["transaction_count"] == len(amounts)
+    assert item["net_amount_minor"] == sum(amounts) == -2001
+    assert legacy.status_code == 200
+    assert next(item for item in legacy.json() if item["id"] == payee["id"])["net_amount_minor"] == -2001
+    assert loaded == [], "Bounded payee search must not materialize its entire contributing ledger"
+    assert batches == [500, 500], "Scalar observations must be fetched in bounded batches"
 
 
 def test_payee_identity_normalization_default_and_transaction_link(client, owner_token, session_factory):

@@ -8,7 +8,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import and_, delete, exists, func, or_, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session
 
 from .access import can_access_resource, visible_resource_ids
 from .budgeting_routes import require_budget_capability
@@ -36,22 +36,37 @@ def _preference(db: Session, budget_id: str, payee_id: str) -> PayeeBudgetPrefer
     ))
 
 
-def _visible_transactions(db: Session, user: User, budget: Budget) -> list[Transaction]:
-    return list(db.scalars(select(Transaction).options(selectinload(Transaction.splits)).where(
-        *_visible_transaction_conditions(user, budget, db),
-    )))
+def _visible_payee_observations(
+    db: Session, user: User, budget: Budget, payee_ids: list[str] | None = None,
+) -> dict[str, tuple[int, int]]:
+    conditions = _visible_transaction_conditions(user, budget, db)
+    conditions.append(Transaction.payee_id.is_not(None))
+    if payee_ids is not None:
+        if not payee_ids:
+            return {}
+        conditions.append(Transaction.payee_id.in_(payee_ids))
+    observations: dict[str, tuple[int, int]] = {}
+    # Only scalar columns are needed. Python integer accumulation preserves exact
+    # cents and avoids SQLite SUM overflow for offsetting large historical values.
+    records = db.execute(select(Transaction.payee_id, Transaction.amount_minor).where(
+        *conditions,
+    ).execution_options(yield_per=500))
+    for payee_id, amount_minor in records:
+        count, total = observations.get(payee_id, (0, 0))
+        observations[payee_id] = (count + 1, total + amount_minor)
+    return observations
 
 
 def _response(
     db: Session,
     budget: Budget,
     payee: Payee,
-    visible: list[Transaction],
+    observations: dict[str, tuple[int, int]],
     *,
     visible_category_ids: set[str] | None,
     include_aliases: bool = True,
 ) -> dict:
-    rows = [row for row in visible if row.payee_id == payee.id]
+    observation = observations.get(payee.id, (0, 0))
     preference = _preference(db, budget.id, payee.id)
     return {
         "id": payee.id, "household_id": payee.household_id, "display_name": payee.display_name,
@@ -59,7 +74,7 @@ def _response(
         "default_category_id": preference.default_category_id
         if preference and (visible_category_ids is None or preference.default_category_id in visible_category_ids)
         else None,
-        "transaction_count": len(rows), "net_amount_minor": sum(row.amount_minor for row in rows),
+        "transaction_count": observation[0], "net_amount_minor": observation[1],
         "aliases": list(db.scalars(select(PayeeAlias).where(PayeeAlias.payee_id == payee.id).order_by(PayeeAlias.display_name)))
         if include_aliases else [],
     }
@@ -145,15 +160,13 @@ def search_payees(
     query = query.order_by(visible_count.desc(), func.lower(Payee.display_name), Payee.id).offset(offset).limit(limit + 1)
     rows = list(db.scalars(query))
     page, has_more = rows[:limit], len(rows) > limit
-    visible = list(db.scalars(select(Transaction).options(selectinload(Transaction.splits)).where(
-        *_visible_transaction_conditions(user, budget, db),
-        Transaction.payee_id.in_([item.id for item in page]),
-    ))) if page else []
+    observations = _visible_payee_observations(db, user, budget, [item.id for item in page])
     next_cursor = None
     if has_more:
         next_cursor = base64.urlsafe_b64encode(str(offset + limit).encode("ascii")).decode("ascii")
     return PayeePageResponse(
-        items=[_response(db, budget, item, visible, visible_category_ids=category_scope, include_aliases=not scoped) for item in page],
+        items=[_response(db, budget, item, observations, visible_category_ids=category_scope,
+                         include_aliases=not scoped) for item in page],
         next_cursor=next_cursor,
     )
 
@@ -161,7 +174,7 @@ def search_payees(
 @router.get("/payees", response_model=list[PayeeResponse])
 def list_payees(budget_id: str, include_archived: bool = False, user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> list[dict]:
     budget = require_budget_capability(db, user, budget_id, "view_transactions")
-    visible = _visible_transactions(db, user, budget)
+    visible = _visible_payee_observations(db, user, budget)
     query = select(Payee).where(Payee.household_id == budget.household_id)
     if not include_archived:
         query = query.where(Payee.is_archived.is_(False), Payee.merged_into_payee_id.is_(None))
@@ -170,7 +183,7 @@ def list_payees(budget_id: str, include_archived: bool = False, user: User = Dep
     category_scope = visible_resource_ids(db, user, budget, "category")
     scoped = visible_resource_ids(db, user, budget, "account") is not None or category_scope is not None
     if scoped:
-        visible_ids = {row.payee_id for row in visible if row.payee_id is not None}
+        visible_ids = set(visible)
         payees = [item for item in payees if item.id in visible_ids]
     return [_response(db, budget, item, visible, visible_category_ids=category_scope, include_aliases=not scoped) for item in payees]
 
@@ -215,7 +228,7 @@ def create_payee(budget_id: str, body: PayeeCreate, user: User = Depends(get_cur
     except IntegrityError:
         db.rollback()
         raise HTTPException(status_code=409, detail="A payee with this name already exists")
-    visible = _visible_transactions(db, user, budget)
+    visible = _visible_payee_observations(db, user, budget, [payee.id])
     return _response(db, budget, payee, visible, visible_category_ids=visible_resource_ids(db, user, budget, "category"))
 
 
@@ -257,7 +270,7 @@ def update_payee(budget_id: str, payee_id: str, body: PayeeUpdate, user: User = 
     except IntegrityError:
         db.rollback()
         raise HTTPException(status_code=409, detail="A payee with this name already exists")
-    return _response(db, budget, payee, _visible_transactions(db, user, budget), visible_category_ids=visible_resource_ids(db, user, budget, "category"))
+    return _response(db, budget, payee, _visible_payee_observations(db, user, budget, [payee.id]), visible_category_ids=visible_resource_ids(db, user, budget, "category"))
 
 
 @router.post("/payees/{payee_id}/aliases", response_model=PayeeAliasResponse, status_code=status.HTTP_201_CREATED)
@@ -339,7 +352,7 @@ def merge_payee(budget_id: str, payee_id: str, body: PayeeMerge, user: User = De
     append_payee_revision(db, payee=destination, actor_user_id=user.id, action="merged",
                           before=destination_before, after=payee_snapshot(db, destination))
     db.commit()
-    return _response(db, budget, destination, _visible_transactions(db, user, budget), visible_category_ids=visible_resource_ids(db, user, budget, "category"))
+    return _response(db, budget, destination, _visible_payee_observations(db, user, budget, [destination.id]), visible_category_ids=visible_resource_ids(db, user, budget, "category"))
 
 
 @router.get("/payees/{payee_id}/history", response_model=list[PayeeRevisionResponse])
