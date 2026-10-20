@@ -3865,6 +3865,11 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
     }
 
     var pendingTransactionCount: Int { transactionOutbox.count }
+    var pendingObservationIDs: (transactions: Set<String>, transfers: Set<String>) {
+        do { try transactionOutbox.requireServer(budgetID: budget.id, serverURL: credentials.serverURL, token: credentials.token) }
+        catch { return ([], []) }
+        return (Set(transactionOutbox.entries.flatMap(\.referencedTransactionIDs)), Set(transactionOutbox.entries.flatMap(\.referencedTransferIDs)))
+    }
     func updateAttachmentAuthority(_ revision: String?, changed: Bool) {
         attachmentReadCache.updateAuthority(revision, changed: changed)
         transactionPageCache.updateAuthority(revision, changed: changed)
@@ -4530,6 +4535,7 @@ private final class LiveWorkspaceDataSource: WorkspaceDataSource {
         } catch where isTransientConnectivityFailure(error) {
             guard revision == budgetAuthorityRevision else { throw CancellationError() }
             let cached = try readCache.load(planMonth: month)
+            try LiveCoreObservations.requireBalanceCoverage(accounts: cached.accounts, balances: Array(cached.accountBalances.values), canView: budget.can("view_account_balances"))
             lastReadWasCached = true
             return WorkspaceSnapshot(
                 accounts: cached.accounts, accountBalances: cached.accountBalances,
@@ -4548,7 +4554,9 @@ private final class LiveWorkspaceDataSource: WorkspaceDataSource {
         try await credentials.prepare()
         let client = try credentials.client()
         let month = BudgetWorkspaceStore.dateString(planMonth).prefix(7) + "-01"
-        async let loadedCore = LiveCoreObservations.load(budget: budget, month: String(month), client: client, credential: { await self.token })
+        let pending = commands.pendingObservationIDs
+        async let loadedCore = LiveCoreObservations.load(budget: budget, month: String(month), client: client,
+            requiredTransactionIDs: pending.transactions, requiredTransferIDs: pending.transfers, credential: { await self.token })
         async let loadedReports = self.reports(planMonth: planMonth, query: report, kinds: kinds)
         let (core, reports) = try await (loadedCore, loadedReports)
         let accounts = core.accounts, transactions = core.transactions, categories = core.categories, groups = core.groups
@@ -4608,6 +4616,7 @@ private final class LiveWorkspaceDataSource: WorkspaceDataSource {
                 }
             }
         }
+        try LiveCoreObservations.requireBalanceCoverage(accounts: accounts, balances: balances, canView: budget.can("view_account_balances"))
         let requests = (budget.can("request_money") || budget.can("approve_request")) ? try await client.financialRequests(budgetID: budget.id, token: token) : []
         let allowances = try await client.allowancePlans(budgetID: budget.id, includeInactive: budget.can("manage_allowances"), token: token)
         let delegated = budget.can("view_categories") ? try await client.delegatedBudget(budgetID: budget.id, token: token) : nil
@@ -11135,7 +11144,7 @@ private struct LiveTransactionDetailView: View {
             }
         }
             .sheet(isPresented: $showEdit) { if let transaction { LiveTransactionEditView(budget: store.budget, transaction: transaction, accounts: store.accounts, categories: store.categories, onSaved: reload) } }
-            .task(id: "\(store.authorityRevision)|\(transactionID)") { await loadMissingTransaction() }
+            .task(id: "\(store.authorityRevision)|\(store.reportRevision)|\(transactionID)") { await loadMissingTransaction() }
             .sheet(item: $editTransfer) { LiveTransferView(presentation: $0, budget: store.budget, accounts: store.accounts, onSaved: reload) }
             .sheet(isPresented: $showVoid) { if let transaction { TransactionVoidView(transaction: transaction) } }
             .sheet(isPresented: $showRecurring) { if let transaction { MakeRecurringView(transaction: transaction).environmentObject(store) } }

@@ -1996,6 +1996,45 @@ final class AppSessionRefreshTests: XCTestCase {
         XCTAssertTrue(try String(contentsOf: file).contains("async let loadedCore = LiveCoreObservations.load"))
     }
 
+    func testLiveCoreHydrationBoundsHistoryAndLoadsPendingReferences() async throws {
+        let recorder = CredentialRequestRecorder()
+        let row: (String, String?) -> String = { id, transfer in
+            "{\"id\":\"\(id)\",\"account_id\":\"a\",\"amount_minor\":-1,\"occurred_on\":\"2026-10-01\",\"payee_name\":\"Merchant\",\"memo\":\"\",\"is_cleared\":false,\"is_reconciled\":false,\"splits\":[],\"transfer_id\":\(transfer.map { "\"\($0)\"" } ?? "null")}"
+        }
+        RefreshMockURLProtocol.handler = { request in
+            let items = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!.queryItems ?? []
+            recorder.append(path: request.url!.absoluteString, authorization: request.value(forHTTPHeaderField: "Authorization") ?? "")
+            XCTAssertFalse(items.contains { $0.name == "cursor" })
+            XCTAssertEqual(items.first { $0.name == "limit" }?.value, "200")
+            if items.contains(where: { $0.name == "transaction_id" && $0.value == "old" }) {
+                return Self.json(200, "{\"items\":[\(row("old", "pair"))],\"next_cursor\":null,\"total_count\":1}")
+            }
+            if items.contains(where: { $0.name == "transfer_id" && $0.value == "pair" }) {
+                return Self.json(200, "{\"items\":[\(row("old", "pair")),\(row("counterpart", "pair"))],\"next_cursor\":null,\"total_count\":2}")
+            }
+            return Self.json(200, "{\"items\":[\(row("recent", nil))],\"next_cursor\":\"older\",\"total_count\":1000000}")
+        }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [RefreshMockURLProtocol.self]
+        let client = try APIClient(baseURL: URL(string: "https://budget.example.com")!, session: URLSession(configuration: configuration))
+        let budget = APIBudget(id: "b", householdID: "h", name: "Scoped", currencyCode: "USD", effectivePermission: .view, capabilities: ["view_budget", "view_transactions"])
+        let value = try await LiveCoreObservations.load(budget: budget, month: "2026-10-01", client: client,
+            requiredTransactionIDs: ["old"], requiredTransferIDs: ["pair"], credential: { "current" })
+        XCTAssertEqual(value.transactions.map(\.id), ["recent", "old", "counterpart"])
+        XCTAssertEqual(recorder.paths.count, 3)
+        XCTAssertTrue(recorder.authorizations.allSatisfy { $0 == "Bearer current" })
+    }
+
+    func testSparseHistoryRequiresExactCompleteBalanceObservations() throws {
+        let account = try JSONDecoder().decode(APIAccount.self, from: Data(#"{"id":"a","budget_id":"b","name":"Checking","account_type":"checking","is_on_budget":true,"is_closed":false}"#.utf8))
+        let balance = try JSONDecoder().decode(APIAccountBalance.self, from: Data(#"{"account_id":"a","currency_code":"USD","cleared_balance_minor":9007199254740993,"uncleared_balance_minor":0,"working_balance_minor":9007199254740993}"#.utf8))
+        XCTAssertEqual(balance.workingBalanceMinor, 9_007_199_254_740_993)
+        XCTAssertNoThrow(try LiveCoreObservations.requireBalanceCoverage(accounts: [account], balances: [balance], canView: true))
+        XCTAssertThrowsError(try LiveCoreObservations.requireBalanceCoverage(accounts: [account], balances: [], canView: true))
+        XCTAssertThrowsError(try LiveCoreObservations.requireBalanceCoverage(accounts: [account], balances: [balance, balance], canView: true))
+        XCTAssertNoThrow(try LiveCoreObservations.requireBalanceCoverage(accounts: [account], balances: [], canView: false))
+    }
+
     func testLiveCoreHydrationDoesNotHideFailureOfGrantedResource() async throws {
         RefreshMockURLProtocol.handler = { _ in Self.json(403, #"{"detail":"Permission revoked"}"#) }
         let configuration = URLSessionConfiguration.ephemeral

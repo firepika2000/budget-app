@@ -2,7 +2,7 @@
 
 ## Current workspace checkpoint
 
-Inspected implementation: `31b6c01` on `codex/development`. App and widget remain `0.11.0`
+Current checkpoint: bounded Live startup observations following `c2804bd` on `codex/development`. App and widget remain `0.11.0`
 build `7`; TestFlight is held. Regular Xcode 27.1 (`27A9275`) builds and executes focused tests
 on preserved iPhone 17 Pro Max `3ABD861E-D38D-4AFD-A356-959266051564`, iOS 27.0 (`24A434`).
 No Simulator or Live data reset, merge, tag, or release is part of these checkpoints.
@@ -37,19 +37,28 @@ history, including paused schedules, without realizing money (`4362ca6`): 53 foc
 and one native lifecycle test passed. Test counts describe overlapping focused runs, not a full
 release-wide suite or a new human acceptance pass.
 
-### Remaining startup memory work
+### Bounded Live startup observations
 
-Live core hydration still calls complete `transactionHistory`; paged screens alone do not close
-that memory gap. Reducing the startup array must also preserve:
+Live core hydration requests one recent page of at most 200 transactions instead of traversing
+the entire ledger. Pending commands add explicit transaction identity batches of at most 200
+and transfer identity batches of at most 100 pairs. These observations preserve pending-detail
+visibility; server authorization and replay checks remain unchanged. Recent Home activity stays
+ahead of appended historical references. Open older details resolve again after workspace refresh.
 
-- pending-command detail visibility, which currently checks transaction IDs and transfer pairs
-  against loaded observations; these are presentation checks, not server replay authorization;
-- historical payee category suggestions, which currently inspect the latest eligible transactions
-  in that array;
-- exact account balance observations, without deriving balances from a partial page;
-- recent Home activity ordering, offline observations and current permission scope.
+Account totals require complete, unique authoritative balance observations online and when loading
+the workspace cache. Missing balances fail observation loading rather than accepting sums from a
+partial ledger. Payee category suggestions use the scoped repository endpoint (`c2804bd`), not
+the recent page. Previously fetched history pages remain available through their scoped offline cache.
 
-No fixed-size truncation is an acceptable substitute for those contracts. Live Dropbox acceptance,
+Four native tests executed and passed with regular Xcode 27.1 on the preserved iOS 27 simulator:
+a million-row advertised history stops after the recent page plus requested historical identities,
+transfer rows are deduplicated, exact Int64 balance coverage rejects missing/duplicate observations,
+only granted resources are requested, and granted-resource failures still propagate. The simulator
+build passed. Result: `Test-BudgetApp-2026.10.20_00-30-21--0400.xcresult` in the configured derived-data logs.
+
+This bounds the ordinary Live ledger observation, not all app memory: pending references can grow
+with the outbox, legacy offline workspace caches can still contain older complete ledgers, and
+Local Device startup still loads its local ledger. Live Dropbox acceptance,
 deployment recovery, Windows runtime/signing, accessibility/platform acceptance and the commercial
 product decision remain separate open gates.
 

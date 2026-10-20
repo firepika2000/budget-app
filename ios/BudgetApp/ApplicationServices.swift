@@ -12,13 +12,50 @@ struct LiveCoreObservations {
     let summary: APIMonthSummary?
 
     static func load(budget: APIBudget, month: String, client: APIClient,
+                     requiredTransactionIDs: Set<String> = [], requiredTransferIDs: Set<String> = [],
                      credential: @escaping @Sendable () async throws -> String) async throws -> Self {
         async let accounts: [APIAccount] = budget.can("view_accounts") ? client.accounts(budgetID: budget.id, token: try await credential()) : []
-        async let transactions: [APITransaction] = budget.can("view_transactions") ? client.transactionHistory(budgetID: budget.id, credential: credential) : []
+        async let transactions: [APITransaction] = budget.can("view_transactions") ? recentTransactions(budgetID: budget.id, client: client,
+            requiredIDs: requiredTransactionIDs, transferIDs: requiredTransferIDs, credential: credential) : []
         async let categories: [APICategory] = budget.can("view_categories") ? client.categories(budgetID: budget.id, token: try await credential()) : []
         async let groups: [APICategoryGroup] = budget.can("view_categories") ? client.categoryGroups(budgetID: budget.id, token: try await credential()) : []
         async let summary: APIMonthSummary? = budget.can("view_reports") ? client.monthSummary(budgetID: budget.id, month: month, token: try await credential()) : nil
         return try await Self(accounts: accounts, transactions: transactions, categories: categories, groups: groups, summary: summary)
+    }
+
+    private static func recentTransactions(budgetID: String, client: APIClient, requiredIDs: Set<String>, transferIDs: Set<String>,
+                                           credential: @Sendable () async throws -> String) async throws -> [APITransaction] {
+        let page = try await client.searchTransactions(budgetID: budgetID, query: .init(limit: 200), token: try await credential())
+        var rows = try page.validatedRows(after: [], previousTotal: nil, requestedCursor: nil, limit: 200)
+        func merge(_ values: [APITransaction]) {
+            let existing = Set(rows.map(\.id))
+            rows.append(contentsOf: values.filter { !existing.contains($0.id) })
+        }
+        let missing = requiredIDs.subtracting(rows.map(\.id)).sorted()
+        for start in stride(from: 0, to: missing.count, by: 200) {
+            try Task.checkCancellation()
+            let ids = Array(missing[start..<min(start + 200, missing.count)])
+            let page = try await client.searchTransactions(budgetID: budgetID, query: .init(transactionIDs: ids, limit: 200), token: try await credential())
+            guard page.nextCursor == nil else { throw APIClientError.server(status: 502, message: "Incomplete pending transaction observations. Refresh again.") }
+            merge(try page.validatedRows(after: [], previousTotal: nil, requestedCursor: nil, limit: 200))
+        }
+        let groups = transferIDs.filter { id in rows.filter { $0.transferID == id }.count < 2 }.sorted()
+        for start in stride(from: 0, to: groups.count, by: 100) {
+            try Task.checkCancellation()
+            let ids = Array(groups[start..<min(start + 100, groups.count)])
+            let page = try await client.searchTransactions(budgetID: budgetID, query: .init(transferIDs: ids, limit: 200), token: try await credential())
+            guard page.nextCursor == nil else { throw APIClientError.server(status: 502, message: "Incomplete pending transfer observations. Refresh again.") }
+            merge(try page.validatedRows(after: [], previousTotal: nil, requestedCursor: nil, limit: 200))
+        }
+        return rows
+    }
+
+    static func requireBalanceCoverage(accounts: [APIAccount], balances: [APIAccountBalance], canView: Bool) throws {
+        guard canView else { return }
+        let ids = Set(balances.map(\.accountID))
+        guard ids.count == balances.count, Set(accounts.map(\.id)).isSubset(of: ids) else {
+            throw APIClientError.server(status: 502, message: "Complete account balances are unavailable. Reconnect and refresh.")
+        }
     }
 }
 
@@ -464,6 +501,16 @@ final class LiveTransactionOutbox {
         var scheduleDeletion: DeleteScheduleOperation? = nil
         var scheduleRealization: RealizeScheduleOperation? = nil
         var attachmentRemoval: DetachAttachmentOperation? = nil
+        var referencedTransactionIDs: Set<String> {
+            var ids = Set([transactionID, attachmentUpload?.transactionID, attachmentRemoval?.transactionID,
+                voidCommand?.transactionID, duplicateCommand?.transactionID, deletionCommand?.transactionID].compactMap { $0 })
+            ids.formUnion(bulkUpdate?.transactionIDs ?? [])
+            if let deletion = transferDeletionCommand { ids.formUnion(deletion.expectedRevisions.keys) }
+            return ids.filter { !$0.isEmpty && $0.count <= 128 }
+        }
+        var referencedTransferIDs: Set<String> {
+            Set([transferID, transferDeletionCommand?.transferID].compactMap { $0 }).filter { !$0.isEmpty && $0.count <= 128 }
+        }
     }
 
     private let fileURL: URL
