@@ -1072,6 +1072,125 @@ final class LiveWorkspaceReadCache {
     }
 }
 
+/// Exact server observations only: no local reimplementation of search or financial semantics.
+@MainActor
+final class LiveTransactionPageCache {
+    private struct Observation: Codable {
+        let query: APITransactionQuery
+        let accessRevision: String?
+        let page: APITransactionPage
+    }
+    private let directory: URL
+    private let storageScope: String
+    private var accessRevision: String?
+    private var generation = UUID()
+    private var requiresFreshObservation = false
+    private var refreshedQueries: [APITransactionQuery] = []
+    private static let maximumBytes = 2 * 1_024 * 1_024
+
+    init(directory: URL, storageScope: String, accessRevision: String?) {
+        self.directory = directory; self.storageScope = storageScope; self.accessRevision = accessRevision
+        requiresFreshObservation = FileManager.default.fileExists(atPath: directory.appendingPathComponent(".revoked").path)
+    }
+    convenience init(budgetID: String, serverURL: URL, token: String, accessRevision: String?) {
+        let scope = liveServerStorageScope(budgetID: budgetID, serverURL: serverURL, token: token)
+        let root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        self.init(directory: root.appendingPathComponent("BudgetApp/TransactionPages/" + scope),
+                  storageScope: scope, accessRevision: accessRevision)
+    }
+    func requireScope(_ scope: String) throws {
+        guard scope == storageScope else { throw BudgetApplicationError.invalidOperation("Reopen the budget to load current transaction access.") }
+    }
+    func updateAuthority(_ revision: String?, changed: Bool) {
+        accessRevision = revision
+        if changed { removeAll() }
+    }
+    func removeAll() {
+        generation = UUID()
+        requiresFreshObservation = true
+        refreshedQueries.removeAll()
+        // Persist denial independently of deleting old files, including across relaunch.
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+        let marker = directory.appendingPathComponent(".revoked")
+        try? Data("revoked".utf8).write(to: marker, options: [.atomic, .completeFileProtection])
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: marker.path)
+        for file in (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? [] where file.pathExtension == "json" {
+            try? FileManager.default.removeItem(at: file)
+        }
+    }
+    func observe(_ query: APITransactionQuery, fetch: () async throws -> APITransactionPage) async throws -> (page: APITransactionPage, cached: Bool) {
+        let observed = generation
+        do {
+            try Task.checkCancellation()
+            let page = try await fetch()
+            try Task.checkCancellation()
+            guard observed == generation else { throw CancellationError() }
+            try? save(page, query: query)
+            return (page, false)
+        } catch {
+            try Task.checkCancellation()
+            guard observed == generation else { throw CancellationError() }
+            if case let APIClientError.server(status, _) = error, [401, 403, 404].contains(status) {
+                removeAll()
+                throw error
+            }
+            guard isTransientConnectivityFailure(error), let page = try? load(query) else { throw error }
+            return (page, true)
+        }
+    }
+    private func fileURL(_ query: APITransactionQuery) throws -> URL {
+        let encoder = JSONEncoder(); encoder.outputFormatting = .sortedKeys
+        let hash = SHA256.hash(data: try encoder.encode(query)).map { String(format: "%02x", $0) }.joined()
+        return directory.appendingPathComponent(hash + ".json")
+    }
+    private func save(_ page: APITransactionPage, query: APITransactionQuery) throws {
+        guard (1...200).contains(query.limit), page.items.count <= query.limit,
+              page.totalCount >= page.items.count,
+              Set(page.items.map(\.id)).count == page.items.count else { return }
+        let bytes = try JSONEncoder().encode(Observation(query: query, accessRevision: accessRevision, page: page))
+        guard bytes.count <= Self.maximumBytes else { return }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+        let marker = directory.appendingPathComponent(".revoked")
+        if FileManager.default.fileExists(atPath: marker.path) {
+            // A fresh authorized response may recover caching only after old pages are gone.
+            for file in try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) where file.pathExtension == "json" {
+                try FileManager.default.removeItem(at: file)
+            }
+            try FileManager.default.removeItem(at: marker)
+        }
+        try bytes.write(to: fileURL(query), options: [.atomic, .completeFileProtection])
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL(query).path)
+        refreshedQueries.removeAll { $0 == query }
+        refreshedQueries.append(query)
+        refreshedQueries = Array(refreshedQueries.suffix(50))
+        let files = try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey])
+            .filter { $0.pathExtension == "json" }
+            .sorted { ((try? $0.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast) > ((try? $1.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast) }
+        var retainedBytes = 0
+        for (index, file) in files.enumerated() {
+            retainedBytes += (try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? Self.maximumBytes
+            if index >= 50 || retainedBytes > 20 * 1_024 * 1_024 { try? FileManager.default.removeItem(at: file) }
+        }
+    }
+    private func load(_ query: APITransactionQuery) throws -> APITransactionPage {
+        guard !FileManager.default.fileExists(atPath: directory.appendingPathComponent(".revoked").path),
+              !requiresFreshObservation || refreshedQueries.contains(query) else {
+            throw BudgetApplicationError.invalidOperation("Reconnect to load current transaction access.")
+        }
+        let url = try fileURL(query)
+        guard (try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? Int.max) <= Self.maximumBytes else {
+            throw BudgetApplicationError.invalidOperation("The saved transaction page is invalid.")
+        }
+        let value = try JSONDecoder().decode(Observation.self, from: Data(contentsOf: url))
+        guard value.query == query, value.accessRevision == accessRevision else {
+            throw BudgetApplicationError.invalidOperation("Reconnect to load current transaction access.")
+        }
+        return value.page
+    }
+}
+
 /// Bounded, protected last-authorized metadata only. Never stores attachment bytes or
 /// substitutes for server authorization. Scope/access changes invalidate observations.
 @MainActor

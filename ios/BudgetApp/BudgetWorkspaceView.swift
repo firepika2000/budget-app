@@ -3835,12 +3835,16 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
     private let credentials: LiveWorkspaceCredentials
     private let transactionOutbox: LiveTransactionOutbox
     private let attachmentReadCache: LiveAttachmentReadCache
+    private let transactionPageCache: LiveTransactionPageCache
+    private(set) var lastTransactionReadWasCached = false
     private(set) var outboxFailureMessage: String?
     private var token: String { credentials.token }
     private var client: APIClient { get throws { try credentials.client() } }
     init(budget: APIBudget, credentials: LiveWorkspaceCredentials) {
         self.budget = budget
         self.credentials = credentials
+        transactionPageCache = LiveTransactionPageCache(budgetID: budget.id, serverURL: credentials.serverURL,
+            token: credentials.token, accessRevision: budget.accessRevision)
         attachmentReadCache = LiveAttachmentReadCache(budgetID: budget.id, serverURL: credentials.serverURL,
             token: credentials.token, accessRevision: budget.accessRevision)
         transactionOutbox = LiveTransactionOutbox(
@@ -3853,8 +3857,9 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
     var pendingTransactionCount: Int { transactionOutbox.count }
     func updateAttachmentAuthority(_ revision: String?, changed: Bool) {
         attachmentReadCache.updateAuthority(revision, changed: changed)
+        transactionPageCache.updateAuthority(revision, changed: changed)
     }
-    func evictAttachmentObservations() { attachmentReadCache.removeAll() }
+    func evictAttachmentObservations() { attachmentReadCache.removeAll(); transactionPageCache.removeAll() }
     var pendingTransactions: [LiveTransactionOutbox.Entry] { transactionOutbox.entries }
     var pendingQueueError: String? { transactionOutbox.loadErrorMessage }
     var pendingLegacyServerReview: Bool { transactionOutbox.requiresLegacyReview }
@@ -4073,7 +4078,23 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
     func allowanceIssuances(id: String, limit: Int? = nil, offset: Int = 0) async throws -> [APIAllowanceIssuance] { try await credentials.prepare(); return try await client.allowanceIssuances(budgetID: budget.id, planID: id, token: token, limit: limit, offset: offset) }
     func allowancePlanHistory(id: String, limit: Int, offset: Int) async throws -> [APIAllowancePlanRevision] { try await credentials.prepare(); return try await client.allowancePlanHistory(budgetID: budget.id, planID: id, limit: limit, offset: offset, token: token) }
 
-    func browseTransactions(query: APITransactionQuery) async throws -> APITransactionPage { try await credentials.prepare(); return try await client.searchTransactions(budgetID: budget.id, query: query, token: token) }
+    func browseTransactions(query: APITransactionQuery) async throws -> APITransactionPage {
+        func requireScope() throws {
+            guard budget.can("view_transactions") else { throw APIClientError.server(status: 403, message: "Insufficient permission") }
+            try transactionPageCache.requireScope(liveServerStorageScope(budgetID: budget.id,
+                serverURL: credentials.serverURL, token: credentials.token))
+        }
+        try requireScope()
+        let result = try await transactionPageCache.observe(query) {
+            try await credentials.prepare()
+            try requireScope()
+            let value = try await client.searchTransactions(budgetID: budget.id, query: query, token: token)
+            try requireScope()
+            return value
+        }
+        lastTransactionReadWasCached = result.cached
+        return result.page
+    }
     func searchPayees(query: String, includeArchived: Bool, limit: Int, cursor: String?) async throws -> APIPayeePage { try await credentials.prepare(); return try await client.searchPayees(budgetID: budget.id, query: query, includeArchived: includeArchived, limit: limit, cursor: cursor, token: token) }
 
     func createPayee(_ operation: CreatePayeeOperation) async throws { try await credentials.prepare(); _ = try await client.createPayee(budgetID: budget.id, payee: APIPayeeCreate(displayName: operation.displayName, defaultCategoryID: operation.defaultCategoryID), token: token) }
@@ -5611,6 +5632,10 @@ final class BudgetWorkspaceStore: ObservableObject {
         }
         let value = try await task.value
         guard authorityRevision == revision else { throw CancellationError() }
+        if (commandRepository as? LiveWorkspaceCommandRepository)?.lastTransactionReadWasCached == true {
+            isWorkingOffline = true
+            if pendingSyncCount == 0 { syncStatusMessage = "Offline · showing saved transaction results" }
+        }
         // Keep canonical detail/edit lookup in sync with authorized browser observations.
         // This is server data, never an optimistic financial mutation.
         for transaction in value.items {

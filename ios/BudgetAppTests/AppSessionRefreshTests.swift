@@ -1902,6 +1902,72 @@ final class AppSessionRefreshTests: XCTestCase {
     }
 
     @MainActor
+    func testTransactionPageCacheReopensOnlyExactAuthorizedQueryOffline() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let cache = LiveTransactionPageCache(directory: directory, storageScope: "scope", accessRevision: "a")
+        let query = APITransactionQuery(search: "private merchant", accountIDs: ["account"], limit: 50)
+        let row = try JSONDecoder().decode(APITransaction.self, from: Data(#"{"id":"t","account_id":"account","amount_minor":-9007199254740993,"occurred_on":"2026-09-04","payee_name":"private merchant","memo":"","is_cleared":false,"is_reconciled":false,"splits":[]}"#.utf8))
+        let page = APITransactionPage(items: [row], nextCursor: nil, totalCount: 1)
+        let online = try await cache.observe(query) { page }
+        XCTAssertFalse(online.cached)
+        let reopened = LiveTransactionPageCache(directory: directory, storageScope: "scope", accessRevision: "a")
+        let offline = try await reopened.observe(query) { throw URLError(.notConnectedToInternet) }
+        XCTAssertTrue(offline.cached)
+        XCTAssertEqual(offline.page, page)
+        XCTAssertEqual(offline.page.items.first?.amountMinor, -9_007_199_254_740_993)
+        for other in [APITransactionQuery(search: "other"), APITransactionQuery(search: "private merchant", accountIDs: ["account"], cursor: "next")] {
+            do { _ = try await reopened.observe(other) { throw URLError(.notConnectedToInternet) }; XCTFail("Never invent an uncached query") } catch {}
+        }
+        XCTAssertThrowsError(try reopened.requireScope("another-user"))
+        let files = try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
+        XCTAssertEqual(files.count, 1)
+        XCTAssertFalse(files[0].lastPathComponent.contains("merchant"))
+        let attributes = try FileManager.default.attributesOfItem(atPath: files[0].path)
+        XCTAssertEqual((attributes[.posixPermissions] as? NSNumber)?.intValue, 0o600)
+    }
+
+    @MainActor
+    func testTransactionPageCacheDenialAndAuthorityChangeCannotResurrectRows() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let query = APITransactionQuery()
+        let page = APITransactionPage(items: [], nextCursor: nil, totalCount: 0)
+        for status in [401, 403, 404] {
+            let cache = LiveTransactionPageCache(directory: directory, storageScope: "scope", accessRevision: "a")
+            _ = try await cache.observe(query) { page }
+            let oldFile = try XCTUnwrap(FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil).first)
+            let oldBytes = try Data(contentsOf: oldFile)
+            do { _ = try await cache.observe(query) { throw APIClientError.server(status: status, message: "Denied") }; XCTFail("Do not fall back after denial") } catch {}
+            // Simulate failed disk eviction: an old file must not re-establish authority.
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try oldBytes.write(to: oldFile)
+            do { _ = try await cache.observe(query) { throw URLError(.notConnectedToInternet) }; XCTFail("Denied observations must be purged") } catch {}
+            let reopened = LiveTransactionPageCache(directory: directory, storageScope: "scope", accessRevision: "a")
+            do { _ = try await reopened.observe(query) { throw URLError(.notConnectedToInternet) }; XCTFail("Relaunch cannot revive a denied page") } catch {}
+        }
+        let cache = LiveTransactionPageCache(directory: directory, storageScope: "scope", accessRevision: "a")
+        do {
+            _ = try await cache.observe(query) {
+                cache.updateAuthority("b", changed: true)
+                return page
+            }
+            XCTFail("Late response cannot restore an earlier authority")
+        } catch is CancellationError {}
+        do { _ = try await cache.observe(query) { throw URLError(.notConnectedToInternet) }; XCTFail("Late response was not cached") } catch {}
+    }
+
+    @MainActor
+    func testTransactionPageCacheBoundsRetainedObservations() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let cache = LiveTransactionPageCache(directory: directory, storageScope: "scope", accessRevision: "a")
+        let page = APITransactionPage(items: [], nextCursor: nil, totalCount: 0)
+        for index in 0..<55 { _ = try await cache.observe(.init(search: "merchant \(index)")) { page } }
+        XCTAssertLessThanOrEqual(try FileManager.default.contentsOfDirectory(atPath: directory.path).count, 50)
+    }
+
+    @MainActor
     func testLiveWorkspaceReadCacheSurvivesRelaunchWithoutInventingAuthority() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("live-cache-\(UUID().uuidString)", isDirectory: true)

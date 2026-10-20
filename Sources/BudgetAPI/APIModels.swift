@@ -1395,7 +1395,7 @@ public struct APIReportContributorPage: Decodable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey { case items; case nextCursor = "next_cursor" }
 }
 
-public struct APITransactionPage: Decodable, Equatable, Sendable {
+public struct APITransactionPage: Codable, Equatable, Sendable {
     public let items: [APITransaction]
     public let nextCursor: String?
     public let totalCount: Int
@@ -1462,7 +1462,7 @@ public struct APITransactionFieldChange: Decodable, Equatable, Sendable {
     }
 }
 
-public struct APITransactionQuery: Equatable, Sendable {
+public struct APITransactionQuery: Codable, Equatable, Sendable {
     public var transactionIDs: [String]
     public var transferIDs: [String]
     public var search: String
