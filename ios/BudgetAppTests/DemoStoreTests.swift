@@ -450,6 +450,48 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertFalse(register.contains("store.transactions(for: account)"))
     }
 
+    @MainActor
+    func testCategoryAndPayeePreviewsUseBoundedCanonicalQueriesIncludingSplits() async throws {
+        let source = DemoWorkspaceDataSource()
+        try await source.recordTransaction(.init(accountID: "checking", categoryID: nil, amountMinor: 1,
+            occurredOn: "2026-09-15", payeeName: "Preview merchant", memo: "", isCleared: false,
+            splits: [], flag: nil, tags: [], attachmentMetadata: []))
+        let all = try await source.browseTransactions(query: .init(limit: 200))
+        let split = try XCTUnwrap(all.items.first { !$0.splits.isEmpty })
+        let categoryID = try XCTUnwrap(split.splits.first?.categoryID)
+        let payeeID = try XCTUnwrap(all.items.first { $0.payeeName == "Preview merchant" }?.payeeID)
+        let accounts = source.demo.accounts, available = source.demo.unassignedMinor
+        let category = TransactionHistoryPager()
+        await category.load(query: .init(categoryIDs: [categoryID], limit: 20), reset: true) { query in
+            XCTAssertEqual(query.limit, 20)
+            return try await source.browseTransactions(query: query)
+        }
+        XCTAssertNil(category.errorMessage)
+        XCTAssertTrue(category.rows.contains { $0.id == split.id })
+        XCTAssertTrue(category.rows.allSatisfy { $0.categoryID == categoryID || $0.splits.contains { $0.categoryID == categoryID } })
+        let payee = TransactionHistoryPager()
+        await payee.load(query: .init(payeeIDs: [payeeID], limit: 10), reset: true) { query in
+            XCTAssertEqual(query.limit, 10)
+            return try await source.browseTransactions(query: query)
+        }
+        XCTAssertNil(payee.errorMessage)
+        XCTAssertFalse(payee.rows.isEmpty)
+        XCTAssertTrue(payee.rows.allSatisfy { $0.payeeID == payeeID })
+        XCTAssertEqual(source.demo.accounts, accounts)
+        XCTAssertEqual(source.demo.unassignedMinor, available)
+        let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("BudgetApp/BudgetWorkspaceView.swift")
+        let text = try String(contentsOf: file)
+        for name in ["PayeeEditorView", "LivePlanCategoryDetailView"] {
+            let start = try XCTUnwrap(text.range(of: "private struct \(name): View"))
+            let end = text.range(of: "\nprivate struct ", range: start.upperBound..<text.endIndex)?.lowerBound ?? text.endIndex
+            let view = String(text[start.lowerBound..<end])
+            XCTAssertTrue(view.contains("previewOnly: true, allowsQuickClearing: false"))
+            XCTAssertTrue(view.contains("View All Transactions"))
+            XCTAssertFalse(view.contains("store.transactions.filter"))
+            XCTAssertTrue(view.contains("recentHistory.clear()"))
+        }
+    }
+
     func testActivityOnlyPublishesAndFinishesLatestRefresh() throws {
         let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("BudgetApp/BudgetWorkspaceView.swift")
         let source = try String(contentsOf: file)

@@ -213,6 +213,7 @@ private struct PayeeEditorView: View {
     @State private var aliases: [APIPayeeAlias]
     @State private var errorMessage: String?
     @State private var isSaving = false
+    @StateObject private var recentHistory = TransactionHistoryPager()
 
     init(payee: APIPayee?, onCreated: @escaping (String) -> Void = { _ in }) {
         self.payee = payee
@@ -245,30 +246,15 @@ private struct PayeeEditorView: View {
                         }
                         .accessibilityIdentifier("payee-history")
                     }
-                    let history = store.transactions.filter { $0.payeeID == payee.id }
-                    if !history.isEmpty {
-                        Section("Recent transactions") {
-                            ForEach(history.prefix(10)) { transaction in LiveTransactionLink(transaction: transaction) }
-                            NavigationLink("View All Transactions") {
-                                HistoryAuthorityBoundary {
-                                    ScopedTransactionHistoryView(
-                                        title: payee.displayName,
-                                        filter: TransactionBrowserFilter(payeeID: payee.id, payeeName: payee.displayName))
-                                }
+                    Section("Recent transactions") {
+                        TransactionHistoryRows(history: recentHistory, previewOnly: true, allowsQuickClearing: false, onLoad: loadRecentHistory)
+                        NavigationLink("View All Transactions") {
+                            HistoryAuthorityBoundary {
+                                ScopedTransactionHistoryView(title: payee.displayName,
+                                    filter: TransactionBrowserFilter(payeeID: payee.id, payeeName: payee.displayName))
                             }
-                            .accessibilityIdentifier("payee-view-all-transactions")
                         }
-                    } else if payee.transactionCount > 0 {
-                        Section("Transactions") {
-                            NavigationLink("View All Transactions") {
-                                HistoryAuthorityBoundary {
-                                    ScopedTransactionHistoryView(
-                                        title: payee.displayName,
-                                        filter: TransactionBrowserFilter(payeeID: payee.id, payeeName: payee.displayName))
-                                }
-                            }
-                            .accessibilityIdentifier("payee-view-all-transactions")
-                        }
+                        .accessibilityIdentifier("payee-view-all-transactions")
                     }
                     Section("Aliases") {
                         ForEach(aliases) { alias in
@@ -296,6 +282,18 @@ private struct PayeeEditorView: View {
             }
             .alert("Unable to save payee", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) { Button("OK", role: .cancel) {} } message: { Text(errorMessage ?? "Unknown error") }
             .sheet(isPresented: $showMergeSelector) { PayeeSearchSelectionView(title: "Merge Into", excludedID: payee?.id) { selected in mergeDestinationID = selected.id; mergeDestinationName = selected.displayName } }
+            .task(id: store.reportRevision) { await loadRecentHistory(true) }
+            .onChange(of: store.authorityRevision) { _, _ in
+                recentHistory.clear()
+                Task { await loadRecentHistory(true) }
+            }
+        }
+    }
+
+    private func loadRecentHistory(_ reset: Bool) async {
+        guard let payee else { return }
+        await recentHistory.load(query: .init(payeeIDs: [payee.id], limit: 10), reset: reset) {
+            try await store.browseTransactions($0)
         }
     }
 
@@ -9559,9 +9557,9 @@ private struct LivePlanCategoryDetailView: View {
     @State private var showTarget = false
     @State private var transactionMode: CategoryTransactionMode?
     @State private var errorMessage: String?
+    @StateObject private var recentHistory = TransactionHistoryPager()
     private var row: APICategoryMonth? { store.summary?.categories.first { $0.categoryID == categoryID } }
     private var model: APICategory? { store.categories.first { $0.id == categoryID } }
-    private var transactions: [APITransaction] { store.transactions.filter { $0.categoryID == categoryID || $0.splits.contains(where: { $0.categoryID == categoryID }) } }
     private var operations: [(APIAllocationOperation, APIAllocationPosting)] { store.allocationOperations.flatMap { operation in operation.postings.filter { $0.categoryID == categoryID }.map { (operation, $0) } } }
     private var schedules: [APIScheduledTransaction] {
         store.scheduledTransactions.filter { $0.isActive && $0.categoryID == categoryID }
@@ -9588,8 +9586,7 @@ private struct LivePlanCategoryDetailView: View {
                 }
             }
             Section("Recent activity") {
-                if transactions.isEmpty { Text("No contributing transactions").foregroundStyle(.secondary) }
-                ForEach(transactions.prefix(20)) { LiveTransactionLink(transaction: $0) }
+                TransactionHistoryRows(history: recentHistory, previewOnly: true, allowsQuickClearing: false, onLoad: loadRecentHistory)
                 NavigationLink("View All Transactions") {
                     HistoryAuthorityBoundary(.category(categoryID)) {
                         ScopedTransactionHistoryView(
@@ -9628,6 +9625,17 @@ private struct LivePlanCategoryDetailView: View {
         .alert("Unable to update favorite", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
             Button("OK", role: .cancel) {}
         } message: { Text(errorMessage ?? "Unknown error") }
+        .task(id: store.reportRevision) { await loadRecentHistory(true) }
+        .onChange(of: store.authorityRevision) { _, _ in
+            recentHistory.clear()
+            Task { await loadRecentHistory(true) }
+        }
+    }
+
+    private func loadRecentHistory(_ reset: Bool) async {
+        await recentHistory.load(query: .init(categoryIDs: [categoryID], limit: 20), reset: reset) {
+            try await store.browseTransactions($0)
+        }
     }
 
     @ViewBuilder private func planSection(_ row: APICategoryMonth) -> some View {
@@ -10637,6 +10645,8 @@ private struct ScopedTransactionHistoryView: View {
 private struct TransactionHistoryRows: View {
     @ObservedObject var history: TransactionHistoryPager
     var showsRegisterBadges = false
+    var previewOnly = false
+    var allowsQuickClearing = true
     let onLoad: (Bool) async -> Void
 
     var body: some View {
@@ -10650,7 +10660,7 @@ private struct TransactionHistoryRows: View {
                 if history.errorMessage != nil { Button("Try Again") { Task { await onLoad(true) } } }
             } else {
                 ForEach(history.rows) { transaction in
-                    LiveTransactionLink(transaction: transaction, allowsQuickClearing: true) { await onLoad(true) }
+                    LiveTransactionLink(transaction: transaction, allowsQuickClearing: allowsQuickClearing) { await onLoad(true) }
                         .badge(showsRegisterBadges ? registerBadge(transaction) : "")
                 }
                 if let errorMessage = history.errorMessage {
@@ -10662,7 +10672,7 @@ private struct TransactionHistoryRows: View {
                         Button("Refresh List") { Task { await onLoad(true) } }
                     }
                     .accessibilityIdentifier("scoped-transaction-history-page-error")
-                } else if history.nextCursor != nil {
+                } else if history.nextCursor != nil && !previewOnly {
                     Button { Task { await onLoad(false) } } label: {
                         HStack {
                             Spacer()
@@ -10672,7 +10682,7 @@ private struct TransactionHistoryRows: View {
                     }
                     .disabled(history.loading)
                     .accessibilityIdentifier("scoped-transaction-history-load-more")
-                } else {
+                } else if !previewOnly {
                     Text("Showing \(history.rows.count) of \(history.totalCount)")
                         .font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity)
                 }
