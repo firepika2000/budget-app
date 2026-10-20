@@ -5550,6 +5550,45 @@ final class DemoStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testLocalStatementDuplicatesPreserveDistinctMemosAndNormalizePayeeIdentity() async throws {
+        let source = DemoWorkspaceDataSource()
+        let account = try XCTUnwrap(source.demo.accounts.first)
+        let before = source.demo.transactions
+        let staged = try await source.stageStatementImport(accountID: account.id,
+            data: Data("Date,Amount,Payee,Memo\n2026-09-15,-1.23,Café  Corner,First receipt\n2026-09-15,-1.23,CAFÉ CORNER,Second receipt\n2026-09-15,-1.23,Cafe\u{301} Corner,First receipt\n".utf8),
+            mapping: .init(sourceFormat: "csv", currencyCode: "USD", dateColumn: "Date", amountColumn: "Amount",
+                           payeeColumn: "Payee", memoColumn: "Memo", dateOrder: "ymd"))
+        XCTAssertEqual(source.demo.transactions, before, "Review must remain money neutral")
+        XCTAssertNil(staged.candidates[0].duplicateSourceRow)
+        XCTAssertNil(staged.candidates[1].duplicateSourceRow, "Different memo represents a distinct purchase")
+        XCTAssertEqual(staged.candidates[2].duplicateSourceRow, 2, "Canonical payee normalization must match the server")
+        let result = try await source.approveStatementImport(accountID: account.id, batchID: staged.id,
+            approval: .init(expectedVersion: staged.version, items: staged.candidates.map {
+                .init(sourceRow: $0.sourceRow, action: $0.duplicateSourceRow == nil ? "post" : "skip")
+            }))
+        XCTAssertEqual(result.candidates.compactMap(\.postedTransactionID).count, 2)
+        let posted = source.demo.transactions.filter { !Set(before.map(\.id)).contains($0.id) }
+        XCTAssertEqual(Set(posted.map(\.memo)), ["First receipt", "Second receipt"])
+        XCTAssertEqual(posted.map(\.amount), [-123, -123])
+    }
+
+    @MainActor
+    func testLocalStatementDuplicateIndexHandlesLargeDistinctMemoBatch() async throws {
+        let source = DemoWorkspaceDataSource(fresh: true)
+        source.demo.createAccount(name: "Statement scale", type: "checking", isOnBudget: true)
+        let account = try XCTUnwrap(source.demo.accounts.first)
+        let rows = (0..<1_001).map { "2026-09-15,-1.23,Same merchant,Receipt \($0)" }
+        let data = Data((["Date,Amount,Payee,Memo"] + rows + [rows[500]]).joined(separator: "\n").utf8)
+        let staged = try await source.stageStatementImport(accountID: account.id, data: data,
+            mapping: .init(sourceFormat: "csv", currencyCode: "USD", dateColumn: "Date", amountColumn: "Amount",
+                           payeeColumn: "Payee", memoColumn: "Memo", dateOrder: "ymd"))
+        XCTAssertEqual(staged.candidateCount, 1_002)
+        XCTAssertTrue(staged.candidates.prefix(1_001).allSatisfy { $0.duplicateSourceRow == nil })
+        XCTAssertEqual(staged.candidates.last?.duplicateSourceRow, 502)
+        XCTAssertTrue(source.demo.transactions.isEmpty)
+    }
+
+    @MainActor
     func testLocalStatementMatchingUsesSelectedAccountAndPostedRows() async throws {
         let source = DemoWorkspaceDataSource()
         let target = try XCTUnwrap(source.demo.accounts.first)

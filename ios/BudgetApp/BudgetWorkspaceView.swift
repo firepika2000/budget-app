@@ -1928,19 +1928,24 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
             $0.accountID == accountID && $0.status == "posted"
         }
         let includePayeeAliases = !actorHasResourceScope
+        struct StatementRowFingerprint: Hashable {
+            let date: String
+            let amount: Int64
+            let payee: String
+            let memo: String
+        }
+        var firstSourceRows: [StatementRowFingerprint: Int] = [:]
         func matchesPayee(_ transaction: DemoTransaction, candidatePayee: String) -> Bool {
-            let candidate = candidatePayee.trimmingCharacters(in: .whitespacesAndNewlines)
+            let candidate = LocalPayeeName.key(candidatePayee)
             var names = [transaction.payee]
             if includePayeeAliases,
                let payee = demo.payees.first(where: {
-                   $0.name.trimmingCharacters(in: .whitespacesAndNewlines)
-                       .caseInsensitiveCompare(transaction.payee.trimmingCharacters(in: .whitespacesAndNewlines)) == .orderedSame
+                   LocalPayeeName.key($0.name) == LocalPayeeName.key(transaction.payee)
                }) {
                 names.append(contentsOf: payee.aliases)
             }
             return names.contains {
-                $0.trimmingCharacters(in: .whitespacesAndNewlines)
-                    .caseInsensitiveCompare(candidate) == .orderedSame
+                LocalPayeeName.key($0) == candidate
             }
         }
         let candidates = parsed.map { candidate -> APIStatementImportCandidate in
@@ -1963,22 +1968,22 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
             let possible = possibleMatches.prefix(20).map(\.id)
             let suggestedCategoryID: String? = {
                 guard candidate.amountMinor < 0, includePayeeAliases else { return nil }
-                let key = candidate.payee.trimmingCharacters(in: .whitespacesAndNewlines)
+                let key = LocalPayeeName.key(candidate.payee)
                 return demo.payees.first(where: { payee in
                     !payee.isArchived && ([payee.name] + payee.aliases).contains {
-                        $0.trimmingCharacters(in: .whitespacesAndNewlines)
-                            .caseInsensitiveCompare(key) == .orderedSame
+                        LocalPayeeName.key($0) == key
                     }
                 })?.defaultCategoryID.flatMap { categoryID in
                     demo.visibleCategories.contains(where: { $0.id == categoryID }) ? categoryID : nil
                 }
             }()
             let suggestionsTruncated = exactMatches.count > exact.count || possibleMatches.count > possible.count
-            let duplicateSourceRow = parsed.first(where: { prior in
-                prior.sourceRow < candidate.sourceRow && prior.occurredOn == candidate.occurredOn &&
-                    prior.amountMinor == candidate.amountMinor &&
-                    prior.payee.caseInsensitiveCompare(candidate.payee) == .orderedSame
-            })?.sourceRow
+            // Match the server's memo-aware fingerprint. Distinct bank descriptions can
+            // represent legitimate repeated purchases, not duplicate source rows.
+            let fingerprint = StatementRowFingerprint(date: candidate.occurredOn, amount: candidate.amountMinor,
+                payee: LocalPayeeName.key(candidate.payee), memo: candidate.memo)
+            let duplicateSourceRow = firstSourceRows[fingerprint]
+            if duplicateSourceRow == nil { firstSourceRows[fingerprint] = candidate.sourceRow }
             return APIStatementImportCandidate(
                 sourceRow: candidate.sourceRow, occurredOn: candidate.occurredOn,
                 amountMinor: candidate.amountMinor, payee: candidate.payee, memo: candidate.memo,
