@@ -5,11 +5,51 @@ import pytest
 from sqlalchemy import event
 from sqlalchemy.orm import Session
 
-from app.models import Budget, Household, Membership, Payee, PayeeAlias, Transaction, TransactionChange, User
+from app.models import Budget, Category, Household, Membership, Payee, PayeeAlias, Transaction, TransactionChange, TransactionSplit, User
 from app.security import create_access_token, hash_password
 
 from .conftest import auth
 from .test_budgeting_api import create_budget, create_budget_structure
+
+
+def test_payee_category_suggestion_uses_last_three_eligible_purchases_without_ledger_loading(client, owner_token, session_factory):
+    budget = create_budget(client, owner_token, session_factory)
+    account, category = create_budget_structure(client, owner_token, budget["id"])
+    root = f"/api/v1/budgets/{budget['id']}"
+    payee = client.post(f"{root}/payees", headers=auth(owner_token), json={"display_name": "Older merchant"}).json()
+    with session_factory() as db:
+        owner_id = db.query(User.id).filter(User.email == "owner@example.com").scalar()
+        group_id = db.get(Category, category["id"]).group_id
+        other = Category(budget_id=budget["id"], group_id=group_id, name="Other")
+        archived = Category(budget_id=budget["id"], group_id=group_id, name="Archived", is_archived=True)
+        db.add_all([other, archived]); db.flush()
+        def add(day, category_id, amount=-1, **kwargs):
+            row = Transaction(budget_id=budget["id"], account_id=account["id"], category_id=category_id,
+                payee_id=payee["id"], amount_minor=amount, occurred_on=date(2026, 9, day),
+                payee_name="Older merchant", created_by_user_id=owner_id, **kwargs)
+            db.add(row); db.flush(); return row
+        add(1, other.id); add(2, category["id"]); add(3, category["id"])
+        add(4, other.id, amount=1)
+        add(5, other.id, status="voided")
+        add(6, other.id, transfer_id="transfer")
+        add(7, archived.id)
+        split = add(8, None)
+        db.add(TransactionSplit(transaction_id=split.id, category_id=other.id, amount_minor=-1))
+        db.commit()
+        before = [(row.id, row.amount_minor, row.category_id) for row in db.query(Transaction).order_by(Transaction.id)]
+    loaded = []
+    def observe(session, instance):
+        if isinstance(instance, Transaction): loaded.append(instance.id)
+    event.listen(Session, "loaded_as_persistent", observe)
+    try:
+        response = client.get(f"{root}/payees/{payee['id']}/category-suggestion", headers=auth(owner_token))
+    finally:
+        event.remove(Session, "loaded_as_persistent", observe)
+    assert response.status_code == 200, response.text
+    assert response.json() == {"category_id": category["id"]}
+    assert loaded == []
+    with session_factory() as db:
+        assert [(row.id, row.amount_minor, row.category_id) for row in db.query(Transaction).order_by(Transaction.id)] == before
 
 
 def test_payee_rename_and_merge_preserve_linked_schedule_decisions(client, owner_token, session_factory):
@@ -488,6 +528,21 @@ def test_category_scoped_payees_exclude_uncategorized_income_and_private_default
     assert owner_payee["transaction_count"] == 2
     assert owner_payee["net_amount_minor"] == 49900
     assert owner_payee["default_category_id"] == hidden["id"]
+    suggestion_path = f"{root}/payees/{visible_payee['id']}/category-suggestion"
+    assert client.get(suggestion_path, headers=auth(token)).status_code == 403
+    assert client.put(f"{root}/access/{member_id}", headers=auth(owner_token), json={
+        "capabilities": ["view_budget", "view_transactions", "view_categories"], "restrict_accounts": False, "account_ids": [],
+        "restrict_categories": True, "category_ids": [category["id"]],
+    }).status_code == 200
+    for _ in range(2):
+        response = client.post(f"{root}/transactions", headers=auth(owner_token), json={
+            "account_id": account["id"], "category_id": hidden["id"], "payee_id": visible_payee["id"],
+            "amount_minor": -1, "occurred_on": "2026-09-15",
+        })
+        assert response.status_code == 201, response.text
+    assert client.get(suggestion_path, headers=auth(owner_token)).json() == {"category_id": hidden["id"]}
+    assert client.get(suggestion_path, headers=auth(token)).json() == {"category_id": None}
+    assert client.get(f"{root}/payees/{private_payee['id']}/category-suggestion", headers=auth(token)).status_code == 404
 
 
 def test_free_text_does_not_resurrect_archived_payee(client, owner_token, session_factory):

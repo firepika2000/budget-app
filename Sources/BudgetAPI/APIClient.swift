@@ -325,6 +325,11 @@ public struct APIClient {
     public func reorderCategoryGroups(budgetID: String, orderedIDs: [String], token: String) async throws -> [APICategoryGroup] { try await send(path: "api/v1/budgets/\(budgetID)/category-group-order", method: "PUT", token: token, body: APIOrderedIDsUpdate(orderedIDs: orderedIDs)) }
     public func reorderCategories(budgetID: String, groupID: String, orderedIDs: [String], token: String) async throws -> [APICategory] { try await send(path: "api/v1/budgets/\(budgetID)/category-order/\(groupID)", method: "PUT", token: token, body: APIOrderedIDsUpdate(orderedIDs: orderedIDs)) }
 
+    public func payeeCategorySuggestion(budgetID: String, payeeID: String, token: String) async throws -> String? {
+        let value: APIPayeeCategorySuggestion = try await send(path: "api/v1/budgets/\(budgetID)/payees/\(payeeID)/category-suggestion", token: token)
+        return value.categoryID
+    }
+
     public func transactions(budgetID: String, token: String) async throws -> [APITransaction] {
         try await send(path: "api/v1/budgets/\(budgetID)/transactions", token: token)
     }

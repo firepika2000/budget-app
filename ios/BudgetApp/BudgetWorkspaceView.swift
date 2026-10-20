@@ -2542,6 +2542,18 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
                     "aliases": (scoped ? [] : item.aliases).map { ["id": LocalPayeeIdentity.aliasID($0, for: item), "display_name": $0] }] as [String: Any]
         })
     }
+    func suggestedCategoryID(payeeID: String) async throws -> String? {
+        try requireActiveMembership()
+        try requireTransactionCapability("view_transactions")
+        guard actorCapabilities.contains("view_categories") else { return nil }
+        let eligible = Set(demo.categories.filter { !$0.isHidden }.map(\.id)).intersection(actorCategoryIDs)
+        let rows = try transactionRows(categoryIDs: actorCategoryIDs).filter {
+            $0.payeeID == payeeID && $0.amountMinor < 0 && $0.transferID == nil && $0.reversalOfTransactionID == nil
+                && ($0.status ?? "posted") == "posted" && $0.splits.isEmpty && $0.categoryID.map(eligible.contains) == true
+        }.sorted { ($0.occurredOn, $0.createdAt ?? "", $0.id) > ($1.occurredOn, $1.createdAt ?? "", $1.id) }.prefix(3)
+        let counts = Dictionary(grouping: rows.compactMap(\.categoryID), by: { $0 }).mapValues(\.count)
+        return counts.filter { $0.value >= 2 }.sorted { $0.value == $1.value ? $0.key < $1.key : $0.value > $1.value }.first?.key
+    }
     func searchPayees(query: String, includeArchived: Bool, limit: Int, cursor: String?) async throws -> APIPayeePage { try requireActiveMembership();
         guard actorCapabilities.contains("view_transactions") else { throw APIClientError.server(status: 403, message: "Insufficient permission") }
         guard (1...50).contains(limit), query.count <= 150,
@@ -4093,6 +4105,7 @@ private final class LiveWorkspaceCommandRepository: WorkspaceCommandRepository {
         lastTransactionReadWasCached = result.cached
         return result.page
     }
+    func suggestedCategoryID(payeeID: String) async throws -> String? { try await credentials.prepare(); return try await client.payeeCategorySuggestion(budgetID: budget.id, payeeID: payeeID, token: token) }
     func searchPayees(query: String, includeArchived: Bool, limit: Int, cursor: String?) async throws -> APIPayeePage { try await credentials.prepare(); return try await client.searchPayees(budgetID: budget.id, query: query, includeArchived: includeArchived, limit: limit, cursor: cursor, token: token) }
 
     func createPayee(_ operation: CreatePayeeOperation) async throws { try await credentials.prepare(); _ = try await client.createPayee(budgetID: budget.id, payee: APIPayeeCreate(displayName: operation.displayName, defaultCategoryID: operation.defaultCategoryID), token: token) }
@@ -5509,24 +5522,9 @@ final class BudgetWorkspaceStore: ObservableObject {
 
     func createPayee(_ operation: CreatePayeeOperation) async throws { try await services().payees.create(operation); await refresh() }
     func searchPayees(query: String = "", includeArchived: Bool = false, limit: Int = 20, cursor: String? = nil) async throws -> APIPayeePage { try await authorizedObservation { try await services().payees.search(query: query, includeArchived: includeArchived, limit: limit, cursor: cursor) } }
-    func suggestedCategoryID(forPayeeID payeeID: String) -> String? {
-        let eligibleCategories = Set(categories.filter { !$0.isArchived }.map(\.id))
-        let recent = transactions.filter { transaction in
-            transaction.payeeID == payeeID
-                && transaction.amountMinor < 0
-                && transaction.transferID == nil
-                && transaction.reversalOfTransactionID == nil
-                && (transaction.status == nil || transaction.status == "posted")
-                && transaction.splits.isEmpty
-                && transaction.categoryID.map(eligibleCategories.contains) == true
-        }.sorted {
-            ($0.occurredOn, $0.createdAt ?? "", $0.id) > ($1.occurredOn, $1.createdAt ?? "", $1.id)
-        }.prefix(3)
-        let counts = Dictionary(grouping: recent.compactMap(\.categoryID), by: { $0 }).mapValues(\.count)
-        return counts.filter { $0.value >= 2 }.sorted { left, right in
-            if left.value != right.value { return left.value > right.value }
-            return left.key < right.key
-        }.first?.key
+    func suggestedCategoryID(forPayeeID payeeID: String) async -> String? {
+        guard budget.can("view_transactions"), budget.can("view_categories") else { return nil }
+        return try? await authorizedObservation { try await services().payees.suggestedCategoryID(payeeID: payeeID) }
     }
     func updatePayee(_ operation: UpdatePayeeOperation) async throws { try await services().payees.update(operation); await refresh() }
     func mergePayee(sourceID: String, destinationID: String) async throws { try await services().payees.merge(sourceID: sourceID, destinationID: destinationID); await refresh() }

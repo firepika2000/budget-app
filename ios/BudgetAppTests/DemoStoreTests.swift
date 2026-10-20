@@ -3524,9 +3524,16 @@ final class DemoStoreTests: XCTestCase {
         let store = BudgetWorkspaceStore.demo()
         await store.refresh()
 
-        XCTAssertEqual(store.suggestedCategoryID(forPayeeID: DemoStore.payeeID("Fresh Market")), "groceries")
-        XCTAssertNil(store.suggestedCategoryID(forPayeeID: DemoStore.payeeID("Payroll")))
-        XCTAssertNil(store.suggestedCategoryID(forPayeeID: "missing-payee"))
+        store.transactions.removeAll()
+        let merchant = await store.suggestedCategoryID(forPayeeID: DemoStore.payeeID("Fresh Market"))
+        let payroll = await store.suggestedCategoryID(forPayeeID: DemoStore.payeeID("Payroll"))
+        let missing = await store.suggestedCategoryID(forPayeeID: "missing-payee")
+        XCTAssertEqual(merchant, "groceries")
+        XCTAssertNil(payroll)
+        XCTAssertNil(missing)
+        let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("BudgetApp/EditingViews.swift")
+        let text = try? String(contentsOf: file)
+        XCTAssertTrue(text?.contains("guard suggestionRequestID == requestID, payeeID == item.id, categoryID == nil") == true)
     }
 
     @MainActor

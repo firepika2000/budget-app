@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+from collections import Counter
 from typing import Iterator, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -22,6 +23,27 @@ from .schemas import PayeeAliasCreate, PayeeAliasResponse, PayeeCreate, PayeeMer
 
 
 router = APIRouter(prefix="/api/v1/budgets/{budget_id}")
+
+
+@router.get("/payees/{payee_id}/category-suggestion")
+def payee_category_suggestion(budget_id: str, payee_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> dict:
+    budget = require_budget_capability(db, user, budget_id, "view_transactions")
+    require_budget_capability(db, user, budget_id, "view_categories")
+    payee = _payee(db, budget, payee_id)
+    conditions = _visible_transaction_conditions(user, budget, db)
+    scoped = (visible_resource_ids(db, user, budget, "account") is not None or
+              visible_resource_ids(db, user, budget, "category") is not None)
+    if scoped and db.scalar(select(Transaction.id).where(*conditions, Transaction.payee_id == payee.id).limit(1)) is None:
+        raise HTTPException(status_code=404, detail="Payee not found")
+    recent = list(db.scalars(select(Transaction.category_id).join(Category, Transaction.category_id == Category.id).where(
+        *conditions, Transaction.payee_id == payee.id, Transaction.amount_minor < 0,
+        Transaction.transfer_id.is_(None), Transaction.reversal_of_transaction_id.is_(None),
+        Transaction.status == "posted", ~Transaction.splits.any(), Category.budget_id == budget.id,
+        Category.is_archived.is_(False),
+    ).order_by(Transaction.occurred_on.desc(), Transaction.created_at.desc(), Transaction.id.desc()).limit(3)))
+    counts = Counter(recent)
+    ranked = sorted((category for category, count in counts.items() if count >= 2), key=lambda category: (-counts[category], category))
+    return {"category_id": ranked[0] if ranked else None}
 
 
 def _payee(db: Session, budget: Budget, payee_id: str) -> Payee:

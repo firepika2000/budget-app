@@ -2,6 +2,18 @@ import XCTest
 @testable import BudgetAPI
 
 final class APIClientTests: XCTestCase {
+    func testPayeeCategorySuggestionUsesScopedIdentityAndOptionalResult() async throws {
+        let configuration = URLSessionConfiguration.ephemeral; configuration.protocolClasses = [MockURLProtocol.self]
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/api/v1/budgets/b/payees/p/category-suggestion")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer current")
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, Data(#"{"category_id":"groceries"}"#.utf8))
+        }
+        let client = try APIClient(baseURL: URL(string: "https://example.com")!, session: URLSession(configuration: configuration))
+        let value = try await client.payeeCategorySuggestion(budgetID: "b", payeeID: "p", token: "current")
+        XCTAssertEqual(value, "groceries")
+        XCTAssertNil(try JSONDecoder().decode(APIPayeeCategorySuggestion.self, from: Data(#"{"category_id":null}"#.utf8)).categoryID)
+    }
     func testTransferIdentitySearchEncodesFilterAndRejectsIgnoredSelection() async throws {
         let configuration = URLSessionConfiguration.ephemeral; configuration.protocolClasses = [MockURLProtocol.self]
         var matches = true

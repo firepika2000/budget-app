@@ -1519,6 +1519,7 @@ protocol TransactionBrowserRepository: AnyObject {
 
 @MainActor
 protocol PayeeCommandRepository: AnyObject {
+    func suggestedCategoryID(payeeID: String) async throws -> String?
     func searchPayees(query: String, includeArchived: Bool, limit: Int, cursor: String?) async throws -> APIPayeePage
     func createPayee(_ operation: CreatePayeeOperation) async throws
     func updatePayee(_ operation: UpdatePayeeOperation) async throws
@@ -1871,6 +1872,10 @@ struct BudgetApplicationServices {
 struct PayeeService {
     private let repository: any PayeeCommandRepository
     init(repository: any PayeeCommandRepository) { self.repository = repository }
+    func suggestedCategoryID(payeeID: String) async throws -> String? {
+        do { return try await repository.suggestedCategoryID(payeeID: payeeID) }
+        catch { throw BudgetApplicationError.map(error) }
+    }
     func search(query: String = "", includeArchived: Bool = false, limit: Int = 20, cursor: String? = nil) async throws -> APIPayeePage {
         do { return try await repository.searchPayees(query: query, includeArchived: includeArchived, limit: limit, cursor: cursor) }
         catch { throw BudgetApplicationError.map(error) }

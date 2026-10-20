@@ -1395,6 +1395,11 @@ public struct APIReportContributorPage: Decodable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey { case items; case nextCursor = "next_cursor" }
 }
 
+public struct APIPayeeCategorySuggestion: Codable, Equatable, Sendable {
+    public let categoryID: String?
+    enum CodingKeys: String, CodingKey { case categoryID = "category_id" }
+}
+
 public struct APITransactionPage: Codable, Equatable, Sendable {
     public let items: [APITransaction]
     public let nextCursor: String?
