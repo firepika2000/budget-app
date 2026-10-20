@@ -7,9 +7,93 @@ import BudgetStorage
 import CryptoKit
 import ImageIO
 import UniformTypeIdentifiers
+import UserNotifications
 @testable import Budget_App
 
 final class DemoStoreTests: XCTestCase {
+    @MainActor
+    func testScheduledRemindersDisableSupersedesPendingAuthorization() async throws {
+        let suite = "Reminders.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let client = ReminderNotificationFixture()
+        client.holdAuthorization = true
+        let started = expectation(description: "Authorization started")
+        client.onAuthorize = { started.fulfill() }
+        let settings = ScheduledReminderSettings(budgetID: "b", defaults: defaults, notifications: client)
+        let enable = Task { await settings.setEnabled(true, schedules: []) }
+        await fulfillment(of: [started], timeout: 2)
+        await settings.setEnabled(false, schedules: [])
+        let continuation = try XCTUnwrap(client.authorization)
+        client.authorization = nil; continuation.resume(returning: true)
+        await enable.value
+        XCTAssertFalse(settings.isEnabled)
+        XCTAssertFalse(defaults.bool(forKey: "clearpocket.scheduled-reminders.b"))
+        XCTAssertTrue(client.requests.isEmpty)
+    }
+
+    @MainActor
+    func testScheduledRemindersDisableCleansLateAddsAndPreservesOtherRequests() async throws {
+        let suite = "Reminders.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let client = ReminderNotificationFixture()
+        client.holdAdd = true
+        client.requests["another-app-feature"] = UNNotificationRequest(identifier: "another-app-feature",
+            content: UNMutableNotificationContent(), trigger: nil)
+        let started = expectation(description: "Add started")
+        client.onAdd = { started.fulfill() }
+        let schedule = try makeReminderSchedule(id: "one")
+        let settings = ScheduledReminderSettings(budgetID: "b", defaults: defaults, notifications: client)
+        let enable = Task { await settings.setEnabled(true, schedules: [schedule]) }
+        await fulfillment(of: [started], timeout: 2)
+        let disable = Task { await settings.setEnabled(false, schedules: []) }
+        for _ in 0..<100 where settings.isEnabled { await Task.yield() }
+        XCTAssertFalse(settings.isEnabled)
+        let continuation = try XCTUnwrap(client.addition)
+        client.addition = nil; continuation.resume()
+        await enable.value; await disable.value
+        XCTAssertEqual(Set(client.requests.keys), ["another-app-feature"])
+        XCTAssertEqual(client.addCount, 1)
+    }
+
+    @MainActor
+    func testScheduledRemindersRemainBoundedPrivateAndReportAddFailures() async throws {
+        let suite = "Reminders.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let client = ReminderNotificationFixture()
+        let settings = ScheduledReminderSettings(budgetID: "b", defaults: defaults, notifications: client)
+        var schedules = try (0..<70).map { try makeReminderSchedule(id: String(format: "s%03d", $0)) }
+        schedules.append(try makeReminderSchedule(id: "paused", active: false))
+        schedules.append(try makeReminderSchedule(id: "foreign", budget: "private"))
+        await settings.setEnabled(true, schedules: schedules)
+        XCTAssertEqual(client.requests.count, 50)
+        XCTAssertNil(client.requests["clearpocket.schedule.b.paused"])
+        XCTAssertNil(client.requests["clearpocket.schedule.b.foreign"])
+        for request in client.requests.values {
+            XCTAssertEqual(request.content.title, "ClearPocket reminder")
+            XCTAssertEqual(request.content.body, "A scheduled budget item is due today.")
+            XCTAssertTrue(request.content.userInfo.isEmpty)
+        }
+        client.failAdd = true
+        await settings.synchronize([try makeReminderSchedule(id: "failure")])
+        XCTAssertNotNil(settings.errorMessage)
+        client.failAdd = false
+        await settings.synchronize([try makeReminderSchedule(id: "retry")])
+        XCTAssertNil(settings.errorMessage)
+        XCTAssertEqual(Set(client.requests.keys), ["clearpocket.schedule.b.retry"])
+    }
+
+    private func makeReminderSchedule(id: String, budget: String = "b", active: Bool = true) throws -> APIScheduledTransaction {
+        let date = BudgetWorkspaceStore.dateString(Date().addingTimeInterval(86_400))
+        return try JSONDecoder().decode(APIScheduledTransaction.self, from: JSONSerialization.data(withJSONObject: [
+            "id": id, "budget_id": budget, "account_id": "private-account", "name": "Private merchant",
+            "amount_minor": -123, "next_date": date, "recurrence_unit": "months", "interval_count": 1,
+            "memo": "Private memo", "is_active": active
+        ]))
+    }
+
     @MainActor
     func testIndexedStatementMatchesEqualExhaustiveReviewAcrossLargeHistory() {
         let base = BudgetWorkspaceStore.parseDate("2026-09-01")
@@ -6514,6 +6598,30 @@ private final class TransferRequestRecorder: @unchecked Sendable {
     var authorizations: [String] {
         lock.lock(); defer { lock.unlock() }
         return recordedAuthorizations
+    }
+}
+
+@MainActor
+private final class ReminderNotificationFixture: ScheduledReminderNotificationClient {
+    var holdAuthorization = false, holdAdd = false, failAdd = false
+    var authorization: CheckedContinuation<Bool, Never>?
+    var addition: CheckedContinuation<Void, Never>?
+    var onAuthorize: (() -> Void)?, onAdd: (() -> Void)?
+    var requests: [String: UNNotificationRequest] = [:]
+    var addCount = 0
+    func authorize() async throws -> Bool {
+        if holdAuthorization {
+            return await withCheckedContinuation { authorization = $0; onAuthorize?() }
+        }
+        return true
+    }
+    func pendingIdentifiers() async -> [String] { Array(requests.keys) }
+    func remove(_ identifiers: [String]) { for id in identifiers { requests.removeValue(forKey: id) } }
+    func add(_ request: UNNotificationRequest) async throws {
+        addCount += 1
+        if holdAdd { await withCheckedContinuation { addition = $0; onAdd?() } }
+        if failAdd { throw URLError(.cannotWriteToFile) }
+        requests[request.identifier] = request
     }
 }
 
