@@ -1,5 +1,6 @@
 import BudgetAPI
 import BudgetCore
+import BudgetStorage
 import Foundation
 import CryptoKit
 import Combine
@@ -410,6 +411,61 @@ enum HistoryObservationPolicy {
         switch BudgetApplicationError.map(error) {
         case .permissionDenied, .notFound: return true
         default: return false
+        }
+    }
+}
+
+/// Display-only projection of local immutable audit snapshots. Never return raw snapshots or IDs.
+enum LocalTransactionHistoryProjection {
+    static func changes(_ record: LocalTransactionChangeRecord, accounts: [String: String],
+                        categories: [String: String], payees: [String: String]) -> [[String: Any]] {
+        func object(_ raw: String?) -> [String: Any]? {
+            guard let raw, let data = raw.data(using: .utf8),
+                  let result = try? JSONSerialization.jsonObject(with: data) as? [String: Any], !result.isEmpty else { return nil }
+            return result
+        }
+        guard let before = object(record.beforeJSON), let after = object(record.afterJSON) else { return [] }
+        func visible(_ value: [String: Any]) -> Bool {
+            guard let account = value["account_id"] as? String, accounts[account] != nil else { return false }
+            if let category = value["category_id"], !(category is NSNull),
+               (category as? String).flatMap({ categories[$0] }) == nil { return false }
+            if let raw = value["splits"], !(raw is NSNull) {
+                guard let splits = raw as? [[String: Any]], splits.allSatisfy({
+                    ($0["category_id"] as? String).flatMap({ categories[$0] }) != nil
+                }) else { return false }
+            }
+            return true
+        }
+        func display(_ field: String, _ value: Any?, snapshot: [String: Any]) -> (String?, String) {
+            guard let value, !(value is NSNull) else { return (nil, "text") }
+            guard visible(snapshot) else { return ("Private or unavailable", "restricted") }
+            switch field {
+            case "account_id": return ((value as? String).flatMap { accounts[$0] } ?? "Unavailable item", "text")
+            case "category_id": return ((value as? String).flatMap { categories[$0] } ?? "Unavailable item", "text")
+            case "payee_id": return ((value as? String).flatMap { payees[$0] } ?? "Unavailable item", "text")
+            case "amount_minor":
+                guard let number = value as? NSNumber, String(cString: number.objCType) != "c",
+                      let exact = Int64(number.stringValue) else { return (nil, "money_minor") }
+                return (String(exact), "money_minor")
+            case "is_cleared", "is_reconciled":
+                guard let number = value as? NSNumber, String(cString: number.objCType) == "c" else { return (nil, "state") }
+                return (field == "is_cleared" ? (number.boolValue ? "Cleared" : "Uncleared") :
+                    (number.boolValue ? "Reconciled" : "Not reconciled"), "state")
+            case "occurred_on": return (value as? String, "date")
+            case "tags": return ((value as? [String]).map { $0.map { "#\($0)" }.joined(separator: " ") }, "list")
+            case "splits":
+                guard let splits = value as? [[String: Any]] else { return (nil, "state") }
+                return ("\(splits.count) split line\(splits.count == 1 ? "" : "s")", "state")
+            default: return (value as? String, "text")
+            }
+        }
+        let allowed: Set<String> = ["account_id", "category_id", "payee_id", "payee_name", "amount_minor",
+            "occurred_on", "memo", "financial_classification", "is_cleared", "is_reconciled", "flag", "tags", "status", "void_reason", "splits"]
+        return record.changedFields.filter { allowed.contains($0) }.map { field in
+            let old = display(field, before[field], snapshot: before)
+            let new = display(field, after[field], snapshot: after)
+            return ["field": field, "value_kind": old.1 == "restricted" || new.1 == "restricted" ? "restricted" : (new.0 == nil ? old.1 : new.1),
+                    "before_value": old.0.map { $0 as Any } ?? NSNull(), "after_value": new.0.map { $0 as Any } ?? NSNull()]
         }
     }
 }

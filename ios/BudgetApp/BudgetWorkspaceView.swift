@@ -1179,6 +1179,7 @@ final class DemoWorkspaceDataSource: WorkspaceDataSource {
     }
 
     func forecast(days: Int) async throws -> APIForecast {
+        try requireActiveMembership()
         guard (1...366).contains(days) else { throw workspaceRepositoryError("Forecast horizon must be between 1 and 366 days.") }
         let start = Date.demo(monthsAgo: 0, day: 5)
         let query = WorkspaceReportQuery(start: start, end: start, accountID: "", categoryID: "", categoryGroup: "", payee: "", memberID: "", transactionType: "", cleared: "all", flag: "", tag: "", spendingTrendDimension: "category", includeTracking: false)
@@ -2804,13 +2805,16 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
                 limit: limit, offset: offset
             )
             if !rows.isEmpty {
+                let project = try localTransactionChangeProjection()
                 return try rows.map { item in
-                    try decode([
+                    let changes = project(item)
+                    return try decode([
                         "id": item.id, "action": item.action,
                         "actor_user_id": item.actorUserID,
                         "actor_display_name": item.actorUserID == localIdentity.ownerUserID
                             ? localIdentity.ownerDisplayName : NSNull(),
-                        "changed_fields": item.changedFields,
+                        "changed_fields": changes.compactMap { $0["field"] as? String },
+                        "changes": changes,
                         "created_at": item.createdAt,
                     ] as [String: Any])
                 }
@@ -2833,8 +2837,10 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
             let rows = try await localAuthority.recentTransactionChanges(
                 budgetID: localIdentity.budgetID, limit: 25
             ).filter { visibleByID[$0.transactionID] != nil }.prefix(limit)
+            let project = try localTransactionChangeProjection()
             return try rows.map { item in
                 let transaction = visibleByID[item.transactionID]!
+                let changes = project(item)
                 return try decode([
                     "id": item.id, "transaction_id": item.transactionID,
                     "transaction_payee_name": transaction.payee,
@@ -2842,7 +2848,8 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
                     "action": item.action, "actor_user_id": item.actorUserID,
                     "actor_display_name": item.actorUserID == localIdentity.ownerUserID
                         ? localIdentity.ownerDisplayName : "Household member",
-                    "changed_fields": item.changedFields,
+                    "changed_fields": changes.compactMap { $0["field"] as? String },
+                    "changes": changes,
                     "created_at": item.createdAt,
                 ] as [String: Any])
             }
@@ -2859,6 +2866,13 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
                 "created_at": ISO8601DateFormatter().string(from: transaction.date),
             ] as [String: Any])
         }
+    }
+    private func localTransactionChangeProjection() throws -> (LocalTransactionChangeRecord) -> [[String: Any]] {
+        let visibleAccounts = actorAccountIDs, visibleCategories = actorCategoryIDs
+        let accounts = Dictionary(demo.accounts.filter { visibleAccounts.contains($0.id) }.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
+        let categories = Dictionary(demo.categories.filter { visibleCategories.contains($0.id) }.map { ($0.id, "\($0.group) · \($0.name)") }, uniquingKeysWith: { first, _ in first })
+        let payees = Dictionary(try payeeObservations(includeArchived: true).map { ($0.id, $0.displayName) }, uniquingKeysWith: { first, _ in first })
+        return { LocalTransactionHistoryProjection.changes($0, accounts: accounts, categories: categories, payees: payees) }
     }
     func uploadTransactionAttachment(id: String, filename: String, contentType: String, data: Data) async throws { try requireActiveMembership();
         let transaction = try attachmentTransaction(id: id, editing: true)
@@ -3270,6 +3284,7 @@ extension DemoWorkspaceDataSource: WorkspaceCommandRepository {
         ] as [String: Any])
     }
     func debtPayoffPlanHistory(limit: Int, offset: Int) async throws -> [APIDebtPayoffPlanRevision] {
+        try requireActiveMembership()
         _ = try await debtPayoffPlan()
         guard (1...100).contains(limit), offset >= 0 else { throw workspaceRepositoryError("Invalid history page.") }
         let visibleIDs = Set(demo.accounts.filter { actorAccountIDs.contains($0.id) && [.credit, .loan, .mortgage].contains($0.kind) }.map(\.id))

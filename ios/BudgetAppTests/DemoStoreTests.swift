@@ -11,6 +11,57 @@ import UserNotifications
 @testable import Budget_App
 
 final class DemoStoreTests: XCTestCase {
+    func testLocalTransactionHistoryProjectsExactValuesAndRedactsHistoricalScope() throws {
+        let before = #"{"account_id":"a","category_id":"hidden","amount_minor":9007199254740993,"memo":"private old memo","is_cleared":false,"tags":["private"],"transfer_id":"internal-old"}"#
+        let after = #"{"account_id":"a","category_id":"food","amount_minor":9007199254740995,"memo":"visible memo","is_cleared":true,"tags":["qa"],"transfer_id":"internal-new"}"#
+        let record = LocalTransactionChangeRecord(id: "change", budgetID: "budget", transactionID: "t", actorUserID: "u",
+            action: "updated", beforeJSON: before, afterJSON: after, createdAt: "2026-10-20T00:00:00Z")
+        let rows = LocalTransactionHistoryProjection.changes(record, accounts: ["a": "Checking"],
+            categories: ["food": "Everyday · Food"], payees: [:])
+        let amount = try XCTUnwrap(rows.first { $0["field"] as? String == "amount_minor" })
+        XCTAssertEqual(amount["before_value"] as? String, "Private or unavailable")
+        XCTAssertEqual(amount["after_value"] as? String, "9007199254740995")
+        XCTAssertEqual(amount["value_kind"] as? String, "restricted")
+        let encoded = try JSONSerialization.data(withJSONObject: rows)
+        let text = try XCTUnwrap(String(data: encoded, encoding: .utf8))
+        for secret in ["private old memo", "internal-old", "internal-new", "9007199254740993"] { XCTAssertFalse(text.contains(secret)) }
+        XCTAssertFalse(rows.contains { $0["field"] as? String == "transfer_id" })
+        let visible = LocalTransactionHistoryProjection.changes(record, accounts: ["a": "Checking"],
+            categories: ["food": "Everyday · Food", "hidden": "Old · Category"], payees: [:])
+        let exact = try XCTUnwrap(visible.first { $0["field"] as? String == "amount_minor" })
+        XCTAssertEqual(exact["before_value"] as? String, "9007199254740993")
+        XCTAssertEqual(exact["value_kind"] as? String, "money_minor")
+        let clearing = try XCTUnwrap(visible.first { $0["field"] as? String == "is_cleared" })
+        XCTAssertEqual(clearing["before_value"] as? String, "Uncleared")
+        XCTAssertEqual(clearing["after_value"] as? String, "Cleared")
+        XCTAssertEqual(visible.first { $0["field"] as? String == "tags" }?["after_value"] as? String, "#qa")
+    }
+
+    func testLocalTransactionHistoryDoesNotExposeMalformedOrCreationSnapshots() {
+        for raw in [nil, "[]", "not json", "{}"] as [String?] {
+            let record = LocalTransactionChangeRecord(id: "change", budgetID: "b", transactionID: "t", actorUserID: "u",
+                action: "created", beforeJSON: raw, afterJSON: #"{"memo":"secret"}"#, createdAt: "now")
+            XCTAssertTrue(LocalTransactionHistoryProjection.changes(record, accounts: [:], categories: [:], payees: [:]).isEmpty)
+        }
+    }
+
+    func testLocalTransactionHistoryRedactsHiddenAccountsAndSplitCategories() {
+        let after = #"{"account_id":"a","memo":"current","splits":[]}"#
+        for before in [
+            #"{"account_id":"private-account","memo":"secret","splits":[]}"#,
+            #"{"account_id":"a","memo":"secret","splits":[{"category_id":"private-category","amount_minor":-1}]}"#,
+            #"{"account_id":"a","memo":"secret","splits":[{"amount_minor":-1}]}"#
+        ] {
+            let record = LocalTransactionChangeRecord(id: "c", budgetID: "b", transactionID: "t", actorUserID: "u",
+                action: "updated", beforeJSON: before, afterJSON: after, createdAt: "now")
+            let changes = LocalTransactionHistoryProjection.changes(record, accounts: ["a": "Checking"], categories: [:], payees: [:])
+            let memo = changes.first { $0["field"] as? String == "memo" }
+            XCTAssertEqual(memo?["before_value"] as? String, "Private or unavailable")
+            XCTAssertEqual(memo?["after_value"] as? String, "current")
+            XCTAssertEqual(memo?["value_kind"] as? String, "restricted")
+        }
+    }
+
     @MainActor
     func testCanonicalClearingAndReconciliationRefreshSharedAuditHistories() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("audit-refresh-\(UUID().uuidString)")
@@ -58,6 +109,11 @@ final class DemoStoreTests: XCTestCase {
         await reopened.refresh()
         let persisted = try await reopened.transactionHistory(id: transaction.id)
         XCTAssertGreaterThan(persisted.count, oldChanges)
+        let clearingDetails = persisted.flatMap { $0.changes ?? [] }.filter { $0.field == "is_cleared" }
+        XCTAssertTrue(clearingDetails.contains { $0.beforeValue == "Uncleared" && $0.afterValue == "Cleared" })
+        let recent = try await reopened.recentTransactionChanges(limit: 25)
+        let recentDetails: [APITransactionFieldChange] = recent.flatMap { $0.changes ?? [] }
+        XCTAssertTrue(recentDetails.contains { $0.field == "is_reconciled" && $0.afterValue == "Reconciled" })
         let persistedReconciliations = try await reopened.reconciliationHistory(accountID: account.id)
         XCTAssertEqual(persistedReconciliations.count, reconciliations.rows.count)
     }

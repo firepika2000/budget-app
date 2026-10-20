@@ -673,9 +673,14 @@ final class FinancialGoldenVectorTests: XCTestCase {
         let start = try XCTUnwrap(text.range(of: "final class DemoWorkspaceDataSource:"))
         let end = try XCTUnwrap(text.range(of: "private func workspaceRepositoryError"))
         let lines = text[start.lowerBound..<end.lowerBound].components(separatedBy: "\n")
-        let entries = lines.filter { $0.hasPrefix("    func ") && $0.contains("async throws") }
+        let entries = lines.indices.filter { lines[$0].hasPrefix("    func ") && lines[$0].contains("async throws") }
         XCTAssertGreaterThan(entries.count, 50)
-        for entry in entries { XCTAssertTrue(entry.contains("{ try requireActiveMembership();"), "Unguarded provider entry: \(entry)") }
+        for index in entries {
+            let opening = lines[index...min(index + 1, lines.count - 1)].joined(separator: "\n")
+            let body = opening.split(separator: "{", maxSplits: 1).last.map(String.init) ?? ""
+            XCTAssertTrue(body.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("try requireActiveMembership()"),
+                          "Unguarded provider entry: \(lines[index])")
+        }
     }
 
     @MainActor
