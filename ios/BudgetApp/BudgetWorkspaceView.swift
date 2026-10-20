@@ -6151,6 +6151,10 @@ final class BudgetWorkspaceStore: ObservableObject {
         return groupName.map { "\($0) · \(category.name)" } ?? category.name
     }
 
+    func categoryDisplayName(_ category: APICategoryMonth) -> String {
+        categories.first(where: { $0.id == category.categoryID }).map(categoryDisplayName) ?? category.name
+    }
+
     func balance(for account: APIAccount) -> Int64 {
         accountBalances[account.id]?.workingBalanceMinor ?? transactions.filter { $0.accountID == account.id }.reduce(0) { $0 + $1.amountMinor }
     }
@@ -8859,7 +8863,7 @@ private struct LiveRequestDetailView: View {
                 if store.budget.can("approve_request") && request.status == "pending" {
                     Section("Decision") {
                         Picker("Fund from", selection: $sourceCategoryID) {
-                            ForEach(sources) { Text("\($0.name) · \(store.format($0.availableMinor))").tag($0.categoryID) }
+                            ForEach(sources) { Text("\(store.categoryDisplayName($0)) · \(store.format($0.availableMinor))").tag($0.categoryID) }
                         }
                         CurrencyAmountField("Approved amount", text: $amount, currencyCode: store.budget.currencyCode)
                         TextField("Note", text: $note)
@@ -15740,7 +15744,7 @@ struct LiveDelegatedPolicyView: View {
     private var draftScope: String { "\(store.authorityRevision)|\(store.budget.id)|\(member.userID)" }
     private var categories: [APICategory] { store.categories.filter { $0.delegatedUserID == member.userID && !$0.isArchived } }
     var body: some View { Form {
-        Section("Authority") { Picker("To assign category", selection: $draft.poolCategoryID) { ForEach(categories) { Text($0.name).tag($0.id) } }; CurrencyAmountField("Total authority", text: $draft.authority, currencyCode: store.budget.currencyCode, allowsZero: true); Toggle("Can create categories", isOn: $draft.allowCreation); Toggle("Can move money", isOn: $draft.allowReallocation) }
+        Section("Authority") { Picker("To assign category", selection: $draft.poolCategoryID) { ForEach(categories) { Text(store.categoryDisplayName($0)).tag($0.id) } }; CurrencyAmountField("Total authority", text: $draft.authority, currencyCode: store.budget.currencyCode, allowsZero: true); Toggle("Can create categories", isOn: $draft.allowCreation); Toggle("Can move money", isOn: $draft.allowReallocation) }
         if store.delegatedBudgets.contains(where: { $0.userID == member.userID }) {
             Section { NavigationLink { HistoryAuthorityBoundary { DelegatedPolicyHistoryView(member: member) } } label: { Label("Authority history", systemImage: "clock.arrow.circlepath") } }
         }

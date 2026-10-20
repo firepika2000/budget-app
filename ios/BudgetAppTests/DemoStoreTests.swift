@@ -2331,6 +2331,31 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertEqual(store.categoryDisplayName(category), "\(group.name) · \(category.name)")
     }
 
+    @MainActor
+    func testMoneySelectorsDisambiguateSameNamedCategoriesWithoutChangingIdentity() async throws {
+        let store = BudgetWorkspaceStore.demo(fresh: true)
+        await store.load(serverURL: URL(string: "http://localhost")!, token: "demo")
+        for groupName in ["Household", "Travel"] {
+            try await store.createGroup(name: groupName)
+            let group = try XCTUnwrap(store.groups.first { $0.name == groupName })
+            try await store.createCategory(groupID: group.id, newGroupName: "", name: "Food", delegatedUserID: nil)
+        }
+        let rows = try XCTUnwrap(store.summary).categories.filter { $0.name == "Food" }
+        XCTAssertEqual(rows.count, 2); XCTAssertEqual(Set(rows.map(\.categoryID)).count, 2)
+        XCTAssertEqual(Set(rows.map(store.categoryDisplayName)), ["Household · Food", "Travel · Food"])
+        let before = store.summary
+        for row in rows { _ = store.categoryDisplayName(row) }
+        XCTAssertEqual(store.summary, before)
+        // Names may fall back only to the already-authorized summary; no hidden directory lookup.
+        store.categories = []
+        XCTAssertEqual(Set(rows.map(store.categoryDisplayName)), ["Food"])
+        let directory = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("BudgetApp")
+        let editor = try String(contentsOf: directory.appendingPathComponent("EditingViews.swift"))
+        XCTAssertFalse(editor.contains("Text(category.name).tag(category.categoryID)"))
+        XCTAssertFalse(editor.contains("Text(category.name).tag(category.id)"))
+        XCTAssertTrue(editor.contains(".map(workspace.categoryDisplayName)"))
+    }
+
     func testReceiptOCRPrefersTotalAndProducesReviewableExactSuggestions() throws {
         let category = try JSONDecoder().decode(APICategory.self, from: Data(#"{"id":"groceries","budget_id":"budget","group_id":"needs","name":"Groceries","icon_name":null,"note":"","sort_order":0,"is_archived":false,"system_type":null,"linked_account_id":null,"delegated_user_id":null,"is_favorite":false,"favorite_sort_order":null}"#.utf8))
         let now = try XCTUnwrap(Calendar(identifier: .gregorian).date(from: DateComponents(year: 2026, month: 10, day: 7)))

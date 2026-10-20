@@ -1588,10 +1588,13 @@ final class AuthenticationJourneyTests: XCTestCase {
 
         XCTAssertTrue(app.navigationBars["Plan"].waitForExistence(timeout: 5))
         app.buttons["plan-category-groceries"].tap()
-        app.buttons["Move money"].tap()
+        let move = app.buttons["Move money"]
+        for _ in 0..<5 where !move.isHittable { app.swipeUp() }
+        XCTAssertTrue(move.waitForExistence(timeout: 5)); move.tap()
 
         XCTAssertTrue(app.navigationBars["Move Money"].waitForExistence(timeout: 5))
-        XCTAssertTrue((app.buttons["move-source-category"].value as? String)?.hasPrefix("Groceries") == true)
+        let sourceName = app.buttons["move-source-category"].value as? String ?? ""
+        XCTAssertTrue(sourceName.contains("Groceries")); XCTAssertTrue(sourceName.contains(" · "))
         app.buttons["Cancel"].tap()
         app.buttons["Assign money"].tap()
         XCTAssertTrue(app.staticTexts["Enter a negative amount to move money back to Unassigned."].waitForExistence(timeout: 5))

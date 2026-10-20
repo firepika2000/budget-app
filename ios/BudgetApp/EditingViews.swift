@@ -423,15 +423,15 @@ struct AllocationTransferView: View {
             Form {
                 Picker("From", selection: $sourceCategoryID) {
                     ForEach(categories.filter { $0.availableMinor > 0 }) { category in
-                        Text("\(category.name) · \(workspace.format(category.availableMinor))")
+                        Text("\(workspace.categoryDisplayName(category)) · \(workspace.format(category.availableMinor))")
                             .tag(category.categoryID)
                     }
                 }
                 .accessibilityIdentifier("move-source-category")
-                .accessibilityValue(categories.first(where: { $0.categoryID == sourceCategoryID })?.name ?? "Select category")
+                .accessibilityValue(categories.first(where: { $0.categoryID == sourceCategoryID }).map(workspace.categoryDisplayName) ?? "Select category")
                 Picker("To", selection: $destinationCategoryID) {
                     ForEach(categories.filter { $0.categoryID != sourceCategoryID }) { category in
-                        Text(category.name).tag(category.categoryID)
+                        Text(workspace.categoryDisplayName(category)).tag(category.categoryID)
                     }
                 }
                 CurrencyAmountField("Amount", text: $amount, currencyCode: budget.currencyCode)
@@ -619,7 +619,7 @@ struct FundingRequestView: View {
             Form {
                 Picker("Category", selection: $categoryID) {
                     ForEach(categories.filter { $0.systemType == nil }) { category in
-                        Text(category.name).tag(category.id)
+                        Text(workspace.categoryDisplayName(category)).tag(category.id)
                     }
                 }
                 CurrencyAmountField("Amount", text: $amount, currencyCode: budget.currencyCode)
