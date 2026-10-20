@@ -5679,8 +5679,15 @@ final class BudgetWorkspaceStore: ObservableObject {
 
     func reconcile(accountID: String, statementBalance: Int64, throughDate: String, createAdjustment: Bool, reason: String, expectedClearedBalance: Int64? = nil, expectedReviewRevision: String? = nil) async throws {
         defer { publishPendingPlanningStatus() }
-        let cleared = try expectedClearedBalance ?? reconciliationClearedBalance(accountID: accountID, throughDate: throughDate)
-        try await services().accounts.reconcile(ReconcileAccountOperation(expectedReviewRevision: expectedReviewRevision, accountID: accountID, statementBalanceMinor: statementBalance, throughDate: throughDate, createAdjustment: createAdjustment, reason: reason, expectedClearedBalanceMinor: cleared))
+        let cleared: Int64
+        let reviewRevision: String?
+        if let expectedClearedBalance {
+            cleared = expectedClearedBalance; reviewRevision = expectedReviewRevision
+        } else {
+            let observation = try await reconciliationReviewObservation(accountID: accountID, throughDate: throughDate)
+            cleared = observation.clearedBalanceMinor; reviewRevision = observation.reviewRevision
+        }
+        try await services().accounts.reconcile(ReconcileAccountOperation(expectedReviewRevision: reviewRevision, accountID: accountID, statementBalanceMinor: statementBalance, throughDate: throughDate, createAdjustment: createAdjustment, reason: reason, expectedClearedBalanceMinor: cleared))
         await refresh()
     }
 
@@ -11984,9 +11991,18 @@ private struct LiveReconcileView: View {
     @State private var observationID = UUID()
     @State private var loadingObservation = false
     @State private var observationError: String?
+    @State private var observedContext: String?
+    private var observationContext: String {
+        "\(workspace.authorityRevision)|\(workspace.reportRevision)|\(BudgetWorkspaceStore.dateString(throughDate))"
+    }
+    init(budget: APIBudget, account: APIAccount, currentBalance: Int64, onSaved: @escaping () async -> Void) {
+        self.budget = budget; self.account = account; self.currentBalance = currentBalance; self.onSaved = onSaved
+        _statementBalance = State(initialValue: CurrencyText.editable(currentBalance, currencyCode: budget.currencyCode))
+    }
     private var parsed: Int64? { CurrencyText.parseMinorUnits(statementBalance, currencyCode: budget.currencyCode) }
     private var cutoffBalance: Int64? {
-        guard !workspace.workspaceAccessDenied, observedDate == BudgetWorkspaceStore.dateString(throughDate) else { return nil }
+        guard !workspace.workspaceAccessDenied, observedContext == observationContext,
+              observedDate == BudgetWorkspaceStore.dateString(throughDate) else { return nil }
         return observedBalance
     }
     private var difference: Int64? {
@@ -12014,8 +12030,8 @@ private struct LiveReconcileView: View {
                 Button("Statement Import History", systemImage: "clock.arrow.circlepath") { showingImportHistory = true }.accessibilityIdentifier("statement-import-history")
             }
             if let difference, difference != 0 { Section("Difference") { LabeledContent("Adjustment", value: CurrencyText.editable(difference, currencyCode: budget.currencyCode)); Toggle("Create reconciliation adjustment", isOn: $createAdjustment); if createAdjustment { TextField("Adjustment reason", text: $reason) }; Text("The server calculates the authoritative cleared balance and will reject a mismatch unless you approve an adjustment.").font(.footnote).foregroundStyle(.secondary) } }
-        }.navigationTitle("Reconcile \(account.name)").navigationBarTitleDisplayMode(.inline).toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }; ToolbarItem(placement: .confirmationAction) { Button("Reconcile") { Task { await save() } }.disabled(parsed == nil || cutoffBalance == nil || loadingObservation || isSaving) } }.onAppear { statementBalance = CurrencyText.editable(currentBalance, currencyCode: budget.currencyCode) }.alert("Unable to reconcile", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) { Button("OK", role: .cancel) {} } message: { Text(errorMessage ?? "Unknown error") } }
-        .task(id: BudgetWorkspaceStore.dateString(throughDate)) { await loadObservation() }
+        }.navigationTitle("Reconcile \(account.name)").navigationBarTitleDisplayMode(.inline).toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }; ToolbarItem(placement: .confirmationAction) { Button("Reconcile") { Task { await save() } }.disabled(parsed == nil || cutoffBalance == nil || loadingObservation || isSaving) } }.alert("Unable to reconcile", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) { Button("OK", role: .cancel) {} } message: { Text(errorMessage ?? "Unknown error") } }
+        .task(id: observationContext) { await loadObservation() }
         .onChange(of: workspace.workspaceAccessDenied) { _, denied in
             if denied { observationID = UUID(); observedBalance = nil; observedDate = nil; observedReviewRevision = nil; loadingObservation = false }
         }
@@ -12031,17 +12047,17 @@ private struct LiveReconcileView: View {
     }
     private func loadObservation() async {
         guard !isSaving, !workspace.workspaceAccessDenied else { return }
-        let id = UUID(), date = BudgetWorkspaceStore.dateString(throughDate)
+        let id = UUID(), date = BudgetWorkspaceStore.dateString(throughDate), context = observationContext
         observationID = id
         observedBalance = nil; observedDate = nil; observedReviewRevision = nil; observationError = nil; loadingObservation = true
         defer { if observationID == id { loadingObservation = false } }
         do {
             let value = try await workspace.reconciliationReviewObservation(accountID: account.id, throughDate: date)
             guard observationID == id, !Task.isCancelled, !workspace.workspaceAccessDenied,
-                  date == BudgetWorkspaceStore.dateString(throughDate) else { return }
-            observedBalance = value.clearedBalanceMinor; observedReviewRevision = value.reviewRevision; observedDate = date
+                  context == observationContext, date == BudgetWorkspaceStore.dateString(throughDate) else { return }
+            observedBalance = value.clearedBalanceMinor; observedReviewRevision = value.reviewRevision; observedDate = date; observedContext = context
         } catch {
-            guard observationID == id, !Task.isCancelled, !workspace.workspaceAccessDenied else { return }
+            guard observationID == id, context == observationContext, !Task.isCancelled, !workspace.workspaceAccessDenied else { return }
             observationError = error.localizedDescription
         }
     }

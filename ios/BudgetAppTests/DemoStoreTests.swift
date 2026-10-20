@@ -1853,6 +1853,24 @@ final class DemoStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testReconciliationWithoutExplicitObservationDoesNotUsePartialWorkspaceLedger() async throws {
+        let store = BudgetWorkspaceStore.demo()
+        await store.refresh()
+        let account = try XCTUnwrap(store.accounts.first { $0.id == "checking" })
+        let cutoff = "2026-09-05"
+        let observation = try await store.reconciliationReviewObservation(accountID: account.id, throughDate: cutoff)
+        let working = store.balance(for: account)
+        XCTAssertNotEqual(observation.clearedBalanceMinor, store.clearedBalance(for: account),
+                          "Fixture must include later cleared postings")
+        store.transactions = []
+        try await store.reconcile(accountID: account.id, statementBalance: observation.clearedBalanceMinor,
+            throughDate: cutoff, createAdjustment: false, reason: "")
+        XCTAssertEqual(store.balance(for: account), working)
+        XCTAssertEqual(store.accountBalances[account.id]?.reconciledBalanceMinor, observation.clearedBalanceMinor)
+        XCTAssertFalse(store.transactions.contains { $0.payeeName == "Reconciliation adjustment" })
+    }
+
+    @MainActor
     func testWorkspaceReconciliationUsesDateScopedObservationIncludingOpening() async throws {
         let store = BudgetWorkspaceStore.demo()
         await store.load(serverURL: URL(string: "http://localhost")!, token: "demo")
@@ -1942,6 +1960,11 @@ final class DemoStoreTests: XCTestCase {
         let view = source[start.upperBound..<end.lowerBound]
         XCTAssertFalse(view.contains("workspace.reconciliationClearedBalance("))
         XCTAssertTrue(view.contains("expectedClearedBalance: cutoffBalance"))
+        XCTAssertTrue(view.contains("observedContext == observationContext"))
+        XCTAssertTrue(view.contains(".task(id: observationContext)"))
+        XCTAssertTrue(view.contains("context == observationContext"))
+        XCTAssertFalse(view.contains(".onAppear { statementBalance ="), "Returning from an import must not overwrite typed statement money")
+        XCTAssertTrue(view.contains("_statementBalance = State(initialValue:"))
         XCTAssertTrue(view.contains("observationID == id"))
         XCTAssertTrue(view.contains("observedDate == BudgetWorkspaceStore.dateString(throughDate)"))
         XCTAssertTrue(view.contains("cutoffBalance == nil || loadingObservation || isSaving"))
