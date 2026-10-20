@@ -2,7 +2,7 @@
 
 ## Current workspace checkpoint
 
-Current checkpoint: bounded Live startup observations following `c2804bd` on `codex/development`. App and widget remain `0.11.0`
+Inspected implementation: `101833e` on `codex/development`. App and widget remain `0.11.0`
 build `7`; TestFlight is held. Regular Xcode 27.1 (`27A9275`) builds and executes focused tests
 on preserved iPhone 17 Pro Max `3ABD861E-D38D-4AFD-A356-959266051564`, iOS 27.0 (`24A434`).
 No Simulator or Live data reset, merge, tag, or release is part of these checkpoints.
@@ -37,9 +37,36 @@ history, including paused schedules, without realizing money (`4362ca6`): 53 foc
 and one native lifecycle test passed. Test counts describe overlapping focused runs, not a full
 release-wide suite or a new human acceptance pass.
 
+### Refresh continuity and backup boundaries
+
+Register refresh preserves the number of rows already opened instead of replacing the list with
+page one (`d72c0ae`). Refresh assembles validated pages before publishing, fetches no deeper than
+the opened depth, retains the prior observation after connectivity failure, and clears denied
+history. Three native checks and the production register clearing/reconciliation UI test passed.
+Scoped report/category/payee lists now observe workspace refresh and retain opened depth
+(`253a665`); three native checks passed, including canonical edits appearing in refreshed rows
+and a renamed payee leaving the old search results without changing account money.
+
+Activity uses the same pager and observes workspace refresh without resetting its search/filter
+state (`624d1f1`). Native checks cover superseded responses, in-flight authority clearing and
+refresh depth. Both production Activity quick-clearing and bulk-update UI tests passed after their
+navigation was corrected to scroll past audit sections to posted rows. Transaction-change and
+reconciliation summaries also observe workspace revisions, not just permission changes (`101833e`).
+Two focused native checks passed, including transaction creation and reconciliation producing
+new audit observations with unchanged authority revision. Exact pixel scroll-position behavior
+and multi-device visual acceptance remain human checks.
+
+Dropbox publication rejects symlinked package/payload directories before any network request
+(`5de6885`); authenticated Local Device restore rejects the same boundaries before staging
+(`baee543`). Each regression reproduced acceptance before the correction. Fifteen Dropbox
+destination tests and the subsequent combined 21 destination/local-recovery tests passed;
+ordinary encrypted recovery, cancellation, tampering and no-overwrite behavior remain covered.
+The regular Xcode simulator builds passed. These controlled fixtures did not change real Dropbox
+files or establish live-provider acceptance.
+
 ### Bounded Live startup observations
 
-Live core hydration requests one recent page of at most 200 transactions instead of traversing
+Live core hydration (`f165f22`) requests one recent page of at most 200 transactions instead of traversing
 the entire ledger. Pending commands add explicit transaction identity batches of at most 200
 and transfer identity batches of at most 100 pairs. These observations preserve pending-detail
 visibility; server authorization and replay checks remain unchanged. Recent Home activity stays
@@ -68,17 +95,27 @@ Use existing disposable fixtures; retain all previously recorded human acceptanc
 
 1. In a register with more than 50 entries, load another page, open an older transaction and its
    transfer counterpart if applicable, then return. Check category split and payee previews and
-   their View All destinations. Existing clearing/reconciliation acceptance need not restart from zero.
+   their View All destinations. Keep a search/report list open on one device and edit a matching
+   transaction on another; confirm background refresh updates the row and Activity audit summary,
+   retains filters and opened depth, and removes rows that no longer match. Existing
+   clearing/reconciliation acceptance need not restart from zero.
 2. Visit an Activity query and detail online, disconnect, and reopen the same query after relaunch.
    Confirm the saved-results notice and retained data. An unvisited query must request connectivity,
    not fabricate matches. Restore connectivity and refresh through the normal session lifecycle.
 3. With an existing restricted member, verify permitted transaction access without account totals,
    and that revoked balance access closes any reconciliation sheet. With a disposable linked payee
    and paused schedule, inspect rename/merge history without realizing a scheduled transaction.
+4. For the separate real Dropbox gate, connect the configured account, publish one encrypted
+   disposable-budget backup, relaunch and select that generation, download and restore into a new
+   destination using its recovery key, and compare the recovered budget and attachment. Revoke
+   the connection explicitly and confirm existing remote generations remain. Do not replace a
+   current budget, delete backups, or record recovery keys in evidence.
 
 These flows remain human checks, not completed results. The independent live Dropbox recovery flow
 and deployment gates remain required. Current app changes require a rebuild; server payee/history
-and transfer-filter changes require deployment, but no new migration was introduced.
+and transfer-filter changes require deployment, but no new migration was introduced. The newer
+refresh and directory-boundary corrections are app/storage-only: no server restart or migration
+is required for those corrections. TestFlight publishing remains held.
 
 ## Import and local payee checkpoints
 
