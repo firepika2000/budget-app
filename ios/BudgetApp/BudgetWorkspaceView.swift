@@ -10824,17 +10824,19 @@ private struct LiveScheduledTransactionsView: View {
 
 private struct ScheduledTransactionHistoryView: View {
     @EnvironmentObject private var store: BudgetWorkspaceStore
-    @State private var rows: [APIScheduledTransactionRevision] = []
-    @State private var loading = true
-    @State private var loadingMore = false
-    @State private var requestInFlight = false
-    @State private var retryIntent: HistoryRetryIntent = .refresh
-    @State private var hasMore = false
-    @State private var error: String?
-    private let pageSize = 50
+    @StateObject private var history = DecisionHistoryPager<APIScheduledTransactionRevision>(pageSize: 50)
+    private var rows: [APIScheduledTransactionRevision] { history.rows }
+    private var loading: Bool { history.loading }
+    private var loadingMore: Bool { history.loadingOlder }
+    private var hasMore: Bool { history.canLoadOlder }
+    private var errorMessage: String? { history.errorMessage }
+    private var retryIntent: HistoryRetryIntent { history.retryIntent }
+    private var historyScope: String { "\(store.authorityRevision)|\(store.budget.id)|schedules" }
+    private var historyContext: String { "\(historyScope)|\(store.reportRevision)" }
+
     var body: some View {
         List {
-            if let error { Section { ContentUnavailableView("History unavailable", systemImage: "exclamationmark.triangle", description: Text(error)); Button("Try Again") { Task { if retryIntent.shouldReset(hasLoadedRows: !rows.isEmpty) { await load() } else { await loadMore() } } }.disabled(requestInFlight || loadingMore) } }
+            if let error = errorMessage { Section { ContentUnavailableView("History unavailable", systemImage: "exclamationmark.triangle", description: Text(error)); Button("Try Again") { Task { if retryIntent.shouldReset(hasLoadedRows: !rows.isEmpty) { await load() } else { await loadMore() } } }.disabled(loading || loadingMore) } }
             else if rows.isEmpty && !loading { ContentUnavailableView("No schedule decisions yet", systemImage: "clock.arrow.circlepath", description: Text("Creates, edits, pauses, entries, and deletions will appear here.")) }
             ForEach(rows) { row in
                 VStack(alignment: .leading, spacing: 5) {
@@ -10860,7 +10862,8 @@ private struct ScheduledTransactionHistoryView: View {
         }
         .navigationTitle("Schedule History")
         .overlay { if loading && rows.isEmpty { ProgressView() } }
-        .task { await load() }
+        .task(id: historyContext) { history.prepare(scope: historyScope); await load() }
+        .onDisappear { history.invalidate() }
         .refreshable { await load() }
     }
     private func title(_ action: String) -> String { switch action { case "created": "Created"; case "updated": "Updated"; case "paused": "Paused"; case "resumed": "Resumed"; case "deleted": "Deleted"; case "realized": "Entered"; default: action.capitalized } }
@@ -10876,25 +10879,11 @@ private struct ScheduledTransactionHistoryView: View {
             payeeName: { id in store.payees.first(where: { $0.id == id })?.displayName ?? "Payee no longer available" })
     }
     private func symbol(_ action: String) -> String { switch action { case "created": "plus.circle"; case "paused": "pause.circle"; case "resumed": "play.circle"; case "deleted": "trash"; case "realized": "checkmark.circle"; default: "pencil.circle" } }
-    @MainActor private func load() async {
-        guard !requestInFlight, !loadingMore else { return }
-        requestInFlight = true; loading = true; error = nil
-        defer { requestInFlight = false; loading = false }
-        do { let page = try await store.scheduleHistory(limit: pageSize, offset: 0); rows = page; hasMore = page.count == pageSize }
-        catch {
-            retryIntent = .refresh
-            if HistoryObservationPolicy.mustDiscard(after: error) { rows = []; hasMore = false }
-            self.error = error.localizedDescription
-        }
-    }
-    @MainActor private func loadMore() async {
-        guard !loading, !loadingMore, hasMore else { return }
-        loadingMore = true; error = nil; defer { loadingMore = false }
-        do { let page = try await store.scheduleHistory(limit: pageSize, offset: rows.count); rows += page; hasMore = page.count == pageSize }
-        catch {
-            retryIntent = .older
-            if HistoryObservationPolicy.mustDiscard(after: error) { rows = []; hasMore = false }
-            self.error = error.localizedDescription
+    private func load() async { await loadPage(reset: true) }
+    private func loadMore() async { await loadPage(reset: false) }
+    private func loadPage(reset: Bool) async {
+        await history.load(reset: reset) { limit, offset in
+            try await store.scheduleHistory(limit: limit, offset: offset)
         }
     }
 }
@@ -13307,10 +13296,15 @@ private struct DebtInterestContent: View {
 
 private struct DebtPayoffPlanHistoryView: View {
     @ObservedObject var store: BudgetWorkspaceStore
-    @State private var rows: [APIDebtPayoffPlanRevision] = []
-    @State private var isLoading = false
-    @State private var hasMore = true
-    @State private var errorMessage: String?
+    @StateObject private var history = DecisionHistoryPager<APIDebtPayoffPlanRevision>(pageSize: 10)
+    private var rows: [APIDebtPayoffPlanRevision] { history.rows }
+    private var loading: Bool { history.loading }
+    private var loadingMore: Bool { history.loadingOlder }
+    private var hasMore: Bool { history.canLoadOlder }
+    private var errorMessage: String? { history.errorMessage }
+    private var retryIntent: HistoryRetryIntent { history.retryIntent }
+    private var historyScope: String { "\(store.authorityRevision)|\(store.budget.id)|payoff" }
+    private var historyContext: String { "\(historyScope)|\(store.reportRevision)" }
 
     var body: some View {
         List {
@@ -13333,24 +13327,29 @@ private struct DebtPayoffPlanHistoryView: View {
             if let errorMessage {
                 Section {
                     Text(errorMessage).foregroundStyle(.secondary)
-                    Button("Retry") { Task { await loadMore() } }
+                    Button("Retry") { Task { await loadPage(reset: retryIntent.shouldReset(hasLoadedRows: !rows.isEmpty)) } }.disabled(loading || loadingMore)
                 }
-            } else if rows.isEmpty && !isLoading {
+            } else if rows.isEmpty && !loading {
                 ContentUnavailableView("No saved plan history", systemImage: "clock.arrow.circlepath",
                     description: Text("Saving or resetting a payoff scenario will record the decision here."))
             }
-            if isLoading { ProgressView("Loading history…") }
+            if loading || loadingMore { ProgressView("Loading history…") }
             else if hasMore && !rows.isEmpty { Button("Load more") { Task { await loadMore() } } }
         }
         .navigationTitle("Saved Plan History")
         .accessibilityIdentifier("payoff-history-screen")
-        .task { if rows.isEmpty { await loadMore() } }
+        .task(id: historyContext) { history.prepare(scope: historyScope); await load() }
+        .refreshable { await load() }
+        .onDisappear { history.invalidate() }
     }
 
     @ViewBuilder private func snapshot(_ value: APIDebtPayoffPlanUpsert, title: String) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title).font(.headline)
             LabeledContent("Strategy", value: value.strategy.capitalized)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Strategy")
+                .accessibilityValue(value.strategy.capitalized)
             LabeledContent("Extra monthly", value: store.format(value.extraPaymentMinor))
             LabeledContent("Roll payments forward", value: value.rollover ? "Yes" : "No")
             LabeledContent("Goal date", value: value.targetDate ?? "None")
@@ -13377,16 +13376,11 @@ private struct DebtPayoffPlanHistoryView: View {
         }
         return date?.formatted(date: .abbreviated, time: .shortened) ?? value
     }
-    @MainActor private func loadMore() async {
-        guard !isLoading else { return }
-        isLoading = true; errorMessage = nil
-        defer { isLoading = false }
-        do {
-            let page = try await store.debtPayoffPlanHistory(limit: 10, offset: rows.count)
-            rows.append(contentsOf: page); hasMore = page.count == 10
-        } catch {
-            if HistoryObservationPolicy.mustDiscard(after: error) { rows = []; hasMore = false }
-            errorMessage = error.localizedDescription
+    private func load() async { await loadPage(reset: true) }
+    private func loadMore() async { await loadPage(reset: false) }
+    private func loadPage(reset: Bool) async {
+        await history.load(reset: reset) { limit, offset in
+            try await store.debtPayoffPlanHistory(limit: limit, offset: offset)
         }
     }
 }
@@ -15550,17 +15544,19 @@ struct LiveDelegatedPolicyView: View {
 private struct DelegatedPolicyHistoryView: View {
     @EnvironmentObject private var store: BudgetWorkspaceStore
     let member: APIHouseholdMember
-    @State private var rows: [APIDelegatedPolicyRevision] = []
-    @State private var loading = true
-    @State private var loadingMore = false
-    @State private var requestInFlight = false
-    @State private var retryIntent: HistoryRetryIntent = .refresh
-    @State private var hasMore = false
-    @State private var error: String?
-    private let pageSize = 50
+    @StateObject private var history = DecisionHistoryPager<APIDelegatedPolicyRevision>(pageSize: 50)
+    private var rows: [APIDelegatedPolicyRevision] { history.rows }
+    private var loading: Bool { history.loading }
+    private var loadingMore: Bool { history.loadingOlder }
+    private var hasMore: Bool { history.canLoadOlder }
+    private var errorMessage: String? { history.errorMessage }
+    private var retryIntent: HistoryRetryIntent { history.retryIntent }
+    private var historyScope: String { "\(store.authorityRevision)|\(store.budget.id)|authority|\(member.userID)" }
+    private var historyContext: String { "\(historyScope)|\(store.reportRevision)" }
+
     var body: some View {
         List {
-            if let error { Section { ContentUnavailableView("History unavailable", systemImage: "exclamationmark.triangle", description: Text(error)); Button("Try Again") { Task { if retryIntent.shouldReset(hasLoadedRows: !rows.isEmpty) { await load() } else { await loadMore() } } }.disabled(requestInFlight || loadingMore) } }
+            if let error = errorMessage { Section { ContentUnavailableView("History unavailable", systemImage: "exclamationmark.triangle", description: Text(error)); Button("Try Again") { Task { if retryIntent.shouldReset(hasLoadedRows: !rows.isEmpty) { await load() } else { await loadMore() } } }.disabled(loading || loadingMore) } }
             else if rows.isEmpty && !loading { ContentUnavailableView("No authority decisions yet", systemImage: "clock.arrow.circlepath", description: Text("Creates and changes to this member's authority will appear here.")) }
             ForEach(rows) { row in
                 VStack(alignment: .leading, spacing: 5) {
@@ -15584,7 +15580,8 @@ private struct DelegatedPolicyHistoryView: View {
         }
         .navigationTitle("Authority History")
         .overlay { if loading && rows.isEmpty { ProgressView() } }
-        .task { await load() }
+        .task(id: historyContext) { history.prepare(scope: historyScope); await load() }
+        .onDisappear { history.invalidate() }
         .refreshable { await load() }
         .accessibilityIdentifier("delegated-authority-history")
     }
@@ -15592,25 +15589,11 @@ private struct DelegatedPolicyHistoryView: View {
         DelegatedPolicyHistoryPresentation.changes(row, formatMoney: store.format,
             categoryName: { id in store.categories.first(where: { $0.id == id }).map { store.categoryDisplayName($0) } ?? "Category no longer available" })
     }
-    @MainActor private func load() async {
-        guard !requestInFlight, !loadingMore else { return }
-        requestInFlight = true; loading = true; error = nil
-        defer { requestInFlight = false; loading = false }
-        do { let page = try await store.delegatedPolicyHistory(userID: member.userID, limit: pageSize, offset: 0); rows = page; hasMore = page.count == pageSize }
-        catch {
-            retryIntent = .refresh
-            if HistoryObservationPolicy.mustDiscard(after: error) { rows = []; hasMore = false }
-            self.error = error.localizedDescription
-        }
-    }
-    @MainActor private func loadMore() async {
-        guard !loading, !loadingMore, hasMore else { return }
-        loadingMore = true; error = nil; defer { loadingMore = false }
-        do { let page = try await store.delegatedPolicyHistory(userID: member.userID, limit: pageSize, offset: rows.count); rows += page; hasMore = page.count == pageSize }
-        catch {
-            retryIntent = .older
-            if HistoryObservationPolicy.mustDiscard(after: error) { rows = []; hasMore = false }
-            self.error = error.localizedDescription
+    private func load() async { await loadPage(reset: true) }
+    private func loadMore() async { await loadPage(reset: false) }
+    private func loadPage(reset: Bool) async {
+        await history.load(reset: reset) { limit, offset in
+            try await store.delegatedPolicyHistory(userID: member.userID, limit: limit, offset: offset)
         }
     }
 }

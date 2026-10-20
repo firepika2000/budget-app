@@ -1098,7 +1098,7 @@ final class DemoStoreTests: XCTestCase {
         let sourceURL = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().appendingPathComponent("BudgetApp/BudgetWorkspaceView.swift")
         let source = try String(contentsOf: sourceURL)
-        for name in ["BudgetStructureHistoryView", "PayeeHistoryView", "TargetHistoryView"] {
+        for name in ["BudgetStructureHistoryView", "PayeeHistoryView", "TargetHistoryView", "ScheduledTransactionHistoryView", "DelegatedPolicyHistoryView", "DebtPayoffPlanHistoryView"] {
             let start = try XCTUnwrap(source.range(of: "private struct \(name): View"))
             let end = source.range(of: "\nprivate struct ", range: start.upperBound..<source.endIndex)?.lowerBound ?? source.endIndex
             let view = source[start.lowerBound..<end]
@@ -1107,16 +1107,6 @@ final class DemoStoreTests: XCTestCase {
             XCTAssertTrue(view.contains("history.prepare(scope: historyScope)"), name)
             XCTAssertTrue(view.contains(".task(id: historyContext)"), name)
             XCTAssertTrue(view.contains("history.invalidate()"), name)
-        }
-        for name in ["ScheduledTransactionHistoryView", "DelegatedPolicyHistoryView"] {
-            let start = try XCTUnwrap(source.range(of: "private struct \(name): View"))
-            let end = source.range(of: "\nprivate struct ", range: start.upperBound..<source.endIndex)?.lowerBound ?? source.endIndex
-            let view = source[start.lowerBound..<end]
-            XCTAssertTrue(view.contains("guard !requestInFlight, !loadingMore else { return }"), name)
-            XCTAssertTrue(view.contains("defer { requestInFlight = false; loading = false }"), name)
-            XCTAssertTrue(view.contains("retryIntent.shouldReset(hasLoadedRows: !rows.isEmpty)"), name)
-            XCTAssertTrue(view.contains("retryIntent = .refresh"), name)
-            XCTAssertTrue(view.contains("retryIntent = .older"), name)
         }
         let start = try XCTUnwrap(source.range(of: "private struct TransactionChangeHistoryView: View"))
         let end = source.range(of: "\nprivate struct ", range: start.upperBound..<source.endIndex)?.lowerBound ?? source.endIndex
@@ -1155,7 +1145,7 @@ final class DemoStoreTests: XCTestCase {
             let start = try XCTUnwrap(source.range(of: "private struct \(name): View"))
             let end = source.range(of: "\nprivate struct ", range: start.upperBound..<source.endIndex)?.lowerBound ?? source.endIndex
             let view = String(source[start.lowerBound..<end])
-            if ["BudgetStructureHistoryView", "PayeeHistoryView", "TargetHistoryView"].contains(name) {
+            if name != "AllowanceDetailView" {
                 XCTAssertTrue(view.contains("DecisionHistoryPager<"), name)
                 XCTAssertTrue(view.contains("store.authorityRevision"), name)
                 continue

@@ -682,7 +682,9 @@ final class AuthenticationJourneyTests: XCTestCase {
         let strategy = app.segmentedControls["debt-payoff-strategy"]
         XCTAssertTrue(strategy.waitForExistence(timeout: 5))
         strategy.buttons["Snowball"].tap()
-        XCTAssertTrue(app.staticTexts["Saved across your devices"].waitForExistence(timeout: 8))
+        let savedFeedback = app.staticTexts["Saved across your devices"]
+        for _ in 0..<6 where !savedFeedback.exists { app.swipeUp() }
+        XCTAssertTrue(savedFeedback.waitForExistence(timeout: 8))
         let history = app.buttons["debt-payoff-plan-history"]
         for _ in 0..<5 where !history.isHittable { app.swipeUp() }
         XCTAssertTrue(history.waitForExistence(timeout: 5))
@@ -693,7 +695,11 @@ final class AuthenticationJourneyTests: XCTestCase {
         saved.tap()
         XCTAssertTrue(app.staticTexts["After"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Extra monthly"].exists)
-        XCTAssertTrue(app.staticTexts["Snowball"].exists)
+        // DisclosureGroup propagates its row identifier to descendants; inspect the semantic value.
+        let afterStrategy = app.otherElements.matching(NSPredicate(format: "label == %@ AND value == %@", "Strategy", "Snowball")).firstMatch
+        for _ in 0..<4 where !afterStrategy.exists { app.swipeUp() }
+        XCTAssertTrue(afterStrategy.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertEqual(afterStrategy.value as? String, "Snowball")
         XCTAssertFalse(app.alerts.firstMatch.exists)
     }
 
