@@ -8928,6 +8928,7 @@ private struct LiveRequestDetailView: View {
     let requestID: String
     @State private var amount = ""; @State private var sourceCategoryID = ""; @State private var note = ""; @State private var isSaving = false; @State private var errorMessage: String?
     @State private var showRevise = false; @State private var confirmCancel = false
+    @State private var initialized = false
     private var request: APIFinancialRequest? { store.requests.first(where: { $0.id == requestID }) }
     private var sources: [APICategoryMonth] { (store.summary?.categories ?? []).filter { $0.availableMinor > 0 && $0.categoryID != request?.destinationCategoryID } }
     var body: some View {
@@ -8960,6 +8961,7 @@ private struct LiveRequestDetailView: View {
                         if request.status == "changes_requested" { Button("Revise and Resubmit") { showRevise = true } }
                         Button("Cancel Request", role: .destructive) { confirmCancel = true }
                     }
+                    .disabled(isSaving)
                 }
                 Section("History") {
                     ForEach(request.actions) { action in
@@ -8981,7 +8983,9 @@ private struct LiveRequestDetailView: View {
         }
         .navigationTitle("Funding Request")
         .onAppear {
+            guard !initialized else { return }
             if let request {
+                initialized = true
                 amount = CurrencyText.editable(request.requestedAmountMinor, currencyCode: store.budget.currencyCode)
                 sourceCategoryID = sources.first?.categoryID ?? ""
             }
@@ -8997,8 +9001,8 @@ private struct LiveRequestDetailView: View {
     }
     private var parsed: Int64? { guard let value = CurrencyText.parseMinorUnits(amount, currencyCode: store.budget.currencyCode), value > 0, value <= (request?.requestedAmountMinor ?? 0) else { return nil }; return value }
     private func requesterName(_ id: String) -> String { store.householdMembers.first(where: { $0.userID == id })?.displayName ?? "Household member" }
-    private func cancel() async { guard let request else { return }; isSaving = true; defer { isSaving = false }; do { try await store.cancelRequest(id: request.id, version: request.version, note: note) } catch { errorMessage = error.localizedDescription } }
-    private func decide(_ decision: String) async { guard let request else { return }; isSaving = true; defer { isSaving = false }; do { try await store.decideRequest(id: request.id, decision: decision, version: request.version, amount: decision == "approve" ? parsed : nil, sourceCategoryID: decision == "approve" ? sourceCategoryID : nil, note: note) } catch { errorMessage = error.localizedDescription } }
+    private func cancel() async { guard !isSaving, let request else { return }; isSaving = true; defer { isSaving = false }; do { try await store.cancelRequest(id: request.id, version: request.version, note: note) } catch { errorMessage = error.localizedDescription } }
+    private func decide(_ decision: String) async { guard !isSaving, let request else { return }; isSaving = true; defer { isSaving = false }; do { try await store.decideRequest(id: request.id, decision: decision, version: request.version, amount: decision == "approve" ? parsed : nil, sourceCategoryID: decision == "approve" ? sourceCategoryID : nil, note: note) } catch { errorMessage = error.localizedDescription } }
 }
 
 private struct MoveMoneyPresentation: Identifiable {

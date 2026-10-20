@@ -11,6 +11,25 @@ import UserNotifications
 @testable import Budget_App
 
 final class DemoStoreTests: XCTestCase {
+    func testFundingRequestDetailPreservesDraftAndClaimsDecisionBeforeSuspension() throws {
+        let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("BudgetApp/BudgetWorkspaceView.swift")
+        let source = try String(contentsOf: file)
+        let start = try XCTUnwrap(source.range(of: "private struct LiveRequestDetailView: View"))
+        let end = try XCTUnwrap(source.range(of: "private struct MoveMoneyPresentation:"))
+        let view = String(source[start.lowerBound..<end.lowerBound])
+        XCTAssertTrue(view.contains("@State private var initialized = false"))
+        let appear = try XCTUnwrap(view.range(of: ".onAppear {"))
+        let initialization = String(view[appear.lowerBound...].prefix(450))
+        XCTAssertTrue(initialization.contains("guard !initialized else { return }"))
+        XCTAssertTrue(initialization.contains("initialized = true"))
+        for signature in ["private func cancel() async {", "private func decide(_ decision: String) async {"] {
+            let handler = try XCTUnwrap(view.range(of: signature))
+            let prefix = String(view[handler.upperBound...].prefix(180))
+            XCTAssertTrue(prefix.hasPrefix(" guard !isSaving, let request else { return }; isSaving = true; defer { isSaving = false }"))
+        }
+        XCTAssertTrue(view.contains(".disabled(isSaving)"))
+    }
     func testEditingSaveHandlersClaimSubmissionBeforeFirstSuspension() throws {
         let directory = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("BudgetApp")
         let editor = try String(contentsOf: directory.appendingPathComponent("EditingViews.swift"))
