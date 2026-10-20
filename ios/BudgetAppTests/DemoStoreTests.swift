@@ -11,6 +11,30 @@ import UserNotifications
 @testable import Budget_App
 
 final class DemoStoreTests: XCTestCase {
+    func testNativeFileSelectionCancellationPreservesDraftAndRealFailuresRemainErrors() throws {
+        let chosen = URL(fileURLWithPath: "/private/tmp/selected-receipt.pdf")
+        XCTAssertEqual(try UserFileSelection.url(from: .success(chosen)), chosen)
+        XCTAssertNil(try UserFileSelection.url(from: .failure(CocoaError(.userCancelled))))
+        XCTAssertNil(try UserFileSelection.url(from: .failure(NSError(domain: NSCocoaErrorDomain, code: NSUserCancelledError))))
+        for error in [CocoaError(.fileReadNoPermission) as Error, URLError(.notConnectedToInternet),
+                      NSError(domain: "OtherProvider", code: NSUserCancelledError)] {
+            XCTAssertThrowsError(try UserFileSelection.url(from: .failure(error))) { observed in
+                XCTAssertEqual((observed as NSError).domain, (error as NSError).domain)
+                XCTAssertEqual((observed as NSError).code, (error as NSError).code)
+            }
+        }
+    }
+
+    func testProductionFilePickersShareCancellationPolicyAndCameraUploadsAfterDismissal() throws {
+        let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("BudgetApp/BudgetWorkspaceView.swift")
+        let source = try String(contentsOf: file)
+        XCTAssertEqual(source.components(separatedBy: "UserFileSelection.url(from: result)").count - 1, 3)
+        XCTAssertTrue(source.contains(".sheet(isPresented: $showingCamera, onDismiss:"))
+        XCTAssertTrue(source.contains("guard let image = capturedAttachmentImage else { return }"))
+        XCTAssertTrue(source.contains("AttachmentCameraPicker { capturedAttachmentImage = $0 }"))
+        XCTAssertFalse(source.contains("AttachmentCameraPicker { image in Task { await importCameraImage(image) } }"))
+    }
+
     func testProductionAttachmentSourceUsesDismissalCompletionInsteadOfTimer() throws {
         let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("BudgetApp/BudgetWorkspaceView.swift")
         let source = try String(contentsOf: file)

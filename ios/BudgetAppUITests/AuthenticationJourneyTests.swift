@@ -1959,6 +1959,14 @@ final class AuthenticationJourneyTests: XCTestCase {
         XCTAssertTrue(add.waitForExistence(timeout: 5))
         add.tap()
         XCTAssertTrue(choosePhoto.waitForExistence(timeout: 5), "The chooser must reopen after canceling Photos")
+        app.buttons["attachment-choose-file"].tap()
+        let fileChooserDismissed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: choosePhoto)
+        XCTAssertEqual(XCTWaiter.wait(for: [fileChooserDismissed], timeout: 5), .completed)
+        let cancelFile = app.buttons["Cancel"].firstMatch
+        XCTAssertTrue(cancelFile.waitForExistence(timeout: 5), app.debugDescription)
+        cancelFile.tap()
+        XCTAssertTrue(add.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.alerts["Attachment error"].exists, "Canceling Files is not an attachment failure")
     }
 
     func testProductionAttachmentPreviewOpensWithoutInvokingRemoval() {

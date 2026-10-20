@@ -415,6 +415,19 @@ enum HistoryObservationPolicy {
     }
 }
 
+enum UserFileSelection {
+    /// Canceling a native picker is not an import failure and must preserve the current draft.
+    static func url(from result: Result<URL, Error>) throws -> URL? {
+        switch result {
+        case let .success(url): return url
+        case let .failure(error):
+            let cocoa = error as NSError
+            if cocoa.domain == NSCocoaErrorDomain, cocoa.code == NSUserCancelledError { return nil }
+            throw error
+        }
+    }
+}
+
 /// Display-only projection of local immutable audit snapshots. Never return raw snapshots or IDs.
 enum LocalTransactionHistoryProjection {
     static func changes(_ record: LocalTransactionChangeRecord, accounts: [String: String],

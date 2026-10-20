@@ -7638,14 +7638,14 @@ private struct LocalDeviceBackupRecoveryView: View {
             removeTemporaryBackup()
         }
         .fileImporter(isPresented: $choosingRestore, allowedContentTypes: [.folder]) { result in
-            switch result {
-            case let .success(url):
+            do {
+                guard let url = try UserFileSelection.url(from: result) else { return }
                 removeDropboxRestoreDownload()
                 restorePackage = url
                 restoreKey = ""
                 preparedRestore = nil
                 errorMessage = nil
-            case let .failure(error):
+            } catch {
                 errorMessage = error.localizedDescription
             }
         }
@@ -11383,6 +11383,7 @@ private struct TransactionAttachmentsView: View {
     @State private var choosingPhoto = false
     @State private var selectedPhoto: PhotosPickerItem?
     @State private var showingCamera = false
+    @State private var capturedAttachmentImage: UIImage?
     @State private var pendingSource: PendingSource?
     @State private var pendingRemoval: APITransactionAttachment?
     @State private var removing = false
@@ -11483,7 +11484,11 @@ private struct TransactionAttachmentsView: View {
         .photosPicker(isPresented: $choosingPhoto, selection: $selectedPhoto, matching: .images)
         .onChange(of: selectedPhoto) { _, item in guard let item else { return }; Task { await importPhoto(item) } }
         .fileImporter(isPresented: $importingFile, allowedContentTypes: [.pdf, .jpeg, .png, .heic]) { result in Task { await importFile(result) } }
-        .sheet(isPresented: $showingCamera) { AttachmentCameraPicker { image in Task { await importCameraImage(image) } } }
+        .sheet(isPresented: $showingCamera, onDismiss: {
+            guard let image = capturedAttachmentImage else { return }
+            capturedAttachmentImage = nil
+            Task { await importCameraImage(image) }
+        }) { AttachmentCameraPicker { capturedAttachmentImage = $0 } }
         .navigationDestination(item: $previewURL) { url in
             AttachmentPreviewScreen(url: url) {
                 var dismissal = Transaction(animation: nil)
@@ -11502,7 +11507,7 @@ private struct TransactionAttachmentsView: View {
             try await store.transactionAttachments(id: transaction.id)
         }
     }
-    private func importFile(_ result: Result<URL, Error>) async { do { let url = try result.get(); let scoped = url.startAccessingSecurityScopedResource(); defer { if scoped { url.stopAccessingSecurityScopedResource() } }; let values = try url.resourceValues(forKeys: [.contentTypeKey]); let data = try Data(contentsOf: url, options: .mappedIfSafe); try await upload(data: data, filename: url.lastPathComponent, contentType: values.contentType?.preferredMIMEType ?? "application/octet-stream") } catch { self.error = error.localizedDescription } }
+    private func importFile(_ result: Result<URL, Error>) async { do { guard let url = try UserFileSelection.url(from: result) else { return }; let scoped = url.startAccessingSecurityScopedResource(); defer { if scoped { url.stopAccessingSecurityScopedResource() } }; let values = try url.resourceValues(forKeys: [.contentTypeKey]); let data = try Data(contentsOf: url, options: .mappedIfSafe); try await upload(data: data, filename: url.lastPathComponent, contentType: values.contentType?.preferredMIMEType ?? "application/octet-stream") } catch { self.error = error.localizedDescription } }
     private func importPhoto(_ item: PhotosPickerItem) async {
         defer { selectedPhoto = nil }
         do {
@@ -12045,7 +12050,7 @@ private struct LiveReconcileView: View {
             if denied { observationID = UUID(); observedBalance = nil; observedDate = nil; observedReviewRevision = nil; loadingObservation = false }
         }
         .fileImporter(isPresented: $choosingStatement, allowedContentTypes: StatementImportFile.allowedTypes) { result in
-            do { let url = try result.get(); let access = url.startAccessingSecurityScopedResource(); defer { if access { url.stopAccessingSecurityScopedResource() } }; let data = try Data(contentsOf: url, options: .mappedIfSafe); statementFile = StatementImportFile(name: url.lastPathComponent, data: data) } catch { errorMessage = error.localizedDescription }
+            do { guard let url = try UserFileSelection.url(from: result) else { return }; let access = url.startAccessingSecurityScopedResource(); defer { if access { url.stopAccessingSecurityScopedResource() } }; let data = try Data(contentsOf: url, options: .mappedIfSafe); statementFile = StatementImportFile(name: url.lastPathComponent, data: data) } catch { errorMessage = error.localizedDescription }
         }
         .sheet(item: $statementFile) { file in StatementImportFlowView(workspace: workspace, budget: budget, account: account, file: file) }
         .sheet(isPresented: $showingImportHistory) {
