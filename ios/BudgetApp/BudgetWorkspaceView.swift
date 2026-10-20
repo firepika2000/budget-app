@@ -10130,6 +10130,7 @@ private struct LiveActivityView: View {
     @State private var loading = false
     @State private var errorMessage: String?
     @State private var retryIntent: HistoryRetryIntent = .refresh
+    @State private var pageRequestID = UUID()
     @State private var showFilters = false
     @State private var showAdd = false
     @State private var entryDraft: QuickEntryDraft?
@@ -10531,20 +10532,24 @@ private struct LiveActivityView: View {
             let update = try transactionSelection.update(action: action, cleared: cleared, flag: flag, tags: tags)
             try await store.bulkUpdateTransactions(update)
             transactionSelection.removeAll(); selecting = false
-            await load(reset: true); errorMessage = nil
+            await load(reset: true)
         } catch { errorMessage = error.localizedDescription }
     }
     private func load(reset: Bool) async {
         let requestedKey = queryKey
-        if loading && !reset { return }; loading = true; defer { if requestedKey == queryKey { loading = false } }
+        if loading && !reset { return }
+        let requestID = UUID()
+        pageRequestID = requestID
+        loading = true
+        defer { if requestID == pageRequestID { loading = false } }
         do {
             let page = try await store.browseTransactions(filter.query(search: search, currencyCode: store.budget.currencyCode, cursor: reset ? nil : nextCursor))
-            guard requestedKey == queryKey, !Task.isCancelled else { return }
+            guard requestID == pageRequestID, requestedKey == queryKey, !Task.isCancelled else { return }
             rows = try page.validatedRows(after: reset ? [] : rows, previousTotal: reset ? nil : totalCount, requestedCursor: reset ? nil : nextCursor)
             nextCursor = page.nextCursor; totalCount = page.totalCount; errorMessage = nil
         } catch is CancellationError { return }
         catch {
-            guard requestedKey == queryKey else { return }
+            guard requestID == pageRequestID, requestedKey == queryKey else { return }
             retryIntent = reset ? .refresh : .older
             if HistoryObservationPolicy.mustDiscard(after: error) {
                 rows = []; nextCursor = nil; totalCount = 0

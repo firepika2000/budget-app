@@ -336,6 +336,21 @@ final class DemoStoreTests: XCTestCase {
         }
         XCTAssertTrue(scoped.contains("try Task.checkCancellation()"))
     }
+
+    func testActivityOnlyPublishesAndFinishesLatestRefresh() throws {
+        let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("BudgetApp/BudgetWorkspaceView.swift")
+        let source = try String(contentsOf: file)
+        let start = try XCTUnwrap(source.range(of: "private struct LiveActivityView: View"))
+        let end = try XCTUnwrap(source.range(of: "private struct TransactionBrowserFilter:"))
+        let activity = String(source[start.lowerBound..<end.lowerBound])
+        XCTAssertTrue(activity.contains("@State private var pageRequestID = UUID()"))
+        XCTAssertTrue(activity.contains("let requestID = UUID()\n        pageRequestID = requestID"))
+        XCTAssertTrue(activity.contains("defer { if requestID == pageRequestID { loading = false } }"))
+        XCTAssertTrue(activity.contains("guard requestID == pageRequestID, requestedKey == queryKey, !Task.isCancelled else { return }"))
+        XCTAssertTrue(activity.contains("guard requestID == pageRequestID, requestedKey == queryKey else { return }"))
+        XCTAssertTrue(activity.contains("\\(store.authorityRevision)|\\(search)|\\(filter)"))
+        XCTAssertFalse(activity.contains("await load(reset: true); errorMessage = nil"), "Bulk success must not hide a failed authoritative refresh")
+    }
     func testReportHistoryRefreshPublishesReplacementOnlyAfterCurrentResponse() throws {
         let source = try String(contentsOf: URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("BudgetApp/BudgetWorkspaceView.swift"))
         let start = try XCTUnwrap(source.range(of: "private struct LiveReportTransactionsView:"))
