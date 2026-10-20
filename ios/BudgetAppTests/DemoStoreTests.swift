@@ -11,6 +11,18 @@ import UserNotifications
 @testable import Budget_App
 
 final class DemoStoreTests: XCTestCase {
+    func testProductionAttachmentSourceUsesDismissalCompletionInsteadOfTimer() throws {
+        let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("BudgetApp/BudgetWorkspaceView.swift")
+        let source = try String(contentsOf: file)
+        let start = try XCTUnwrap(source.range(of: "private struct TransactionAttachmentsView: View"))
+        let end = try XCTUnwrap(source.range(of: "private struct AttachmentPreviewScreen: View"))
+        let view = source[start.lowerBound..<end.lowerBound]
+        XCTAssertTrue(view.contains(".sheet(isPresented: $showingSources, onDismiss: presentQueuedSourceAfterDismissal)"))
+        XCTAssertTrue(view.contains("guard !showingSources, let source = pendingSource"))
+        XCTAssertFalse(view.contains("Task.sleep"))
+        XCTAssertFalse(view.contains(".onChange(of: showingSources)"))
+    }
+
     func testLocalTransactionHistoryProjectsExactValuesAndRedactsHistoricalScope() throws {
         let before = #"{"account_id":"a","category_id":"hidden","amount_minor":9007199254740993,"memo":"private old memo","is_cleared":false,"tags":["private"],"transfer_id":"internal-old"}"#
         let after = #"{"account_id":"a","category_id":"food","amount_minor":9007199254740995,"memo":"visible memo","is_cleared":true,"tags":["qa"],"transfer_id":"internal-new"}"#

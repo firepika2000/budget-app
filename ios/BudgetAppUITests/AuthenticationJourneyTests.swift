@@ -1933,20 +1933,32 @@ final class AuthenticationJourneyTests: XCTestCase {
 
     func testProductionAttachmentSourceChooserOffersCameraPhotosAndFiles() {
         let app = XCUIApplication()
-        app.launchArguments = ["--demo", "--demo-screen=activity"]
+        app.launchArguments = ["--demo", "--demo-screen=activity", "--skip-guided-onboarding"]
         app.launch()
 
-        XCTAssertTrue(app.buttons["transaction-row-t1"].waitForExistence(timeout: 5))
-        app.buttons["transaction-row-t1"].tap()
+        let transaction = app.buttons["transaction-row-t1"]
+        for _ in 0..<8 where !transaction.exists || !transaction.isHittable { app.swipeUp() }
+        XCTAssertTrue(transaction.waitForExistence(timeout: 5))
+        transaction.tap()
         XCTAssertTrue(app.navigationBars["Transaction"].waitForExistence(timeout: 5))
-        app.buttons["add-attachment-action"].tap()
+        let add = app.buttons["add-attachment-action"]
+        for _ in 0..<6 where !add.exists || !add.isHittable { app.swipeUp() }
+        XCTAssertTrue(add.waitForExistence(timeout: 5)); add.tap()
 
         XCTAssertTrue(app.buttons.matching(identifier: "attachment-take-photo").firstMatch.waitForExistence(timeout: 5))
         let choosePhoto = app.buttons.matching(identifier: "attachment-choose-photo").firstMatch
         XCTAssertTrue(choosePhoto.exists)
         XCTAssertTrue(app.buttons.matching(identifier: "attachment-choose-file").firstMatch.exists)
         choosePhoto.tap()
-        XCTAssertFalse(choosePhoto.exists, "choosing Photos must dismiss the source dialog and present the native picker")
+        let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: choosePhoto)
+        XCTAssertEqual(XCTWaiter.wait(for: [dismissed], timeout: 5), .completed)
+        XCTAssertTrue(app.buttons["Cancel"].firstMatch.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertFalse(choosePhoto.exists, "choosing Photos must finish dismissing the source sheet")
+        XCTAssertFalse(app.alerts["Attachment error"].exists)
+        app.buttons["Cancel"].firstMatch.tap()
+        XCTAssertTrue(add.waitForExistence(timeout: 5))
+        add.tap()
+        XCTAssertTrue(choosePhoto.waitForExistence(timeout: 5), "The chooser must reopen after canceling Photos")
     }
 
     func testProductionAttachmentPreviewOpensWithoutInvokingRemoval() {

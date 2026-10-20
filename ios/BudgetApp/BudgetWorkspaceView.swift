@@ -11466,13 +11466,20 @@ private struct TransactionAttachmentsView: View {
         .onChange(of: pendingUploads.count) { oldCount, newCount in
             if oldCount > 0 && newCount == 0 { Task { await load() } }
         }
-        .confirmationDialog("Add Attachment", isPresented: $showingSources, titleVisibility: .visible) {
-            Button("Take Photo", systemImage: "camera") { queue(.camera) }.accessibilityIdentifier("attachment-take-photo")
-            Button("Choose Photo", systemImage: "photo.on.rectangle") { queue(.photos) }.accessibilityIdentifier("attachment-choose-photo")
-            Button("Choose File", systemImage: "folder") { queue(.files) }.accessibilityIdentifier("attachment-choose-file")
-            Button("Cancel", role: .cancel) {}
+        .sheet(isPresented: $showingSources, onDismiss: presentQueuedSourceAfterDismissal) {
+            NavigationStack {
+                List {
+                    Button("Take Photo", systemImage: "camera") { queue(.camera) }.accessibilityIdentifier("attachment-take-photo")
+                    Button("Choose Photo", systemImage: "photo.on.rectangle") { queue(.photos) }.accessibilityIdentifier("attachment-choose-photo")
+                    Button("Choose File", systemImage: "folder") { queue(.files) }.accessibilityIdentifier("attachment-choose-file")
+                }
+                .navigationTitle("Add Attachment")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar { ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { pendingSource = nil; showingSources = false }
+                } }
+            }.presentationDetents([.medium, .large])
         }
-        .onChange(of: showingSources) { _, presented in if !presented { presentQueuedSourceAfterDismissal() } }
         .photosPicker(isPresented: $choosingPhoto, selection: $selectedPhoto, matching: .images)
         .onChange(of: selectedPhoto) { _, item in guard let item else { return }; Task { await importPhoto(item) } }
         .fileImporter(isPresented: $importingFile, allowedContentTypes: [.pdf, .jpeg, .png, .heic]) { result in Task { await importFile(result) } }
@@ -11520,18 +11527,12 @@ private struct TransactionAttachmentsView: View {
         showingSources = false
     }
     private func presentQueuedSourceAfterDismissal() {
-        guard let source = pendingSource else { return }
-        Task { @MainActor in
-            // A confirmation dialog remains in UIKit's dismissal transition briefly after its
-            // binding becomes false. Wait for that transition before presenting another modal.
-            try? await Task.sleep(for: .milliseconds(350))
-            guard pendingSource != nil, !showingSources else { return }
-            pendingSource = nil
-            switch source {
-            case .camera: requestCamera()
-            case .photos: choosingPhoto = true
-            case .files: importingFile = true
-            }
+        guard !showingSources, let source = pendingSource else { return }
+        pendingSource = nil
+        switch source {
+        case .camera: requestCamera()
+        case .photos: choosingPhoto = true
+        case .files: importingFile = true
         }
     }
     private func requestCamera() {
