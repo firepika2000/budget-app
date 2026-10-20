@@ -1011,22 +1011,22 @@ public actor LocalAuthorityStore {
         let categories = try await loadCategories(budgetID: budgetID)
         let payees = try await loadPayees(budgetID: budgetID)
         let transactions = try await loadTransactions(budgetID: budgetID)
-        let payeeAliases = try await loadPayeeAliases(payeeIDs: Set(payees.map(\.id)))
+        let payeeAliases = try await loadPayeeAliases(budgetID: budgetID, payeeIDs: Set(payees.map(\.id)))
         let payeeRevisions = try await loadPayeeRevisions(budgetID: budgetID)
         let allocations = try await loadAllocations(budgetID: budgetID)
-        let reconciliations = try await loadReconciliations(accountIDs: Set(accounts.map(\.id)))
-        let targets = try await loadTargets(categoryIDs: Set(categories.map(\.id)))
+        let reconciliations = try await loadReconciliations(budgetID: budgetID, accountIDs: Set(accounts.map(\.id)))
+        let targets = try await loadTargets(budgetID: budgetID, categoryIDs: Set(categories.map(\.id)))
         let targetRevisions = try await loadTargetRevisions(budgetID: budgetID)
         let schedules = try await loadSchedules(budgetID: budgetID)
         let scheduleRevisions = try await loadScheduleRevisions(budgetID: budgetID)
-        let attachments = try await loadAttachments(transactionIDs: Set(transactions.map(\.id)))
+        let attachments = try await loadAttachments(budgetID: budgetID, transactionIDs: Set(transactions.map(\.id)))
         let attachmentTombstones = try await loadAttachmentTombstones(budgetID: budgetID)
-        let debtTerms = try await loadDebtTerms(accountIDs: Set(accounts.map(\.id)))
+        let debtTerms = try await loadDebtTerms(budgetID: budgetID, accountIDs: Set(accounts.map(\.id)))
         let debtTermsRevisions = try await loadDebtTermsRevisions(budgetID: budgetID)
         let debtPayoffPlans = try await loadDebtPayoffPlans(budgetID: budgetID)
         let debtPayoffPlanRevisions = try await loadDebtPayoffPlanRevisions(budgetID: budgetID)
         let rollover = try await loadCashRolloverPolicies(budgetID: budgetID)
-        let reserve = try await loadCreditReserveAttributions(transactionIDs: Set(transactions.map(\.id)))
+        let reserve = try await loadCreditReserveAttributions(budgetID: budgetID, transactionIDs: Set(transactions.map(\.id)))
         let changes = try await loadTransactionChanges(budgetID: budgetID)
         let reserveEvents = try await loadCreditReserveEvents(budgetID: budgetID)
         let statementImports = try await loadStatementImports(budgetID: budgetID)
@@ -1303,9 +1303,9 @@ public actor LocalAuthorityStore {
         }
     }
 
-    private func loadPayeeAliases(payeeIDs: Set<String>) async throws -> [LocalPayeeAliasRecord] {
+    private func loadPayeeAliases(budgetID: String, payeeIDs: Set<String>) async throws -> [LocalPayeeAliasRecord] {
         guard !payeeIDs.isEmpty else { return [] }
-        let rows = try await database.rows(.init("SELECT * FROM payee_aliases ORDER BY normalized_name,id"))
+        let rows = try await database.rows(.init("SELECT a.* FROM payee_aliases a JOIN payees p ON p.id=a.payee_id WHERE p.budget_id=? ORDER BY a.normalized_name,a.id", values: [.text(budgetID)]))
         return try rows.compactMap {
             let payeeID = try text($0, "payee_id")
             guard payeeIDs.contains(payeeID) else { return nil }
@@ -1353,9 +1353,9 @@ public actor LocalAuthorityStore {
         }
     }
 
-    private func loadReconciliations(accountIDs: Set<String>) async throws -> [LocalReconciliationRecord] {
+    private func loadReconciliations(budgetID: String, accountIDs: Set<String>) async throws -> [LocalReconciliationRecord] {
         guard !accountIDs.isEmpty else { return [] }
-        let rows = try await database.rows(.init("SELECT * FROM reconciliations ORDER BY statement_date,id"))
+        let rows = try await database.rows(.init("SELECT r.* FROM reconciliations r JOIN accounts a ON a.id=r.account_id WHERE a.budget_id=? ORDER BY r.statement_date,r.id", values: [.text(budgetID)]))
         return try rows.compactMap {
             let accountID = try text($0, "account_id")
             guard accountIDs.contains(accountID) else { return nil }
@@ -1363,9 +1363,9 @@ public actor LocalAuthorityStore {
         }
     }
 
-    private func loadTargets(categoryIDs: Set<String>) async throws -> [LocalCategoryTargetRecord] {
+    private func loadTargets(budgetID: String, categoryIDs: Set<String>) async throws -> [LocalCategoryTargetRecord] {
         guard !categoryIDs.isEmpty else { return [] }
-        let rows = try await database.rows(.init("SELECT * FROM category_targets ORDER BY category_id"))
+        let rows = try await database.rows(.init("SELECT t.* FROM category_targets t JOIN categories c ON c.id=t.category_id WHERE c.budget_id=? ORDER BY t.category_id", values: [.text(budgetID)]))
         return try rows.compactMap {
             let categoryID = try text($0, "category_id")
             guard categoryIDs.contains(categoryID) else { return nil }
@@ -1402,9 +1402,9 @@ public actor LocalAuthorityStore {
                   createdAt: text(row, "created_at"))
     }
 
-    private func loadDebtTerms(accountIDs: Set<String>) async throws -> [LocalAccountDebtTermsRecord] {
+    private func loadDebtTerms(budgetID: String, accountIDs: Set<String>) async throws -> [LocalAccountDebtTermsRecord] {
         guard !accountIDs.isEmpty else { return [] }
-        let rows = try await database.rows(.init("SELECT * FROM account_debt_terms ORDER BY account_id"))
+        let rows = try await database.rows(.init("SELECT d.* FROM account_debt_terms d JOIN accounts a ON a.id=d.account_id WHERE a.budget_id=? ORDER BY d.account_id", values: [.text(budgetID)]))
         return try rows.compactMap { row in
             let accountID = try text(row, "account_id")
             guard accountIDs.contains(accountID) else { return nil }
@@ -1418,9 +1418,9 @@ public actor LocalAuthorityStore {
         }
     }
 
-    private func loadCreditReserveAttributions(transactionIDs: Set<String>) async throws -> [LocalCreditReserveAttributionRecord] {
+    private func loadCreditReserveAttributions(budgetID: String, transactionIDs: Set<String>) async throws -> [LocalCreditReserveAttributionRecord] {
         guard !transactionIDs.isEmpty else { return [] }
-        let rows = try await database.rows(.init("SELECT * FROM credit_reserve_attributions ORDER BY transaction_id,category_id"))
+        let rows = try await database.rows(.init("SELECT r.* FROM credit_reserve_attributions r JOIN transactions t ON t.id=r.transaction_id WHERE t.budget_id=? ORDER BY r.transaction_id,r.category_id", values: [.text(budgetID)]))
         return try rows.compactMap { row in
             let transactionID = try text(row, "transaction_id")
             guard transactionIDs.contains(transactionID) else { return nil }
@@ -1442,9 +1442,9 @@ public actor LocalAuthorityStore {
         }
     }
 
-    private func loadAttachments(transactionIDs: Set<String>) async throws -> [LocalAttachmentRecord] {
+    private func loadAttachments(budgetID: String, transactionIDs: Set<String>) async throws -> [LocalAttachmentRecord] {
         guard !transactionIDs.isEmpty else { return [] }
-        let rows = try await database.rows(.init("SELECT * FROM attachments ORDER BY created_at,id"))
+        let rows = try await database.rows(.init("SELECT a.* FROM attachments a JOIN transactions t ON t.id=a.transaction_id WHERE t.budget_id=? ORDER BY a.created_at,a.id", values: [.text(budgetID)]))
         return try rows.compactMap {
             let transactionID = try text($0, "transaction_id")
             guard transactionIDs.contains(transactionID) else { return nil }

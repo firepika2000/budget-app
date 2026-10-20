@@ -3,6 +3,50 @@ import XCTest
 @testable import BudgetStorage
 
 final class LocalDatabaseTests: XCTestCase {
+    func testLocalRelatedObservationsStayBudgetScopedAcrossReopen() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appendingPathComponent("related.sqlite")
+        let database = try LocalDatabase(fileURL: file)
+        try await database.transaction(fixtureStatements)
+        let replacements = ["budget": "other", "checking": "other-account", "needs": "other-group",
+                            "groceries": "other-category", "transaction": "other-transaction", "split": "other-split"]
+        let other = fixtureStatements.dropFirst(3).map { statement in
+            LocalSQLStatement(statement.sql, values: statement.values.map { value in
+                if case let .text(text) = value, let replaced = replacements[text] { return .text(replaced) }
+                return value
+            })
+        }
+        try await database.transaction(Array(other))
+        var observations: [LocalSQLStatement] = []
+        for (budget, account, category, transaction) in [("budget", "checking", "groceries", "transaction"), ("other", "other-account", "other-category", "other-transaction")] {
+            observations += [
+                .init("INSERT INTO payees(id,budget_id,name,normalized_name,is_archived) VALUES (?,?,'Merchant','merchant',0)", values: [.text("\(budget)-payee"), .text(budget)]),
+                .init("INSERT INTO payee_aliases(id,payee_id,display_name,normalized_name) VALUES (?,?,'Alias','alias')", values: [.text("\(budget)-alias"), .text("\(budget)-payee")]),
+                .init("INSERT INTO reconciliations(id,account_id,statement_date,statement_balance_minor,created_at) VALUES (?,?,'2026-09-27',9007199254740993,'now')", values: [.text("\(budget)-reconciliation"), .text(account)]),
+                .init("INSERT INTO category_targets(category_id,target_type,amount_minor,cadence,effective_month) VALUES (?,'monthly_funding',9007199254740993,'monthly','2026-09-01')", values: [.text(category)]),
+                .init("INSERT INTO account_debt_terms(account_id,terms_type,annual_rate_basis_points,updated_at) VALUES (?,'revolving',2199,'now')", values: [.text(account)]),
+                .init("INSERT INTO credit_reserve_attributions(transaction_id,category_id,amount_minor) VALUES (?,?,12345)", values: [.text(transaction), .text(category)]),
+                .init("INSERT INTO attachments(id,transaction_id,filename,content_type,size_bytes,sha256,object_name,created_at) VALUES (?,?,'receipt.pdf','application/pdf',100,?,'object','now')", values: [.text("\(budget)-attachment"), .text(transaction), .text(String(repeating: "a", count: 64))])
+            ]
+        }
+        try await database.transaction(observations)
+        for budget in ["budget", "other"] {
+            let authority = try LocalAuthorityStore(fileURL: file)
+            let value = try await authority.snapshot(budgetID: budget)
+            XCTAssertEqual(value.payeeAliases.map(\.id), ["\(budget)-alias"])
+            XCTAssertEqual(value.reconciliations.map(\.id), ["\(budget)-reconciliation"])
+            XCTAssertEqual(value.reconciliations.first?.statementBalanceMinor, 9_007_199_254_740_993)
+            XCTAssertEqual(value.targets.map(\.categoryID), value.categories.map(\.id))
+            XCTAssertEqual(value.targets.first?.amountMinor, 9_007_199_254_740_993)
+            XCTAssertEqual(value.debtTerms.map(\.accountID), value.accounts.map(\.id))
+            XCTAssertEqual(value.attachments.map(\.id), ["\(budget)-attachment"])
+            XCTAssertEqual(value.creditReserveAttributions.map(\.transactionID), value.transactions.map(\.id))
+            XCTAssertEqual(value.transactions.first?.amountMinor, -12_345)
+        }
+        try await database.integrityCheck()
+    }
+
     func testLargeLocalSnapshotBatchesSplitReadsAndPreservesExactScopedLedger() async throws {
         let root = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
