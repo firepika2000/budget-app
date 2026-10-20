@@ -2,10 +2,56 @@
 
 ## Current workspace checkpoint
 
-Inspected implementation: `b9a3f64` on `codex/development`. App and widget remain `0.11.0`
+Inspected implementation: `ce298d8` on `codex/development`, plus the keyboard diagnostic checkpoint below. App and widget remain `0.11.0`
 build `7`; TestFlight is held. Regular Xcode 27.1 (`27A9275`) builds and executes focused tests
 on preserved iPhone 17 Pro Max `3ABD861E-D38D-4AFD-A356-959266051564`, iOS 27.0 (`24A434`).
 No Simulator or Live data reset, merge, tag, or release is part of these checkpoints.
+
+### Forecast observation and scenario continuity
+
+Forecast detail now owns its selected horizon rather than replacing Home's ninety-day observation
+(`aae9278`). Its request and cached result are scoped to the current authority, budget and horizon.
+Seven native checks and one production navigation UI test passed at that checkpoint. What-if
+scenarios also refresh their own baseline without resetting assumptions on ordinary refresh or
+navigation (`ce298d8`). Six native checks, two Swift package scenario tests and the final production
+UI test passed in separate focused runs. The production flow covered a one-year forecast, scenario
+input, background/foreground continuity and return to Home's unchanged ninety-day horizon.
+No financial mutation or new server contract is involved.
+
+### Keyboard layout diagnostic
+
+The production scenario UI test on regular Xcode 27.1 recorded SwiftUI's
+`Invalid frame dimension (negative or non-finite).` while focusing a currency field, before
+backgrounding. Application frame declarations did not reveal a negative/non-finite dimension.
+The captured runtime stack contained zero addresses and did not identify a source line.
+
+A DEBUG-only alternate root now provides three native SwiftUI number/punctuation text fields,
+without workspace views, custom frame calculations or currency components. Three focused UI
+comparisons passed on the preserved iOS 27.0 Simulator:
+
+| Native control configuration | Input and dismissal | Invalid frame warning |
+| --- | --- | --- |
+| Keyboard toolbar declared by each field | Passed | Present |
+| Toolbar declared only by the focused field | Passed | Present |
+| No keyboard toolbar | Input passed | Absent |
+
+The result bundle is `Test-BudgetApp-2026.10.20_06-57-06--0400.xcresult`; per-test warning nodes
+establish the attribution. This isolates the warning to native keyboard-toolbar presentation in
+this app host, but does not prove an Apple source line or independently reproduce it in a separate
+application. Repeated toolbars are not its sole cause. Production controls remain unchanged;
+there is no console suppression, delay or speculative layout workaround. The diagnostic root is
+excluded from Release builds.
+
+The normal production forecast/scenario navigation test also passed after adding the probe
+(`Test-BudgetApp-2026.10.20_07-00-07--0400.xcresult`); it still records the same layout warning.
+The regular-Xcode simulator build and diff check passed. No backend or financial code changed.
+
+Source identified: SwiftUI emits the warning; exact internal cause remains unproven. Application
+defect: unproven. Apple runtime issue: likely, not confirmed; the retained iOS 27.0 runtime is the
+same in all comparisons. No missed input, dismissal failure or crash occurred in these three
+tests. Reopen for a correlated visible failure, a symbolicated source location, or a comparison
+on a newer runtime. This result does not resolve the separate `cannot add handler to 0 from 0`
+diagnostic. Human acceptance remains separate from these automated checks.
 
 ### Native selection and statement preparation
 

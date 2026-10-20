@@ -304,13 +304,51 @@ struct BudgetApp: App {
 
     var body: some Scene {
         WindowGroup {
-            RootView()
+            #if DEBUG
+            if let mode = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("--system-keyboard-probe=") }) {
+                SystemKeyboardProbe(mode: String(mode.dropFirst("--system-keyboard-probe=".count)))
+            } else { productionRoot }
+            #else
+            productionRoot
+            #endif
+        }
+    }
+    private var productionRoot: some View {
+        RootView()
                 .environmentObject(session)
                 .environmentObject(appearance)
                 .preferredColorScheme(appearance.selection.colorScheme)
                 .onOpenURL { url in
                     if !QuickEntryRequest.handle(url) { _ = WorkspaceShortcutRequest.handle(url) }
                 }
+    }
+}
+
+#if DEBUG
+/// An isolated native-control comparison: no workspace, money field, chart or repository views.
+private struct SystemKeyboardProbe: View {
+    let mode: String
+    @State private var amounts = ["", "", ""]
+    @FocusState private var focused: Int?
+    var body: some View {
+        NavigationStack {
+            Form {
+                ForEach(0..<3, id: \.self) { index in
+                    TextField("Probe amount \(index + 1)", text: $amounts[index])
+                        .keyboardType(.numbersAndPunctuation)
+                        .focused($focused, equals: index)
+                        .toolbar {
+                            if mode == "repeated" || (mode == "focused" && focused == index) {
+                                ToolbarItemGroup(placement: .keyboard) {
+                                    Button("+") {}; Button("−") {}; Button("×") {}; Button("÷") {}
+                                    Spacer()
+                                    Button("Done") { focused = nil }
+                                }
+                            }
+                        }
+                }
+            }.navigationTitle("System Keyboard Probe")
         }
     }
 }
+#endif

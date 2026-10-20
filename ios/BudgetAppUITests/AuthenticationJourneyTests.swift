@@ -13,6 +13,24 @@ private extension XCUIElement {
 }
 
 final class AuthenticationJourneyTests: XCTestCase {
+    func testSystemKeyboardProbeRepeatedToolbars() { systemKeyboardProbe(mode: "repeated") }
+    func testSystemKeyboardProbeFocusedToolbar() { systemKeyboardProbe(mode: "focused") }
+    func testSystemKeyboardProbeWithoutToolbar() { systemKeyboardProbe(mode: "none") }
+
+    private func systemKeyboardProbe(mode: String) {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--system-keyboard-probe=\(mode)"]
+        app.launch()
+        let field = app.textFields["Probe amount 3"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5)); field.tap(); field.typeText("100")
+        XCTAssertEqual(field.value as? String, "100")
+        if mode != "none" {
+            let done = app.buttons["Done"].firstMatch
+            XCTAssertTrue(done.exists); done.tap()
+        }
+    }
+
     func testProductionForecastHorizonDoesNotReplaceHomeNinetyDayObservation() {
         continueAfterFailure = false
         let app = XCUIApplication()
