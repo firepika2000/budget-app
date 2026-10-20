@@ -326,6 +326,14 @@ public actor DropboxBackupDestination {
     }
 
     private static func validatedPackageFiles(_ package: URL) throws -> [URL] {
+        // Checking only leaf files follows a linked payload directory into unrelated storage.
+        // Validate both package-controlled directory boundaries before any network operation.
+        for directory in [package, package.appendingPathComponent("payload", isDirectory: true)] {
+            let values = try directory.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+            guard values.isDirectory == true, values.isSymbolicLink != true else {
+                throw DropboxBackupDestinationError.invalidPackage("The encrypted backup contains a linked or invalid directory.")
+            }
+        }
         let manifestURL = package.appendingPathComponent("manifest.json")
         let manifest: LocalDeviceBackupManifest
         do { manifest = try JSONDecoder().decode(LocalDeviceBackupManifest.self, from: BackupManifestIO.read(manifestURL)) }

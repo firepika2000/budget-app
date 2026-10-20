@@ -346,6 +346,30 @@ final class DropboxBackupDestinationTests: XCTestCase {
         XCTAssertEqual(remaining, ["Second.clearpocketbackup"])
     }
 
+    func testPublishRejectsSymlinkedPackageOrPayloadDirectoryBeforeNetwork() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("dropbox-links-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let package = try makePackage(root: root, name: "Original.clearpocketbackup", payloads: [Data("ciphertext".utf8)])
+        let alias = root.appendingPathComponent("Alias.clearpocketbackup")
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: package)
+        let external = root.appendingPathComponent("external-payload")
+        try FileManager.default.moveItem(at: package.appendingPathComponent("payload"), to: external)
+        try FileManager.default.createSymbolicLink(at: package.appendingPathComponent("payload"), withDestinationURL: external)
+        for selected in [alias, package] {
+            let transport = FakeDropboxBackupTransport()
+            let destination = try DropboxBackupDestination(transport: transport)
+            do {
+                _ = try await destination.publish(packageURL: selected)
+                XCTFail("A linked backup directory must fail before any publication")
+            } catch let error as DropboxBackupDestinationError {
+                guard case .invalidPackage = error else { return XCTFail("Unexpected error: \(error)") }
+            }
+            let remote = await transport.paths()
+            XCTAssertTrue(remote.isEmpty, "Rejected source must never reach Dropbox")
+        }
+        XCTAssertEqual(try Data(contentsOf: external.appendingPathComponent("000000.cpenc")), Data("ciphertext".utf8))
+    }
+
     private func makePackage(root: URL, name: String, payloads: [Data]) throws -> URL {
         let package = root.appendingPathComponent(name, isDirectory: true)
         let directory = package.appendingPathComponent("payload", isDirectory: true)
