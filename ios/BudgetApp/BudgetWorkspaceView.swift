@@ -55,11 +55,11 @@ struct PayeeSearchSelectionView: View {
     let excludedID: String?
     let onSelect: (APIPayee) -> Void
     @State private var query = ""
-    @State private var rows: [APIPayee] = []
-    @State private var nextCursor: String?
-    @State private var loading = false
-    @State private var errorMessage: String?
-    @State private var requests = PayeeSearchRequestTracker()
+    @StateObject private var pager = PayeeSearchPager()
+    private var rows: [APIPayee] { pager.rows }
+    private var nextCursor: String? { pager.nextCursor }
+    private var loading: Bool { pager.loading }
+    private var errorMessage: String? { pager.errorMessage }
 
     init(title: String = "Choose Payee", includeArchived: Bool = false, excludedID: String? = nil, onSelect: @escaping (APIPayee) -> Void) {
         self.title = title; self.includeArchived = includeArchived; self.excludedID = excludedID; self.onSelect = onSelect
@@ -71,7 +71,7 @@ struct PayeeSearchSelectionView: View {
                 if let errorMessage {
                     Section {
                         Label(errorMessage, systemImage: "wifi.exclamationmark").font(.footnote)
-                        Button("Retry Search") { Task { await load(reset: nextCursor == nil) } }
+                        Button("Retry Search") { Task { await load(reset: pager.retryIntent.shouldReset(hasLoadedRows: !rows.isEmpty)) } }
                             .accessibilityIdentifier("payee-search-retry")
                     }
                 }
@@ -97,31 +97,19 @@ struct PayeeSearchSelectionView: View {
             .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
             .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search payees")
-            .task(id: "\(store.authorityRevision):\(query)") {
-                requests.invalidate(); rows = []; nextCursor = nil; errorMessage = nil; loading = true
+            .task(id: "\(store.authorityRevision):\(store.reportRevision):\(query)") {
+                pager.prepare(query: query, authority: store.authorityRevision, includeArchived: includeArchived)
                 try? await Task.sleep(for: .milliseconds(250)); guard !Task.isCancelled else { return }; await load(reset: true)
             }
-            .onDisappear { requests.invalidate() }
+            .onDisappear { pager.invalidate() }
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
         }
     }
 
     private func load(reset: Bool) async {
-        if !reset && loading { return }
         let requestedQuery = query
-        let request = requests.begin(query: requestedQuery, authority: store.authorityRevision)
-        loading = true
-        defer { if requests.accepts(request, query: query, authority: store.authorityRevision) { loading = false } }
-        do {
-            let page = try await store.searchPayees(query: requestedQuery, includeArchived: includeArchived, limit: 20, cursor: reset ? nil : nextCursor)
-            guard !Task.isCancelled, requests.accepts(request, query: query, authority: store.authorityRevision) else { return }
-            rows = reset ? page.items : rows + page.items
-            nextCursor = page.nextCursor
-            errorMessage = nil
-        } catch is CancellationError {
-        } catch {
-            guard !Task.isCancelled, requests.accepts(request, query: query, authority: store.authorityRevision) else { return }
-            errorMessage = error.localizedDescription
+        await pager.load(reset: reset) { cursor in
+            try await store.searchPayees(query: requestedQuery, includeArchived: includeArchived, limit: 20, cursor: cursor)
         }
     }
 }
@@ -130,18 +118,18 @@ private struct PayeeManagementView: View {
     @EnvironmentObject private var store: BudgetWorkspaceStore
     @State private var showCreate = false
     @State private var query = ""
-    @State private var rows: [APIPayee] = []
-    @State private var nextCursor: String?
-    @State private var loading = false
+    @StateObject private var pager = PayeeSearchPager()
+    private var rows: [APIPayee] { pager.rows }
+    private var nextCursor: String? { pager.nextCursor }
+    private var loading: Bool { pager.loading }
     @State private var creationConfirmation: String?
-    @State private var errorMessage: String?
-    @State private var requests = PayeeSearchRequestTracker()
+    private var errorMessage: String? { pager.errorMessage }
     var body: some View {
         List {
             if let errorMessage {
                 Section {
                     Label(errorMessage, systemImage: "wifi.exclamationmark").font(.footnote)
-                    Button("Retry Search") { Task { await load(reset: nextCursor == nil) } }
+                    Button("Retry Search") { Task { await load(reset: pager.retryIntent.shouldReset(hasLoadedRows: !rows.isEmpty)) } }
                         .accessibilityIdentifier("payee-management-retry")
                 }
             }
@@ -166,14 +154,17 @@ private struct PayeeManagementView: View {
             if nextCursor != nil { Button("Load More") { Task { await load(reset: false) } }.disabled(loading) }
         }
         .navigationTitle("Payees")
-        .searchable(text: $query, prompt: "Search payees")
-        .task(id: "\(store.authorityRevision):\(query)") {
-            requests.invalidate(); rows = []; nextCursor = nil; errorMessage = nil; loading = true
+        .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search payees")
+        .task(id: "\(store.authorityRevision):\(store.reportRevision):\(query)") {
+            pager.prepare(query: query, authority: store.authorityRevision, includeArchived: true)
             try? await Task.sleep(for: .milliseconds(250)); guard !Task.isCancelled else { return }; await load(reset: true)
         }
-        .onDisappear { requests.invalidate() }
+        .onDisappear { pager.invalidate() }
         .toolbar { Button("Add Payee", systemImage: "plus") { showCreate = true }.accessibilityIdentifier("add-payee-action") }
-        .sheet(isPresented: $showCreate, onDismiss: { Task { await load(reset: true) } }) {
+        .sheet(isPresented: $showCreate, onDismiss: { Task {
+            pager.prepare(query: query, authority: store.authorityRevision, includeArchived: true)
+            await load(reset: true)
+        } }) {
             PayeeEditorView(payee: nil) { createdName in
                 creationConfirmation = createdName
                 query = createdName
@@ -182,18 +173,9 @@ private struct PayeeManagementView: View {
         .overlay { if loading && rows.isEmpty { ProgressView() } }
     }
     private func load(reset: Bool) async {
-        if !reset && loading { return }
-        let request = requests.begin(query: query, authority: store.authorityRevision)
-        loading = true
-        defer { if requests.accepts(request, query: query, authority: store.authorityRevision) { loading = false } }
-        do {
-            let page = try await store.searchPayees(query: request.query, includeArchived: true, limit: 20, cursor: reset ? nil : nextCursor)
-            guard !Task.isCancelled, requests.accepts(request, query: query, authority: store.authorityRevision) else { return }
-            rows = reset ? page.items : rows + page.items; nextCursor = page.nextCursor; errorMessage = nil
-        } catch is CancellationError {
-        } catch {
-            guard !Task.isCancelled, requests.accepts(request, query: query, authority: store.authorityRevision) else { return }
-            errorMessage = error.localizedDescription
+        let requestedQuery = query
+        await pager.load(reset: reset) { cursor in
+            try await store.searchPayees(query: requestedQuery, includeArchived: true, limit: 20, cursor: cursor)
         }
     }
 }

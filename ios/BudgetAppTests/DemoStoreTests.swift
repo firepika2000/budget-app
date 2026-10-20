@@ -421,6 +421,48 @@ final class DemoStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testPayeePagerRefreshIsBoundedAtomicAndKeepsRetryIntent() async throws {
+        func payee(_ id: String, _ name: String) throws -> APIPayee {
+            try JSONDecoder().decode(APIPayee.self, from: Data("{\"id\":\"\(id)\",\"household_id\":\"h\",\"display_name\":\"\(name)\",\"is_archived\":false,\"transaction_count\":1,\"net_amount_minor\":-100,\"aliases\":[]}".utf8))
+        }
+        let first = try payee("a", "Before"), second = try payee("b", "Other"), renamed = try payee("a", "Renamed")
+        let pager = PayeeSearchPager()
+        pager.prepare(query: "", authority: 1, includeArchived: true)
+        await pager.load(reset: true) { _ in .init(items: [first], nextCursor: "second") }
+        await pager.load(reset: false) { cursor in
+            XCTAssertEqual(cursor, "second")
+            return .init(items: [second], nextCursor: "third")
+        }
+        pager.prepare(query: "", authority: 1, includeArchived: true)
+        var requests = 0
+        await pager.load(reset: true) { cursor in
+            requests += 1
+            XCTAssertEqual(pager.rows, [first, second], "No intermediate replacement page")
+            return cursor == nil ? .init(items: [renamed], nextCursor: "second") : .init(items: [second], nextCursor: "third")
+        }
+        XCTAssertEqual(requests, 2, "Do not load unopened directory pages")
+        XCTAssertEqual(pager.rows, [renamed, second])
+        await pager.load(reset: true) { cursor in
+            if cursor != nil { throw URLError(.notConnectedToInternet) }
+            return .init(items: [first], nextCursor: "second")
+        }
+        XCTAssertEqual(pager.rows, [renamed, second])
+        XCTAssertEqual(pager.retryIntent, .refresh)
+        await pager.load(reset: false) { _ in .init(items: [second], nextCursor: "third") }
+        XCTAssertEqual(pager.rows, [renamed, second], "Duplicate or non-advancing pages cannot publish")
+        XCTAssertEqual(pager.retryIntent, .older)
+        await pager.load(reset: true) { _ in throw APIClientError.server(status: 403, message: "Denied") }
+        XCTAssertTrue(pager.rows.isEmpty)
+        pager.prepare(query: "other", authority: 2, includeArchived: false)
+        await pager.load(reset: true) { _ in
+            pager.prepare(query: "newer", authority: 3, includeArchived: false)
+            return .init(items: [first], nextCursor: nil)
+        }
+        XCTAssertTrue(pager.rows.isEmpty, "An older authority/query response cannot repopulate search")
+        pager.invalidate()
+    }
+
+    @MainActor
     func testActivityAuditObservationsAdvanceWithoutPermissionChange() async throws {
         let store = BudgetWorkspaceStore.demo()
         await store.refresh()

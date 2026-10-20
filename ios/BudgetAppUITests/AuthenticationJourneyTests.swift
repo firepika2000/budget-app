@@ -1609,12 +1609,9 @@ final class AuthenticationJourneyTests: XCTestCase {
 
     func testProductionPayeeManagementConfirmsAndFindsCreatedIdentity() {
         let app = XCUIApplication()
-        app.launchArguments = ["--demo"]
+        app.launchArguments = ["--demo", "--demo-screen=household", "--skip-guided-onboarding"]
         app.launch()
 
-        app.buttons["profile-settings-button"].tap()
-        XCTAssertTrue(app.navigationBars["Profile & Settings"].waitForExistence(timeout: 5))
-        app.buttons["Household and access"].tap()
         XCTAssertTrue(app.navigationBars["Household"].waitForExistence(timeout: 5))
         for _ in 0..<6 where !app.buttons["Payees"].isHittable { app.swipeUp() }
         XCTAssertTrue(app.buttons["Payees"].isHittable)

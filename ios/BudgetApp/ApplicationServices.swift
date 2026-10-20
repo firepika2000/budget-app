@@ -475,6 +475,58 @@ final class TransactionHistoryPager: ObservableObject {
     }
 }
 
+@MainActor
+final class PayeeSearchPager: ObservableObject {
+    @Published private(set) var rows: [APIPayee] = []
+    @Published private(set) var nextCursor: String?
+    @Published private(set) var loading = false
+    @Published private(set) var errorMessage: String?
+    private(set) var retryIntent: HistoryRetryIntent = .refresh
+    private var query = ""
+    private var authority: Int?
+    private var includeArchived = false
+    private var requestID = UUID()
+
+    func invalidate() { requestID = UUID(); loading = false }
+    func prepare(query: String, authority: Int, includeArchived: Bool) {
+        invalidate()
+        if self.query != query || self.authority != authority || self.includeArchived != includeArchived {
+            rows = []; nextCursor = nil; errorMessage = nil
+        }
+        self.query = query; self.authority = authority; self.includeArchived = includeArchived
+        loading = true
+    }
+    func load(reset: Bool, fetch: (String?) async throws -> APIPayeePage) async {
+        if !reset && (loading || nextCursor == nil) { return }
+        let observed = UUID(); requestID = observed
+        let desiredCount = reset ? rows.count : 0
+        loading = true
+        defer { if requestID == observed { loading = false } }
+        var cursor = reset ? nil : nextCursor
+        var refreshed = reset ? [] : rows
+        do {
+            repeat {
+                let page = try await fetch(cursor)
+                try Task.checkCancellation()
+                guard requestID == observed else { return }
+                let combined = refreshed + page.items
+                guard page.items.count <= 20, Set(combined.map(\.id)).count == combined.count,
+                      page.nextCursor.map({ !$0.isEmpty && $0 != cursor && !page.items.isEmpty }) ?? true else {
+                    throw APIClientError.server(status: 409, message: "Payee search changed. Refresh the search.")
+                }
+                refreshed = combined; cursor = page.nextCursor
+            } while refreshed.count < desiredCount && cursor != nil
+            rows = refreshed; nextCursor = cursor; errorMessage = nil
+        } catch is CancellationError {
+        } catch {
+            guard requestID == observed else { return }
+            retryIntent = reset ? .refresh : .older
+            if HistoryObservationPolicy.mustDiscard(after: error) { rows = []; nextCursor = nil }
+            errorMessage = error.localizedDescription
+        }
+    }
+}
+
 // MARK: - Durable Live transaction outbox
 
 /// Persists identified transaction, planning and transfer commands while a shared server is unreachable. Entries carry
