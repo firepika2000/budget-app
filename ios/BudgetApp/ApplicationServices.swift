@@ -428,6 +428,40 @@ enum UserFileSelection {
     }
 }
 
+@MainActor
+final class ForecastObservation: ObservableObject {
+    @Published private(set) var value: APIForecast?
+    @Published private(set) var loading = false
+    @Published private(set) var errorMessage: String?
+    private var scope: String?
+    private var requestID = UUID()
+
+    func currentValue(scope: String) -> APIForecast? { self.scope == scope ? value : nil }
+    func currentError(scope: String) -> String? { self.scope == scope ? errorMessage : nil }
+
+    func prepare(scope: String) {
+        invalidate()
+        if self.scope != scope { value = nil }
+        self.scope = scope
+        errorMessage = nil
+    }
+    func invalidate() { requestID = UUID(); loading = false }
+    func load(fetch: () async throws -> APIForecast) async {
+        let request = UUID(); requestID = request; loading = true
+        defer { if requestID == request { loading = false } }
+        do {
+            let next = try await fetch()
+            try Task.checkCancellation()
+            guard requestID == request else { return }
+            value = next; errorMessage = nil
+        } catch {
+            guard requestID == request, !(error is CancellationError), (error as? URLError)?.code != .cancelled else { return }
+            if HistoryObservationPolicy.mustDiscard(after: error) { value = nil }
+            errorMessage = error.localizedDescription
+        }
+    }
+}
+
 enum NativeImportFileReader {
     static let maximumBytes = 10 * 1024 * 1024
 

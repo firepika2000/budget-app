@@ -4690,7 +4690,6 @@ final class BudgetWorkspaceStore: ObservableObject {
     @Published var targets: [String: APICategoryTarget] = [:]
     @Published var scheduledTransactions: [APIScheduledTransaction] = []
     @Published var forecast: APIForecast?
-    @Published private(set) var isForecastLoading = false
     @Published private(set) var liveCredentialRevision = 0
     @Published var reportPeriod = "30d"
     @Published var customReportStart = Calendar.current.date(byAdding: .day, value: -29, to: Date())!
@@ -4742,7 +4741,6 @@ final class BudgetWorkspaceStore: ObservableObject {
     private var transactionBrowseRevision: Int?
     private var transactionBrowseOperationID: UUID?
     private var snapshotOperationID: UUID?
-    private var forecastOperationID: UUID?
     @Published private(set) var authorityRevision = 0
     @Published private(set) var workspaceAccessDenied = false
     private var privacyPreferenceKey: String?
@@ -5119,7 +5117,6 @@ final class BudgetWorkspaceStore: ObservableObject {
         pendingReports = [:]; loadedReportKinds = []; loadedReportContext = nil; reportErrors = [:]
         transactionBrowseTask?.cancel()
         transactionBrowseTask = nil; transactionBrowseQuery = nil; transactionBrowseOperationID = nil
-        forecastOperationID = nil; isForecastLoading = false
         planningGuidanceOperationID = nil; planningSpendingReport = nil
         spendingReport = nil; spendingTrendsReport = nil; incomeReport = nil; netWorthReport = nil
         debtReport = nil; planPerformanceReport = nil; resilienceReport = nil; insightsSummary = nil
@@ -5179,23 +5176,19 @@ final class BudgetWorkspaceStore: ObservableObject {
         }
     }
 
-    func loadForecast(days: Int) async {
-        guard !workspaceAccessDenied, let dataSource else { return }
-        let operationID = UUID()
-        forecastOperationID = operationID
-        isForecastLoading = true
-        defer { if forecastOperationID == operationID { isForecastLoading = false } }
-        do {
-            let value = try await dataSource.forecast(days: days)
-            guard forecastOperationID == operationID else { return }
-            forecast = value
-        } catch {
-            guard forecastOperationID == operationID else { return }
-            if isTransientConnectivityFailure(error), forecast != nil {
-                syncStatusMessage = "Offline · showing the latest available forecast"
-            } else {
-                errorMessage = error.localizedDescription
-            }
+    func forecastObservation(days: Int) async throws -> APIForecast {
+        guard let dataSource else { throw workspaceRepositoryError("Forecast is unavailable.") }
+        return try await forecastObservation(days: days, fetch: { try await dataSource.forecast(days: $0) })
+    }
+
+    func forecastObservation(days: Int, fetch: (Int) async throws -> APIForecast) async throws -> APIForecast {
+        guard (1...366).contains(days) else { throw workspaceRepositoryError("Forecast horizon must be between 1 and 366 days.") }
+        let observation = reportRevision
+        return try await authorizedObservation {
+            let value = try await fetch(days)
+            try Task.checkCancellation()
+            guard observation == reportRevision else { throw CancellationError() }
+            return value
         }
     }
 
@@ -8641,6 +8634,10 @@ private struct HomeQuickAction: View {
 private struct LiveForecastView: View {
     @EnvironmentObject private var store: BudgetWorkspaceStore
     @State private var horizonDays = 90
+    @StateObject private var observation = ForecastObservation()
+    private var forecastScope: String { "\(store.authorityRevision)|\(store.budget.id)|\(horizonDays)" }
+    private var forecastContext: String { "\(forecastScope)|\(store.reportRevision)|\(store.liveCredentialRevision)" }
+    private var displayedForecast: APIForecast? { observation.currentValue(scope: forecastScope) }
     private let horizons = [(30, "30 days"), (60, "60 days"), (90, "90 days"), (180, "6 months"), (365, "1 year")]
 
     var body: some View {
@@ -8653,7 +8650,15 @@ private struct LiveForecastView: View {
                 Text("Forecasts are read-only and use scheduled transactions. They do not change balances or make future money spendable.")
                     .font(.footnote).foregroundStyle(.secondary)
             }
-            if let forecast = store.forecast {
+            if observation.loading { ProgressView("Updating forecast…") }
+            if let message = observation.currentError(scope: forecastScope) {
+                Section {
+                    if displayedForecast != nil { Text("Showing the last loaded forecast for this period").font(.subheadline.weight(.semibold)) }
+                    Text(message).font(.caption).foregroundStyle(.secondary)
+                    Button("Retry Forecast") { Task { await load() } }.disabled(observation.loading)
+                }
+            }
+            if let forecast = displayedForecast {
                 Section("Household cash") {
                     LabeledContent("Today", value: store.format(forecast.actualTotalOnBudgetMinor))
                     LabeledContent("At \(forecast.through)", value: store.format(forecast.projectedTotalOnBudgetMinor))
@@ -8693,8 +8698,12 @@ private struct LiveForecastView: View {
             }
         }
         .navigationTitle("Forecast")
-        .overlay { if store.isForecastLoading { ProgressView("Updating forecast…").padding().background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12)) } }
-        .onChange(of: horizonDays) { _, value in Task { await store.loadForecast(days: value) } }
+        .task(id: forecastContext) { observation.prepare(scope: forecastScope); await load() }
+        .refreshable { await load() }
+        .onDisappear { observation.invalidate() }
+    }
+    private func load() async {
+        await observation.load { try await store.forecastObservation(days: horizonDays) }
     }
 }
 

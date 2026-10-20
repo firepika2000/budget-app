@@ -12,6 +12,60 @@ import UserNotifications
 
 final class DemoStoreTests: XCTestCase {
     @MainActor
+    func testForecastObservationKeepsOnlyCurrentPeriodAndRejectsSupersededResponses() async throws {
+        let store = BudgetWorkspaceStore.demo()
+        await store.refresh()
+        let short = try await store.forecastObservation(days: 30)
+        let annual = try await store.forecastObservation(days: 365)
+        let observation = ForecastObservation()
+        observation.prepare(scope: "owner|budget|30")
+        await observation.load { short }
+        XCTAssertNil(observation.currentValue(scope: "owner|budget|365"), "A changed picker must not expose the old period even before its task runs")
+        await observation.load { throw URLError(.notConnectedToInternet) }
+        XCTAssertEqual(observation.value, short); XCTAssertNotNil(observation.errorMessage)
+        observation.prepare(scope: "owner|budget|365")
+        XCTAssertNil(observation.value, "A new period must not display the previous period's numbers")
+        await observation.load {
+            observation.prepare(scope: "current|budget|365")
+            await observation.load { annual }
+            return short
+        }
+        XCTAssertEqual(observation.value, annual); XCTAssertFalse(observation.loading)
+        await observation.load { throw APIClientError.server(status: 403, message: "Denied") }
+        XCTAssertNil(observation.value)
+    }
+
+    @MainActor
+    func testForecastReadRejectsResultFromBeforeWorkspaceRefresh() async throws {
+        let store = BudgetWorkspaceStore.demo()
+        await store.refresh()
+        let original = try XCTUnwrap(store.forecast)
+        do {
+            _ = try await store.forecastObservation(days: 365, fetch: { days in
+                XCTAssertEqual(days, 365)
+                await store.refresh()
+                return original
+            })
+            XCTFail("An earlier workspace observation must not become the current forecast")
+        } catch { XCTAssertTrue(error is CancellationError) }
+        XCTAssertEqual(store.forecast, original)
+    }
+
+    func testProductionForecastOwnsHorizonAndObservesWorkspaceRevision() throws {
+        let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("BudgetApp/BudgetWorkspaceView.swift")
+        let source = try String(contentsOf: file)
+        let start = try XCTUnwrap(source.range(of: "private struct LiveForecastView: View"))
+        let end = try XCTUnwrap(source.range(of: "private struct ForecastScenarioView: View"))
+        let view = source[start.lowerBound..<end.lowerBound]
+        XCTAssertTrue(view.contains("if let forecast = displayedForecast"))
+        XCTAssertTrue(view.contains("observation.currentValue(scope: forecastScope)"))
+        XCTAssertFalse(view.contains("store.forecast {"))
+        XCTAssertTrue(view.contains("store.reportRevision")); XCTAssertTrue(view.contains("store.authorityRevision"))
+        XCTAssertTrue(view.contains(".task(id: forecastContext)")); XCTAssertTrue(view.contains("Retry Forecast"))
+        XCTAssertFalse(source.contains("func loadForecast(days:"))
+    }
+
+    @MainActor
     func testStatementHeaderCacheSurvivesNavigationWithoutResettingUserMapping() async {
         let observation = StatementHeaderObservation()
         var reads = 0, mapping = ""
@@ -3512,19 +3566,21 @@ final class DemoStoreTests: XCTestCase {
         let transactionIDs = store.transactions.map(\.id)
         let balances = store.accountBalances.mapValues(\.workingBalanceMinor)
 
-        await store.loadForecast(days: 30)
-        let short = try XCTUnwrap(store.forecast)
+        let short = try await store.forecastObservation(days: 30)
         XCTAssertEqual(short.through, "2026-10-05")
         XCTAssertLessThanOrEqual(short.occurrences.count, original.occurrences.count)
 
-        await store.loadForecast(days: 365)
-        let annual = try XCTUnwrap(store.forecast)
+        let annual = try await store.forecastObservation(days: 365)
         XCTAssertEqual(annual.through, "2027-09-05")
         XCTAssertGreaterThan(annual.occurrences.count, short.occurrences.count)
         XCTAssertEqual(annual.actualTotalOnBudgetMinor, original.actualTotalOnBudgetMinor)
         XCTAssertEqual(store.transactions.map(\.id), transactionIDs)
         XCTAssertEqual(store.accountBalances.mapValues(\.workingBalanceMinor), balances)
-        XCTAssertFalse(store.isForecastLoading)
+        XCTAssertEqual(store.forecast, original, "Detail horizons must not overwrite Home's 90-day observation")
+        await store.refresh()
+        XCTAssertEqual(store.forecast, original)
+        let refreshedAnnual = try await store.forecastObservation(days: 365)
+        XCTAssertEqual(refreshedAnnual.through, annual.through)
     }
 
     @MainActor

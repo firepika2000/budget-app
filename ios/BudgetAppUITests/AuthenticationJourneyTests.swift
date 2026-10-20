@@ -13,6 +13,24 @@ private extension XCUIElement {
 }
 
 final class AuthenticationJourneyTests: XCTestCase {
+    func testProductionForecastHorizonDoesNotReplaceHomeNinetyDayObservation() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--demo-screen=home", "--skip-guided-onboarding"]
+        app.launch()
+        let open = app.buttons["View forecast"]
+        for _ in 0..<8 where !open.exists || !open.isHittable { app.swipeUp() }
+        XCTAssertTrue(open.waitForExistence(timeout: 5)); open.tap()
+        let picker = app.buttons["forecast-horizon-picker"]
+        XCTAssertTrue(picker.waitForExistence(timeout: 5)); picker.tap()
+        app.buttons["1 year"].tap()
+        XCTAssertTrue(app.staticTexts["At 2027-09-05"].waitForExistence(timeout: 5), app.debugDescription)
+        app.navigationBars.buttons.firstMatch.tap()
+        for _ in 0..<8 where !open.exists || !open.isHittable { app.swipeUp() }
+        XCTAssertTrue(open.waitForExistence(timeout: 5)); open.tap()
+        XCTAssertTrue(app.staticTexts["At 2026-12-04"].waitForExistence(timeout: 5), "Reopening must start with the actual 90-day observation")
+    }
+
     func testIPadProductionWorkspaceUsesSidebarAndKeepsAllDestinationsReachable() throws {
         try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad)
         continueAfterFailure = false
