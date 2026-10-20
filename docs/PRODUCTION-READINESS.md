@@ -2,10 +2,59 @@
 
 ## Current workspace checkpoint
 
-Inspected implementation: `101833e` on `codex/development`. App and widget remain `0.11.0`
+Inspected implementation: `380c955` on `codex/development`. App and widget remain `0.11.0`
 build `7`; TestFlight is held. Regular Xcode 27.1 (`27A9275`) builds and executes focused tests
 on preserved iPhone 17 Pro Max `3ABD861E-D38D-4AFD-A356-959266051564`, iOS 27.0 (`24A434`).
 No Simulator or Live data reset, merge, tag, or release is part of these checkpoints.
+
+### First backup and retained generation execution
+
+First-backup creation had an optional-URL comparison defect: two absent URLs compared equal and
+blocked capture. Checkpoint `e30ef52` requires an actual existing package before applying that
+pending-generation guard. Four native lifecycle tests and the production Local Device backup UI
+test executed and passed. The UI test created a fresh encrypted generation, exposed recovery-key
+copy/share controls, and reached transfer/restore/rollback management with focused accessibility
+checks. It did not perform a real Dropbox restore or establish human recovery-key custody.
+
+Scene activation and the automatic-backup toggle now call one coordinator lifecycle. It reuses
+the retained immutable package before capturing anything new; manual capture/retry and automatic
+execution cannot overlap. Leaving Settings, starting Local Files capture or creating a server
+transfer package cannot unlink an active upload source. Pending discard is blocked during claimed
+operations (`16ccd73`), and failed deletion retains its durable custody record.
+
+Dropbox upload/download shows verified-file counts and a distinct finalizing stage (`8162b48`).
+This is file-level integrity progress, not a network-byte estimate or a success receipt. Seventeen
+destination tests and two native lifecycle/wiring checks passed. A corrupted file cannot advance
+verification, and cancellation at finalization cannot publish a generation. Real-provider visual
+acceptance remains part of the existing Dropbox flow below.
+
+### Local snapshot consistency and scoped reads
+
+Local snapshots batch transaction split reads in groups of 200 (`1269a77`) and select related
+aliases, reconciliations, targets, debt terms, reserve attributions and attachments by budget in
+SQLite (`9f4641e`). One read transaction now spans the complete typed snapshot (`62772e4`), so
+concurrent commits cannot mix table versions. Backup validation reads attachment references from
+the captured database image, rather than a separate live read (`380c955`); the database/file
+operation gate remains in place.
+
+The latest combined database/backup run passed 36 tests, including 1,001 added transactions with
+exact large money and mixed split/unsplit rows, a two-budget fixture, concurrent connection commits,
+read rollback, before/after-capture attachment changes and complete encrypted restore. Production
+iOS builds passed. Local startup still materializes the selected budget's complete ledger; these
+changes do not claim bounded Local Device memory or measured end-to-end startup latency.
+
+### Payee refresh and durable workspace denial
+
+Payee search/management now shares validated 20-row paging, observes workspace revisions, retains
+opened depth, and distinguishes refresh retries from older-page retries (`dda9ae0`). Management
+search stays visible after reopening. One native pager regression and the production
+create/search/reopen UI test passed. Identity, alias, archive, merge and authorization services
+remain unchanged.
+
+Workspace-cache denial now persists independently of file deletion (`a2c1da4`). Leftover
+same-revision files cannot reopen after relaunch, and authorizing one month does not revive an
+older revoked month. The isolated native reconstruction regression and build passed. An earlier
+grouped native run timed out without a complete result and is not counted as verified.
 
 Account registers now use shared, validated 50-row pagination (`84da61e`). Three native paging
 checks and the production register Clear/Unclear/reconciliation XCUITest executed and passed.
@@ -107,7 +156,8 @@ Use existing disposable fixtures; retain all previously recorded human acceptanc
    and paused schedule, inspect rename/merge history without realizing a scheduled transaction.
 4. For the separate real Dropbox gate, connect the configured account, publish one encrypted
    disposable-budget backup, relaunch and select that generation, download and restore into a new
-   destination using its recovery key, and compare the recovered budget and attachment. Revoke
+   destination using its separately saved recovery key, and compare the recovered budget and
+   attachment. Observe verified-file progress followed by finalization, not premature success. Revoke
    the connection explicitly and confirm existing remote generations remain. Do not replace a
    current budget, delete backups, or record recovery keys in evidence.
 
