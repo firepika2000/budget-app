@@ -136,6 +136,34 @@ final class DemoStoreTests: XCTestCase {
         XCTAssertFalse(source.contains("outside the currently hydrated authorized activity page"))
     }
 
+    @MainActor
+    func testTransactionDetailCanHydrateOneMissingObservationWithoutFullLedger() async throws {
+        let store = BudgetWorkspaceStore.demo()
+        await store.refresh()
+        let expected = try XCTUnwrap(store.transactions.first)
+        let summary = store.summary, balances = store.accountBalances
+        store.transactions.removeAll()
+        let page = try await store.browseTransactions(.init(transactionIDs: [expected.id], limit: 1))
+        XCTAssertEqual(page.items, [expected])
+        XCTAssertEqual(store.transactions, [expected], "Identity lookup must not rehydrate the complete ledger")
+        XCTAssertEqual(store.summary, summary)
+        XCTAssertEqual(store.accountBalances, balances)
+        let missing = try await store.browseTransactions(.init(transactionIDs: ["not-authorized-or-missing"], limit: 1))
+        XCTAssertTrue(missing.items.isEmpty)
+        XCTAssertEqual(store.transactions, [expected])
+        let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("BudgetApp/BudgetWorkspaceView.swift")
+        let source = try String(contentsOf: file)
+        let start = try XCTUnwrap(source.range(of: "private struct LiveTransactionDetailView: View"))
+        let end = source.range(of: "\nprivate struct ", range: start.upperBound..<source.endIndex)?.lowerBound ?? source.endIndex
+        let detail = String(source[start.lowerBound..<end])
+        XCTAssertTrue(detail.contains("transactionIDs: [transactionID], limit: 1"))
+        XCTAssertTrue(detail.contains("await loadMissingTransaction()"))
+        XCTAssertTrue(detail.contains("transaction-detail-loading"))
+        XCTAssertTrue(detail.contains("transaction-detail-retry"))
+        XCTAssertTrue(detail.contains("TransactionAttachmentsView(transaction: transaction)"))
+        XCTAssertTrue(detail.contains("LiveTransactionEditView(budget: store.budget, transaction: transaction"))
+    }
+
     func testStatementReviewSearchCombinesFocusWithoutChangingDecisions() {
         func includes(_ filter: StatementImportReviewFilter, selected: Bool = true, duplicate: Bool = false, query: String = "") -> Bool {
             filter.includes(selected: selected, duplicate: duplicate, query: query, payee: "Café Market", memo: "Receipt", date: "2026-09-15")

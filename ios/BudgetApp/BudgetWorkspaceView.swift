@@ -11041,6 +11041,9 @@ private struct LiveTransactionDetailView: View {
     @State private var showVoid = false
     @State private var showRecurring = false
     @State private var isDeleting = false
+    @State private var loadingTransaction = false
+    @State private var transactionLoadError: String?
+    @State private var transactionRequestID = UUID()
     var transaction: APITransaction? { store.transactions.first(where: { $0.id == transactionID }) }
     var body: some View {
         List {
@@ -11064,6 +11067,14 @@ private struct LiveTransactionDetailView: View {
                     TransactionAttachmentsView(transaction: transaction)
                 }
                 if transaction.transferID != nil && transaction.isReconciled { Section { Label("This transfer includes reconciled history and cannot be edited or deleted.", systemImage: "lock.fill").font(.footnote).foregroundStyle(.secondary) } }
+            } else if loadingTransaction {
+                ProgressView("Loading transaction…")
+                    .accessibilityIdentifier("transaction-detail-loading")
+            } else {
+                ContentUnavailableView("Transaction unavailable", systemImage: "doc.text.magnifyingglass",
+                    description: Text(transactionLoadError ?? "This transaction may have been removed or is no longer accessible."))
+                Button("Try Again") { Task { await loadMissingTransaction() } }
+                    .accessibilityIdentifier("transaction-detail-retry")
             }
         }.navigationTitle(transaction?.transferID == nil ? "Transaction" : "Transfer Detail").toolbar {
             if let transaction, !transaction.isReconciled, (transaction.status ?? "posted") == "posted" {
@@ -11086,11 +11097,32 @@ private struct LiveTransactionDetailView: View {
             }
         }
             .sheet(isPresented: $showEdit) { if let transaction { LiveTransactionEditView(budget: store.budget, transaction: transaction, accounts: store.accounts, categories: store.categories, onSaved: reload) } }
+            .task(id: "\(store.authorityRevision)|\(transactionID)") { await loadMissingTransaction() }
             .sheet(item: $editTransfer) { LiveTransferView(presentation: $0, budget: store.budget, accounts: store.accounts, onSaved: reload) }
             .sheet(isPresented: $showVoid) { if let transaction { TransactionVoidView(transaction: transaction) } }
             .sheet(isPresented: $showRecurring) { if let transaction { MakeRecurringView(transaction: transaction).environmentObject(store) } }
             .confirmationDialog("Duplicate this transaction?", isPresented: $confirmDuplicate, titleVisibility: .visible) { Button("Duplicate Transaction") { Task { await duplicateTransaction() } }; Button("Cancel", role: .cancel) {} } message: { Text("A new uncleared copy dated today will post through the normal accounting engine. Attachments are not copied.") }
             .confirmationDialog(transaction?.transferID == nil ? "Delete this transaction?" : "Delete this transfer?", isPresented: $confirmDelete, titleVisibility: .visible) { Button(transaction?.transferID == nil ? "Delete Transaction" : "Delete Transfer", role: .destructive) { Task { await deleteTransaction() } }; Button("Cancel", role: .cancel) {} } message: { Text(transaction?.transferID == nil ? "Accepted deletion cannot be undone. When offline, the request is saved and posted values remain unchanged until the server accepts it." : "Both linked entries will be removed together after server approval. Offline requests are saved; posted balances remain unchanged until accepted. Accepted deletion cannot be undone.") }
+    }
+    private func loadMissingTransaction() async {
+        guard transaction == nil else { return }
+        let requestID = UUID()
+        transactionRequestID = requestID
+        loadingTransaction = true
+        transactionLoadError = nil
+        defer { if requestID == transactionRequestID { loadingTransaction = false } }
+        do {
+            let page = try await store.browseTransactions(.init(transactionIDs: [transactionID], limit: 1))
+            try Task.checkCancellation()
+            guard requestID == transactionRequestID else { return }
+            if page.items.isEmpty {
+                transactionLoadError = "This transaction may have been removed or is no longer accessible."
+            }
+        } catch is CancellationError {
+        } catch {
+            guard requestID == transactionRequestID else { return }
+            transactionLoadError = error.localizedDescription
+        }
     }
     private func reload() async { await store.refresh() }
     private func linkedAccountName(for transaction: APITransaction) -> String? {
