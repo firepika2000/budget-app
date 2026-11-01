@@ -96,9 +96,16 @@ def request_capabilities(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    require_request_capability(db, user, budget_id, "request_money")
+    budget = find_visible_budget(db, user, budget_id)
+    if budget is None:
+        raise HTTPException(status_code=404, detail="Budget not found")
+    can_request = has_capability(db, user, budget, "request_money")
+    can_decide = has_capability(db, user, budget, "approve_request")
+    if not can_request and not can_decide:
+        raise HTTPException(status_code=403, detail="Insufficient capability")
     # Clients must establish support before queuing intent: old servers ignore unknown headers.
-    return {"creation_replay_version": 1, "cancellation_replay_version": 1, "revision_replay_version": 1}
+    return {"creation_replay_version": int(can_request), "cancellation_replay_version": int(can_request),
+            "revision_replay_version": int(can_request), "decision_replay_version": int(can_decide)}
 
 
 @router.post("", response_model=FinancialRequestResponse, status_code=status.HTTP_201_CREATED)
@@ -207,6 +214,7 @@ def decide_request(
     body: FinancialRequestDecision,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
+    operation_id: Optional[UUID] = Header(default=None, alias="X-Request-Operation-ID"),
 ) -> dict:
     budget = require_request_capability(db, user, budget_id, "approve_request")
     item = db.scalar(select(FinancialRequest).where(
@@ -217,6 +225,22 @@ def decide_request(
         raise HTTPException(status_code=404, detail="Request not found")
     if not can_access_resource(db, user, budget, "category", item.destination_category_id):
         raise HTTPException(status_code=404, detail="Request not found")
+    identity = str(operation_id) if operation_id is not None else None
+    digest = "v1:" + hashlib.sha256(json.dumps(
+        {"request_id": request_id, **body.model_dump(mode="json")},
+        sort_keys=True, separators=(",", ":"),
+    ).encode()).hexdigest()
+    if identity is not None:
+        receipt = db.get(WorkspaceCommandReceipt, (budget_id, user.id, identity))
+        if receipt is not None:
+            if (receipt.command_kind != "funding_request_decide" or receipt.request_digest != digest
+                    or receipt.resource_id != request_id):
+                raise HTTPException(status_code=409, detail="Saved request identity belongs to different intent")
+            # The source may have become restricted since acceptance. Do not leak its identity
+            # or treat an accepted allocation as a new approval when acknowledging a retry.
+            if item.source_category_id is not None and not can_access_resource(db, user, budget, "category", item.source_category_id):
+                raise HTTPException(status_code=404, detail="Request not found")
+            return serialize_request(db, item, reveal_source=True)
     if expire_if_due(db, item):
         db.commit()
         raise HTTPException(status_code=409, detail="Request has expired")
@@ -275,7 +299,16 @@ def decide_request(
         amount_minor=action_amount,
         note=body.note,
     ))
-    db.commit()
+    if identity is not None:
+        db.add(WorkspaceCommandReceipt(budget_id=budget_id, actor_user_id=user.id,
+            operation_id=identity, command_kind="funding_request_decide", request_digest=digest, resource_id=item.id))
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        if identity is None or db.get(WorkspaceCommandReceipt, (budget_id, user.id, identity)) is None:
+            raise
+        return decide_request(budget_id, request_id, body, user, db, operation_id)
     db.refresh(item)
     return serialize_request(db, item, reveal_source=True)
 
